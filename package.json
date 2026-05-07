@@ -28,7 +28,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/synthetica-decks/crbro-memory"
+    "url": "https://github.com/Octonove/crbro-memory"
   },
   "engines": {
     "node": ">=18.0.0"
