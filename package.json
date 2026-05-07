@@ -1,0 +1,52 @@
+{
+  "name": "crbro-memory",
+  "version": "1.0.0",
+  "description": "CRBRO — Persistent neural memory for AI. A biological file-based MCP server that gives your AI long-term memory across sessions.",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "crbro-memory": "./bin/crbro.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "start": "node dist/index.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "mcp",
+    "memory",
+    "ai",
+    "persistent-memory",
+    "model-context-protocol",
+    "llm",
+    "synthetica"
+  ],
+  "author": "Synthetica Decks",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/synthetica-decks/crbro-memory"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "files": [
+    "dist/",
+    "bin/",
+    "README.md",
+    "LICENSE"
+  ],
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@orama/orama": "^3.1.18",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^25.6.0",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.5"
+  }
+}
