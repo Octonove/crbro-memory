@@ -31,6 +31,19 @@ export function createServer(): McpServer {
   const maintenance = new Maintenance(brain, cortex, synapses, heatEngine, hippocampus, prefrontal, searchEngine);
   const license = new LicenseEngine(brain);
 
+  // ─── License Guard ─────────────────────────────────────────────
+  const LICENSE_ERROR = {
+    content: [{
+      type: 'text' as const,
+      text: '🔒 CRBRO requires a valid Synthetica Zero Deck license.\n\nGet yours at https://synthetica-decks.web.app\n\n1. Purchase the CRBRO card from the Zero Deck\n2. Redeem your PIN to get a license key\n3. Set CRBRO_LICENSE_KEY in your MCP config\n\nWithout a valid license, CRBRO cannot operate.',
+    }],
+    isError: true,
+  };
+
+  async function requireLicense(): Promise<boolean> {
+    return await license.isPremium();
+  }
+
   // ═══════════════════════════════════════════════════════════════
   // TOOL 1: crbro_boot — Boot sequence
   // ═══════════════════════════════════════════════════════════════
@@ -40,6 +53,10 @@ export function createServer(): McpServer {
     {},
     async () => {
       try {
+        // License validation — mandatory
+        const hasLicense = await requireLicense();
+        if (!hasLicense) return LICENSE_ERROR;
+
         const result = await brain.boot();
         // Initialize search engine
         await searchEngine.init();
@@ -116,6 +133,7 @@ export function createServer(): McpServer {
     },
     async (args) => {
       try {
+        if (!await requireLicense()) return LICENSE_ERROR;
         const result = await cortex.learn(args.topic, args.type, args.content, {
           confidence: args.confidence,
           domain: args.domain,
@@ -163,6 +181,7 @@ export function createServer(): McpServer {
     },
     async (args) => {
       try {
+        if (!await requireLicense()) return LICENSE_ERROR;
         // Try by ID first, then by name
         let neuron = await cortex.get(args.id);
         if (!neuron) {
@@ -214,6 +233,7 @@ export function createServer(): McpServer {
     },
     async (args) => {
       try {
+        if (!await requireLicense()) return LICENSE_ERROR;
         const neurons = await cortex.list({
           domain: args.domain,
           type: args.type,
@@ -255,6 +275,7 @@ export function createServer(): McpServer {
     },
     async (args) => {
       try {
+        if (!await requireLicense()) return LICENSE_ERROR;
         const results = await searchEngine.search(args.query, {
           domain: args.domain,
           limit: args.limit,
@@ -296,6 +317,7 @@ export function createServer(): McpServer {
     },
     async (args) => {
       try {
+        if (!await requireLicense()) return LICENSE_ERROR;
         const result = await synapses.connect(args.from, args.to, args.type, args.context);
 
         return {
@@ -335,6 +357,7 @@ export function createServer(): McpServer {
     },
     async (args) => {
       try {
+        if (!await requireLicense()) return LICENSE_ERROR;
         const connections = await synapses.getConnections(args.neuron_id, args.min_strength);
 
         return {
@@ -373,6 +396,7 @@ export function createServer(): McpServer {
     },
     async (args) => {
       try {
+        if (!await requireLicense()) return LICENSE_ERROR;
         const session = await hippocampus.logSession({
           summary: args.summary,
           topics_touched: args.topics_touched,
@@ -418,6 +442,7 @@ export function createServer(): McpServer {
     },
     async (args) => {
       try {
+        if (!await requireLicense()) return LICENSE_ERROR;
         const sessions = await hippocampus.listSessions(args.limit);
 
         return {
@@ -454,6 +479,7 @@ export function createServer(): McpServer {
     },
     async (args) => {
       try {
+        if (!await requireLicense()) return LICENSE_ERROR;
         const ctx = await prefrontal.updateContext({
           set_topics: args.set_topics,
           add_pending: args.add_pending,
@@ -489,6 +515,7 @@ export function createServer(): McpServer {
     },
     async (args) => {
       try {
+        if (!await requireLicense()) return LICENSE_ERROR;
         const hotTopics = await prefrontal.getHotTopics(args.limit);
 
         return {
@@ -611,6 +638,7 @@ export function createServer(): McpServer {
     },
     async (args) => {
       try {
+        if (!await requireLicense()) return LICENSE_ERROR;
         const result = await maintenance.consolidate(args.summary);
 
         return {
