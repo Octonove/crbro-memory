@@ -2,7 +2,6 @@
 
 **CRBRO** is a local MCP (Model Context Protocol) server that gives your AI assistant **persistent long-term memory** across sessions. It uses a biological neural architecture — cortex, synapses, hippocampus — to store, connect, and retrieve knowledge automatically.
 
-Part of the **[Synthetica Decks](https://synthetica-decks.web.app)** Zero Deck.
 
 ## Features
 
