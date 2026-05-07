@@ -119,4 +119,4 @@ npx crbro-memory --help   # Help
 
 ## License
 
-MIT — Part of [Synthetica Decks](https://synthetica-decks.web.app) by Octonove Agency.
+MIT — Part of Octonove Agency.
