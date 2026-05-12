@@ -64,18 +64,24 @@ export function createServer(): McpServer {
     {},
     async () => {
       try {
-        // License validation — mandatory
-        const hasLicense = await requireLicense();
-        if (!hasLicense) return LICENSE_ERROR;
-
         const result = await brain.boot();
         // Initialize search engine
         await searchEngine.init();
 
+        // Check license — boot works without it, but show upsell
+        const hasLicense = await requireLicense();
+        const licenseInfo = await license.getLicenseInfo();
+
+        const response: any = { ...result, license: licenseInfo };
+
+        if (!hasLicense) {
+          response.license_notice = '🔓 CRBRO brain initialized in FREE mode. Boot and status are available, but all other tools (learn, recall, connect, consolidate, etc.) require a Synthetica Zero Deck license. Get yours at https://synthetica-decks.web.app — then set CRBRO_LICENSE_KEY in your environment or run: npx crbro-memory init';
+        }
+
         return {
           content: [{
             type: 'text' as const,
-            text: JSON.stringify(result, null, 2),
+            text: JSON.stringify(response, null, 2),
           }],
         };
       } catch (err) {
