@@ -32,24 +32,35 @@ export function createServer(): McpServer {
   const license = new LicenseEngine(brain);
 
   // ─── License Guard ─────────────────────────────────────────────
-  const LICENSE_ERROR = {
-    content: [{
-      type: 'text' as const,
-      text: '🔒 CRBRO requires a valid Synthetica Zero Deck license.\n\nGet yours at https://synthetica-decks.web.app\n\n1. Purchase the CRBRO card from the Zero Deck\n2. Redeem your PIN to get a license key\n3. Set CRBRO_LICENSE_KEY in your MCP config\n\nWithout a valid license, CRBRO cannot operate.',
-    }],
-    isError: true,
+  const LICENSE_MESSAGES: Record<string, string> = {
+    no_key: '🔒 CRBRO requires a valid Synthetica Zero Deck license.\n\nGet yours at https://synthetica-decks.web.app\n\n1. Purchase the CRBRO card from the Zero Deck\n2. Redeem your PIN to get a license key\n3. Set CRBRO_LICENSE_KEY in your MCP config\n\nWithout a valid license, CRBRO cannot operate.',
+    invalid_format: '🔒 Invalid license key format. CRBRO license keys start with SYNTH-ZERO- and are generated when you redeem your CRBRO card at https://synthetica-decks.web.app',
+    key_not_found: '🔒 License key not recognized. This key does not exist in our records. Please check you copied it correctly from your dashboard at https://synthetica-decks.web.app',
+    license_revoked: '🔒 This license has been revoked. Contact support at https://synthetica-decks.web.app',
+    device_limit_exceeded: '🔒 Device limit reached. This license is already active on 3 devices. CRBRO licenses allow up to 3 devices per card. Contact support if you need to reset your devices.',
+    device_registration_failed: '🔒 Could not register this device. Please try again or check your internet connection.',
   };
 
   async function requireLicense(): Promise<boolean> {
     return await license.isPremium();
   }
 
+  function getLicenseError(reason: string | null) {
+    const msg = LICENSE_MESSAGES[reason || 'no_key'] || LICENSE_MESSAGES.no_key;
+    return {
+      content: [{ type: 'text' as const, text: msg }],
+      isError: true,
+    };
+  }
+
+  const LICENSE_ERROR = getLicenseError(null);
+
   // ═══════════════════════════════════════════════════════════════
   // TOOL 1: crbro_boot — Boot sequence
   // ═══════════════════════════════════════════════════════════════
   server.tool(
     'crbro_boot',
-    'Boot the CRBRO brain. Run this at the start of every session. Initializes the brain on first use, loads hot topics and active context on subsequent uses.',
+    '⚠️ MANDATORY FIRST ACTION: Boot the CRBRO brain. You MUST call this as your very first action in every new conversation, before doing ANY other work. This loads persistent memory from all previous sessions — projects, decisions, patterns, and preferences the user has built over time. Skipping this means losing all accumulated context and forcing the user to repeat themselves. On first use, initializes the brain structure. On subsequent uses, loads hot topics, active context, and recent session history.',
     {},
     async () => {
       try {
@@ -632,7 +643,7 @@ export function createServer(): McpServer {
   // ═══════════════════════════════════════════════════════════════
   server.tool(
     'crbro_consolidate',
-    'Consolidate the brain at end of session — persist search index, log session, recalculate heat scores, and update manifest.',
+    '⚠️ CALL BEFORE SESSION ENDS: Consolidate the brain at end of session. You MUST call this before the conversation ends if ANY significant work was done (code changes, decisions made, new information learned). This persists all new knowledge, logs the session summary, recalculates topic heat scores, and updates the manifest. Failing to consolidate means this entire session\'s knowledge is permanently lost. Always provide a meaningful summary of what was accomplished.',
     {
       summary: z.string().describe('Summary of the session being consolidated'),
     },

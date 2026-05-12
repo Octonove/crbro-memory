@@ -1,16 +1,18 @@
 // ─── CRBRO License Engine ────────────────────────────────────────
-// Server-side license validation against Firestore + local cache
+// Server-side license validation against Firestore + device limit + local cache
 
-import { readJSON, writeJSON } from '../utils/fs.js';
 import type { Brain } from './brain.js';
 import type { LicenseInfo } from '../types/index.js';
 import * as https from 'https';
 import * as path from 'path';
 import * as fs from 'fs';
+import * as os from 'os';
+import * as crypto from 'crypto';
 
 // Firestore project for license validation
 const FIRESTORE_PROJECT = 'synthetica-decks';
 const COLLECTION = 'license-checks';
+const MAX_DEVICES = 3;
 
 // Cache duration: 7 days in milliseconds
 const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -21,19 +23,31 @@ const LICENSE_PREFIX = 'SYNTH-ZERO-';
 interface LicenseCache {
   key: string;
   valid: boolean;
-  verifiedAt: number; // timestamp
+  verifiedAt: number;
+  deviceId: string;
   status: string;
+}
+
+interface FirestoreDoc {
+  fields?: {
+    status?: { stringValue?: string };
+    devices?: { arrayValue?: { values?: Array<{ stringValue?: string }> } };
+    maxDevices?: { integerValue?: string };
+    [key: string]: any;
+  };
 }
 
 export class LicenseEngine {
   private cacheFile: string;
+  private deviceId: string;
 
   constructor(private brain: Brain) {
     this.cacheFile = path.join(brain.paths.root, '.license-cache.json');
+    this.deviceId = this.generateDeviceFingerprint();
   }
 
   /**
-   * Check if the license is valid (server-verified).
+   * Check if the license is valid (server-verified + device limit).
    * Uses local cache if verified within 7 days.
    */
   async isPremium(): Promise<boolean> {
@@ -45,25 +59,41 @@ export class LicenseEngine {
 
     // Check local cache first
     const cached = await this.readCache();
-    if (cached && cached.key === key && cached.valid) {
+    if (cached && cached.key === key && cached.valid && cached.deviceId === this.deviceId) {
       const age = Date.now() - cached.verifiedAt;
       if (age < CACHE_TTL_MS) {
-        return true; // Cache still valid
+        return true;
       }
     }
 
     // Cache expired or missing — verify against Firestore
-    const serverResult = await this.verifyWithServer(key);
-    
+    const result = await this.verifyAndRegisterDevice(key);
+
     // Save result to cache
     await this.writeCache({
       key,
-      valid: serverResult,
+      valid: result.valid,
       verifiedAt: Date.now(),
-      status: serverResult ? 'active' : 'invalid',
+      deviceId: this.deviceId,
+      status: result.status,
     });
 
-    return serverResult;
+    return result.valid;
+  }
+
+  /**
+   * Get the rejection reason (for error messages).
+   */
+  async getRejectionReason(): Promise<string | null> {
+    const key = await this.resolveKey();
+    if (!key) return 'no_key';
+    if (!this.validateFormat(key)) return 'invalid_format';
+
+    const cached = await this.readCache();
+    if (cached && cached.key === key && !cached.valid) {
+      return cached.status;
+    }
+    return null;
   }
 
   /**
@@ -76,7 +106,7 @@ export class LicenseEngine {
   }
 
   /**
-   * Legacy compatibility — canUse now just checks isPremium for everything.
+   * Legacy compatibility.
    */
   async canUse(_toolName: string): Promise<boolean> {
     return this.isPremium();
@@ -85,21 +115,37 @@ export class LicenseEngine {
   // ─── Private ─────────────────────────────────────────────────
 
   /**
+   * Generate a unique device fingerprint from hardware characteristics.
+   */
+  private generateDeviceFingerprint(): string {
+    const raw = [
+      os.hostname(),
+      os.userInfo().username,
+      os.platform(),
+      os.arch(),
+      os.cpus()[0]?.model || 'unknown',
+    ].join('|');
+
+    return crypto.createHash('sha256').update(raw).digest('hex').substring(0, 16);
+  }
+
+  /**
    * Resolve the license key — env var takes priority over manifest.
    */
   private async resolveKey(): Promise<string | null> {
-    // 1. Check environment variable first (set in mcp_config.json env block)
     const envKey = process.env.CRBRO_LICENSE_KEY || null;
     if (envKey && this.validateFormat(envKey)) return envKey;
 
-    // 2. Fall back to manifest (set via CLI activate)
-    const manifest = await this.brain.getManifest();
-    return manifest.license_key || null;
+    try {
+      const manifest = await this.brain.getManifest();
+      return manifest.license_key || null;
+    } catch {
+      return null;
+    }
   }
 
   /**
    * Basic format validation — prefix + length + characters.
-   * Does NOT verify the key is real. Use verifyWithServer() for that.
    */
   private validateFormat(key: string | null): boolean {
     if (!key) return false;
@@ -111,10 +157,51 @@ export class LicenseEngine {
   }
 
   /**
-   * Verify license key against Firestore REST API.
-   * Checks if document exists in license-checks/{key} with status 'active'.
+   * Verify license AND register this device.
+   * Returns { valid, status } where status explains why if invalid.
    */
-  private verifyWithServer(key: string): Promise<boolean> {
+  private async verifyAndRegisterDevice(key: string): Promise<{ valid: boolean; status: string }> {
+    // Step 1: Fetch the license document
+    const doc = await this.fetchLicenseDoc(key);
+    if (!doc) {
+      return { valid: false, status: 'key_not_found' };
+    }
+
+    const status = doc.fields?.status?.stringValue;
+    if (status !== 'active') {
+      return { valid: false, status: 'license_revoked' };
+    }
+
+    // Step 2: Check device limit
+    const devicesArray = doc.fields?.devices?.arrayValue?.values || [];
+    const registeredDevices = devicesArray.map(v => v.stringValue || '');
+
+    // This device is already registered — all good
+    if (registeredDevices.includes(this.deviceId)) {
+      return { valid: true, status: 'active' };
+    }
+
+    // Check if there's room for another device
+    if (registeredDevices.length >= MAX_DEVICES) {
+      return { valid: false, status: 'device_limit_exceeded' };
+    }
+
+    // Step 3: Register this device
+    const newDevices = [...registeredDevices, this.deviceId];
+    const registered = await this.updateDevices(key, newDevices);
+
+    if (registered) {
+      return { valid: true, status: 'active' };
+    } else {
+      // Registration failed (possibly race condition or rule violation)
+      return { valid: false, status: 'device_registration_failed' };
+    }
+  }
+
+  /**
+   * Fetch license document from Firestore REST API.
+   */
+  private fetchLicenseDoc(key: string): Promise<FirestoreDoc | null> {
     return new Promise((resolve) => {
       const encodedKey = encodeURIComponent(key);
       const url = `https://firestore.googleapis.com/v1/projects/${FIRESTORE_PROJECT}/databases/(default)/documents/${COLLECTION}/${encodedKey}`;
@@ -125,45 +212,64 @@ export class LicenseEngine {
         res.on('end', () => {
           try {
             if (res.statusCode === 200) {
-              const doc = JSON.parse(data);
-              // Check that the document has status = 'active'
-              const status = doc?.fields?.status?.stringValue;
-              resolve(status === 'active');
-            } else if (res.statusCode === 404) {
-              // Document doesn't exist — key is not valid
-              resolve(false);
+              resolve(JSON.parse(data) as FirestoreDoc);
             } else {
-              // Server error or unexpected response — fail closed
-              resolve(false);
+              resolve(null);
             }
           } catch {
-            resolve(false);
+            resolve(null);
           }
         });
       });
 
-      req.on('error', () => {
-        // Network error — check cache as fallback
-        this.readCache().then((cached) => {
-          if (cached && cached.key === key && cached.valid) {
-            resolve(true); // Trust cache if offline
-          } else {
-            resolve(false);
-          }
-        }).catch(() => resolve(false));
+      req.on('error', () => resolve(null));
+      req.on('timeout', () => { req.destroy(); resolve(null); });
+    });
+  }
+
+  /**
+   * Update the devices array in Firestore via REST API PATCH.
+   */
+  private updateDevices(key: string, devices: string[]): Promise<boolean> {
+    return new Promise((resolve) => {
+      const encodedKey = encodeURIComponent(key);
+      const url = `https://firestore.googleapis.com/v1/projects/${FIRESTORE_PROJECT}/databases/(default)/documents/${COLLECTION}/${encodedKey}?updateMask.fieldPaths=devices`;
+
+      const body = JSON.stringify({
+        fields: {
+          devices: {
+            arrayValue: {
+              values: devices.map(d => ({ stringValue: d })),
+            },
+          },
+        },
       });
 
-      req.on('timeout', () => {
-        req.destroy();
-        // Timeout — same fallback as network error
-        this.readCache().then((cached) => {
-          if (cached && cached.key === key && cached.valid) {
-            resolve(true);
-          } else {
-            resolve(false);
-          }
-        }).catch(() => resolve(false));
+      const parsed = new URL(url);
+      const options = {
+        hostname: parsed.hostname,
+        path: parsed.pathname + parsed.search,
+        method: 'PATCH',
+        timeout: 10000,
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(body),
+        },
+      };
+
+      const req = https.request(options, (res) => {
+        let data = '';
+        res.on('data', (chunk: Buffer) => { data += chunk.toString(); });
+        res.on('end', () => {
+          // 200 = success, 403 = device limit exceeded (security rule violation)
+          resolve(res.statusCode === 200);
+        });
       });
+
+      req.on('error', () => resolve(false));
+      req.on('timeout', () => { req.destroy(); resolve(false); });
+      req.write(body);
+      req.end();
     });
   }
 
@@ -183,7 +289,7 @@ export class LicenseEngine {
     try {
       fs.writeFileSync(this.cacheFile, JSON.stringify(cache, null, 2), 'utf-8');
     } catch {
-      // Silent fail — cache is a convenience, not critical
+      // Silent fail
     }
   }
 
