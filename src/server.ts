@@ -78,6 +78,17 @@ export function createServer(): McpServer {
           response.license_notice = '🔓 CRBRO brain initialized in FREE mode. Boot and status are available, but all other tools (learn, recall, connect, consolidate, etc.) require a Synthetica Zero Deck license. Get yours at https://synthetica-decks.web.app — then set CRBRO_LICENSE_KEY in your environment or run: npx crbro-memory init';
         }
 
+        // Inject protocol enforcement
+        if (result.active_protocols && result.active_protocols.length > 0) {
+          const protocolBlock = result.active_protocols.map((p: any) =>
+            `## 📋 ${p.name} [priority: ${p.priority}]\n\n${p.instructions}`
+          ).join('\n\n───────────────────\n\n');
+
+          response.protocol_enforcement =
+            '⚡ ACTIVE PROTOCOLS — These are MANDATORY behavioral directives. ' +
+            'You MUST follow them in every interaction:\n\n' + protocolBlock;
+        }
+
         return {
           content: [{
             type: 'text' as const,
@@ -244,7 +255,7 @@ export function createServer(): McpServer {
     'List all neurons in the brain with optional filters. Returns ID, name, domain, heat, and facts count.',
     {
       domain: z.string().optional().describe('Filter by domain (e.g., "proyectos-web")'),
-      type: z.enum(['project', 'tech', 'lang', 'person', 'domain', 'process']).optional().describe('Filter by neuron type'),
+      type: z.enum(['project', 'tech', 'lang', 'person', 'domain', 'process', 'protocol']).optional().describe('Filter by neuron type'),
       min_heat: z.number().optional().describe('Minimum heat score (0.0-1.0)'),
       limit: z.number().optional().describe('Max results (default 50)'),
     },

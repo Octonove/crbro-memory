@@ -16,7 +16,7 @@ export interface Decision {
   rationale: string;
 }
 
-export type NeuronType = 'project' | 'tech' | 'lang' | 'person' | 'domain' | 'process';
+export type NeuronType = 'project' | 'tech' | 'lang' | 'person' | 'domain' | 'process' | 'protocol';
 
 export interface Neuron {
   id: string;                // "project_octochat"
@@ -123,6 +123,14 @@ export interface Manifest {
 
 // ─── Boot Result ─────────────────────────────────────────────────
 
+export interface ProtocolDirective {
+  id: string;
+  name: string;
+  priority: number;      // 1-10, higher = more important
+  instructions: string;  // The actual enforcement text
+  source: string;        // "zero-deck", "strategy-deck", etc.
+}
+
 export interface BootResult {
   status: 'ok' | 'initialized' | 'error';
   total_neurons: number;
@@ -131,6 +139,7 @@ export interface BootResult {
   hot_topics: HotTopic[];
   last_session: string | null;
   active_context: ActiveContext | null;
+  active_protocols: ProtocolDirective[];
   message: string;
 }
 

@@ -115,9 +115,26 @@ export class LicenseEngine {
   // ─── Private ─────────────────────────────────────────────────
 
   /**
-   * Generate a unique device fingerprint from hardware characteristics.
+   * Generate a unique device fingerprint.
+   * Prefers a persistent UUID token stored on disk to withstand OS/hardware updates.
+   * Falls back to a hardware-based fingerprint in case of filesystem restrictions.
    */
   private generateDeviceFingerprint(): string {
+    const tokenFile = path.join(this.brain.paths.root, '.device-token');
+
+    // 1. Try to read existing UUID token from local file
+    try {
+      if (fs.existsSync(tokenFile)) {
+        const token = fs.readFileSync(tokenFile, 'utf-8').trim();
+        if (token.length >= 10) {
+          return token;
+        }
+      }
+    } catch {
+      // Fail silently and proceed to fallback/generation
+    }
+
+    // 2. Generate hardware fallback fingerprint in case of filesystem issues
     const raw = [
       os.hostname(),
       os.userInfo().username,
@@ -125,8 +142,23 @@ export class LicenseEngine {
       os.arch(),
       os.cpus()[0]?.model || 'unknown',
     ].join('|');
+    const hardwareFallback = crypto.createHash('sha256').update(raw).digest('hex').substring(0, 16);
 
-    return crypto.createHash('sha256').update(raw).digest('hex').substring(0, 16);
+    // 3. Try to generate a fresh persistent UUID token and save it to disk
+    try {
+      const uuid = crypto.randomUUID().replace(/-/g, '').substring(0, 16);
+
+      // Ensure brain root directory exists before writing
+      if (!fs.existsSync(this.brain.paths.root)) {
+        fs.mkdirSync(this.brain.paths.root, { recursive: true });
+      }
+
+      fs.writeFileSync(tokenFile, uuid, 'utf-8');
+      return uuid;
+    } catch {
+      // If writing to disk fails, gracefully fallback to the hardware fingerprint
+      return hardwareFallback;
+    }
   }
 
   /**

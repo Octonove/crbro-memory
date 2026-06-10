@@ -10,6 +10,7 @@ const TYPE_PREFIXES: Record<NeuronType, string> = {
   person: 'person_',
   domain: 'domain_',
   process: 'process_',
+  protocol: 'protocol_',
 };
 
 /**
@@ -60,7 +61,7 @@ export function sessionId(date?: string): string {
  * Validate that a string is a valid neuron ID.
  */
 export function isValidNeuronId(id: string): boolean {
-  return /^(project|tech|lang|person|domain|process)_[a-z0-9_]+$/.test(id);
+  return /^(project|tech|lang|person|domain|process|protocol)_[a-z0-9_]+$/.test(id);
 }
 
 /**
@@ -87,6 +88,10 @@ export function inferNeuronType(topic: string): NeuronType {
   // Domain keywords
   const domainKeywords = ['seo', 'marketing', 'trading', 'crypto', 'design', 'security', 'devops', 'data', 'analytics'];
   if (domainKeywords.some(kw => lower === kw)) return 'domain';
+
+  // Protocol keywords
+  const protocolKeywords = ['protocol', 'directive', 'rule', 'enforcement', 'behavioral'];
+  if (protocolKeywords.some(kw => lower.includes(kw))) return 'protocol';
 
   // Default to project
   return 'project';
