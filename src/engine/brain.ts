@@ -4,7 +4,7 @@
 import path from 'node:path';
 import { promises as fs } from 'node:fs';
 import { readJSON, writeJSON, fileExists, now } from '../utils/fs.js';
-import type { Manifest, BootResult, ActiveContext, HotTopics } from '../types/index.js';
+import type { Manifest, BootResult, ActiveContext, HotTopics, Neuron, ProtocolDirective } from '../types/index.js';
 
 const CRBRO_DIR = process.env['CRBRO_PATH'] || path.join(process.env['HOME'] || process.env['USERPROFILE'] || '.', '.crbro');
 const MANIFEST_FILE = 'manifest.json';
@@ -20,6 +20,7 @@ export class BrainPaths {
   readonly prefrontal: string;
   readonly archives: string;
   readonly search: string;
+  readonly prompts: string;
 
   constructor(rootDir?: string) {
     this.root = rootDir || CRBRO_DIR;
@@ -29,6 +30,7 @@ export class BrainPaths {
     this.prefrontal = path.join(this.root, 'prefrontal');
     this.archives = path.join(this.root, 'archives');
     this.search = path.join(this.root, '.search');
+    this.prompts = path.join(this.root, 'prompts');
   }
 
   manifest(): string {
@@ -87,6 +89,7 @@ export class Brain {
       this.paths.prefrontal,
       this.paths.archives,
       this.paths.search,
+      this.paths.prompts,
     ];
 
     for (const dir of dirs) {
@@ -146,6 +149,7 @@ export class Brain {
         hot_topics: [],
         last_session: null,
         active_context: null,
+        active_protocols: [],
         message: `CRBRO brain initialized at ${this.paths.root}. Ready for first session.`,
       };
     }
@@ -162,6 +166,9 @@ export class Brain {
     // Load active context
     const activeContext = await readJSON<ActiveContext>(this.paths.activeContext());
 
+    // Load active protocols
+    const activeProtocols = await this.loadProtocols();
+
     // Update boot timestamp
     this.manifest.last_boot = now();
     await writeJSON(this.paths.manifest(), this.manifest);
@@ -174,7 +181,8 @@ export class Brain {
       hot_topics: hotTopics?.topics || [],
       last_session: activeContext?.last_session || null,
       active_context: activeContext,
-      message: `CRBRO boot complete. ${this.manifest.total_neurons} neurons, ${this.manifest.total_synapses} synapses, ${this.manifest.total_sessions} sessions.`,
+      active_protocols: activeProtocols,
+      message: `CRBRO boot complete. ${this.manifest.total_neurons} neurons, ${this.manifest.total_synapses} synapses, ${this.manifest.total_sessions} sessions. ${activeProtocols.length} active protocol(s).`,
     };
   }
 
@@ -199,5 +207,55 @@ export class Brain {
     Object.assign(manifest, updates);
     await writeJSON(this.paths.manifest(), manifest);
     this.manifest = manifest;
+  }
+
+  /**
+   * Load all active protocol neurons and return as directives.
+   * Protocols are neurons with type 'protocol' — their facts
+   * become enforcement instructions injected at boot.
+   */
+  async loadProtocols(): Promise<ProtocolDirective[]> {
+    const cortexDir = this.paths.cortex;
+    const protocols: ProtocolDirective[] = [];
+
+    try {
+      const files = await fs.readdir(cortexDir);
+
+      for (const file of files) {
+        if (!file.startsWith('protocol_') || !file.endsWith('.json')) continue;
+
+        const neuron = await readJSON<Neuron>(path.join(cortexDir, file));
+        if (!neuron) continue;
+
+        // Extract priority from tags (e.g., "priority:10")
+        const priorityTag = neuron.tags.find(t => t.startsWith('priority:'));
+        const priority = priorityTag ? parseInt(priorityTag.split(':')[1]) : 5;
+
+        // Extract source from tags (e.g., "source:zero-deck")
+        const sourceTag = neuron.tags.find(t => t.startsWith('source:'));
+        const source = sourceTag ? sourceTag.split(':')[1] : 'manual';
+
+        // Combine all facts into a single instruction block
+        const instructions = neuron.facts
+          .map(f => f.text)
+          .join('\n\n');
+
+        if (instructions.trim()) {
+          protocols.push({
+            id: neuron.id,
+            name: neuron.name,
+            priority,
+            instructions,
+            source,
+          });
+        }
+      }
+    } catch {
+      // Cortex dir may not exist yet — return empty
+    }
+
+    // Sort by priority (highest first)
+    protocols.sort((a, b) => b.priority - a.priority);
+    return protocols;
   }
 }
