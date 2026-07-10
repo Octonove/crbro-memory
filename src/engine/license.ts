@@ -330,9 +330,9 @@ export class LicenseEngine {
     return {
       valid,
       tier: valid ? 'premium' : 'free',
-      features: valid
-        ? ['global_map', 'maintenance', 'export', 'import', 'advanced_search']
-        : [],
+      // Premium unlocks exactly the two license-gated tools — keep in sync
+      // with server.ts gating and the README's Free/Premium tables.
+      features: valid ? ['global_map', 'maintenance'] : [],
     };
   }
 }

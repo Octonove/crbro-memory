@@ -33,7 +33,7 @@ export function createServer(): McpServer {
 
   // ─── License Guard ─────────────────────────────────────────────
   const LICENSE_MESSAGES: Record<string, string> = {
-    no_key: '🔒 CRBRO requires a valid Synthetica Zero Deck license.\n\nGet yours at https://synthetica-decks.web.app\n\n1. Purchase the CRBRO card from the Zero Deck\n2. Redeem your PIN to get a license key\n3. Set CRBRO_LICENSE_KEY in your MCP config\n\nWithout a valid license, CRBRO cannot operate.',
+    no_key: '🔒 This premium tool requires a Synthetica Zero Deck license.\n\nGet yours at https://synthetica-decks.web.app\n\n1. Purchase the CRBRO card from the Zero Deck\n2. Redeem your PIN to get a license key\n3. Set CRBRO_LICENSE_KEY in your MCP config\n\nThe core memory tools (learn, recall, consolidate…) are free — only crbro_global_map and crbro_maintenance need a license.',
     invalid_format: '🔒 Invalid license key format. CRBRO license keys start with SYNTH-ZERO- and are generated when you redeem your CRBRO card at https://synthetica-decks.web.app',
     key_not_found: '🔒 License key not recognized. This key does not exist in our records. Please check you copied it correctly from your dashboard at https://synthetica-decks.web.app',
     license_revoked: '🔒 This license has been revoked. Contact support at https://synthetica-decks.web.app',
@@ -45,15 +45,12 @@ export function createServer(): McpServer {
     return await license.isPremium();
   }
 
-  function getLicenseError(reason: string | null) {
-    const msg = LICENSE_MESSAGES[reason || 'no_key'] || LICENSE_MESSAGES.no_key;
-    return {
-      content: [{ type: 'text' as const, text: msg }],
-      isError: true,
-    };
-  }
-
-  const LICENSE_ERROR = getLicenseError(null);
+  // Freemium model (v1.3.0): the full memory core (learn, recall, neurons,
+  // synapses, sessions, context, consolidate) is FREE — matching the README.
+  // Only crbro_global_map and crbro_maintenance are license-gated, via
+  // license.canUse() inside their own handlers. LICENSE_MESSAGES is kept for
+  // those handlers' rejection reasons.
+  void LICENSE_MESSAGES;
 
   // ═══════════════════════════════════════════════════════════════
   // TOOL 1: crbro_boot — Boot sequence
@@ -75,7 +72,7 @@ export function createServer(): McpServer {
         const response: any = { ...result, license: licenseInfo };
 
         if (!hasLicense) {
-          response.license_notice = '🔓 CRBRO brain initialized in FREE mode. Boot and status are available, but all other tools (learn, recall, connect, consolidate, etc.) require a Synthetica Zero Deck license. Get yours at https://synthetica-decks.web.app — then set CRBRO_LICENSE_KEY in your environment or run: npx crbro-memory init';
+          response.license_notice = '🔓 CRBRO running in FREE mode: the full memory core (learn, recall, connect, sessions, consolidate…) is available. Premium tools (crbro_global_map, crbro_maintenance) require a Synthetica Zero Deck license — get yours at https://synthetica-decks.web.app and set CRBRO_LICENSE_KEY.';
         }
 
         // Inject protocol enforcement
@@ -160,9 +157,7 @@ export function createServer(): McpServer {
       rationale: z.string().optional().describe('Rationale for decisions'),
     },
     async (args) => {
-      try {
-        if (!await requireLicense()) return LICENSE_ERROR;
-        const result = await cortex.learn(args.topic, args.type, args.content, {
+      try {        const result = await cortex.learn(args.topic, args.type, args.content, {
           confidence: args.confidence,
           domain: args.domain,
           rationale: args.rationale,
@@ -208,9 +203,7 @@ export function createServer(): McpServer {
       id: z.string().describe('Neuron ID (e.g., "project_octochat") or name (e.g., "OctoChat")'),
     },
     async (args) => {
-      try {
-        if (!await requireLicense()) return LICENSE_ERROR;
-        // Try by ID first, then by name
+      try {        // Try by ID first, then by name
         let neuron = await cortex.get(args.id);
         if (!neuron) {
           neuron = await cortex.findByName(args.id);
@@ -260,9 +253,7 @@ export function createServer(): McpServer {
       limit: z.number().optional().describe('Max results (default 50)'),
     },
     async (args) => {
-      try {
-        if (!await requireLicense()) return LICENSE_ERROR;
-        const neurons = await cortex.list({
+      try {        const neurons = await cortex.list({
           domain: args.domain,
           type: args.type,
           min_heat: args.min_heat,
@@ -302,9 +293,7 @@ export function createServer(): McpServer {
       limit: z.number().optional().describe('Max results (default 10)'),
     },
     async (args) => {
-      try {
-        if (!await requireLicense()) return LICENSE_ERROR;
-        const results = await searchEngine.search(args.query, {
+      try {        const results = await searchEngine.search(args.query, {
           domain: args.domain,
           limit: args.limit,
         });
@@ -344,9 +333,7 @@ export function createServer(): McpServer {
       context: z.string().optional().describe('Description of the relationship'),
     },
     async (args) => {
-      try {
-        if (!await requireLicense()) return LICENSE_ERROR;
-        const result = await synapses.connect(args.from, args.to, args.type, args.context);
+      try {        const result = await synapses.connect(args.from, args.to, args.type, args.context);
 
         return {
           content: [{
@@ -384,9 +371,7 @@ export function createServer(): McpServer {
       min_strength: z.number().optional().describe('Minimum synapse strength (0.0-1.0)'),
     },
     async (args) => {
-      try {
-        if (!await requireLicense()) return LICENSE_ERROR;
-        const connections = await synapses.getConnections(args.neuron_id, args.min_strength);
+      try {        const connections = await synapses.getConnections(args.neuron_id, args.min_strength);
 
         return {
           content: [{
@@ -423,9 +408,7 @@ export function createServer(): McpServer {
       decisions_made: z.number().optional().describe('Number of decisions recorded'),
     },
     async (args) => {
-      try {
-        if (!await requireLicense()) return LICENSE_ERROR;
-        const session = await hippocampus.logSession({
+      try {        const session = await hippocampus.logSession({
           summary: args.summary,
           topics_touched: args.topics_touched,
           key_facts_added: args.key_facts_added,
@@ -469,9 +452,7 @@ export function createServer(): McpServer {
       limit: z.number().optional().describe('Number of sessions to return (default 10)'),
     },
     async (args) => {
-      try {
-        if (!await requireLicense()) return LICENSE_ERROR;
-        const sessions = await hippocampus.listSessions(args.limit);
+      try {        const sessions = await hippocampus.listSessions(args.limit);
 
         return {
           content: [{
@@ -506,9 +487,7 @@ export function createServer(): McpServer {
       resolve_pending: z.string().optional().describe('Mark a pending task as resolved'),
     },
     async (args) => {
-      try {
-        if (!await requireLicense()) return LICENSE_ERROR;
-        const ctx = await prefrontal.updateContext({
+      try {        const ctx = await prefrontal.updateContext({
           set_topics: args.set_topics,
           add_pending: args.add_pending,
           resolve_pending: args.resolve_pending,
@@ -542,9 +521,7 @@ export function createServer(): McpServer {
       limit: z.number().optional().describe('Number of topics to return (default 15)'),
     },
     async (args) => {
-      try {
-        if (!await requireLicense()) return LICENSE_ERROR;
-        const hotTopics = await prefrontal.getHotTopics(args.limit);
+      try {        const hotTopics = await prefrontal.getHotTopics(args.limit);
 
         return {
           content: [{
@@ -665,9 +642,7 @@ export function createServer(): McpServer {
       summary: z.string().describe('Summary of the session being consolidated'),
     },
     async (args) => {
-      try {
-        if (!await requireLicense()) return LICENSE_ERROR;
-        const result = await maintenance.consolidate(args.summary);
+      try {        const result = await maintenance.consolidate(args.summary);
 
         return {
           content: [{
