@@ -12,12 +12,11 @@ import { Hippocampus } from './engine/hippocampus.js';
 import { Prefrontal } from './engine/prefrontal.js';
 import { SearchEngine } from './search/index.js';
 import { Maintenance } from './engine/maintenance.js';
-import { LicenseEngine } from './engine/license.js';
 
 export function createServer(): McpServer {
   const server = new McpServer({
     name: 'crbro-memory',
-    version: '1.0.0',
+    version: '1.4.0',
   });
 
   // ─── Initialize engines ──────────────────────────────────────
@@ -29,28 +28,10 @@ export function createServer(): McpServer {
   const prefrontal = new Prefrontal(brain);
   const searchEngine = new SearchEngine(brain);
   const maintenance = new Maintenance(brain, cortex, synapses, heatEngine, hippocampus, prefrontal, searchEngine);
-  const license = new LicenseEngine(brain);
 
-  // ─── License Guard ─────────────────────────────────────────────
-  const LICENSE_MESSAGES: Record<string, string> = {
-    no_key: '🔒 This premium tool requires a Synthetica Zero Deck license.\n\nGet yours at https://synthetica-decks.web.app\n\n1. Purchase the CRBRO card from the Zero Deck\n2. Redeem your PIN to get a license key\n3. Set CRBRO_LICENSE_KEY in your MCP config\n\nThe core memory tools (learn, recall, consolidate…) are free — only crbro_global_map and crbro_maintenance need a license.',
-    invalid_format: '🔒 Invalid license key format. CRBRO license keys start with SYNTH-ZERO- and are generated when you redeem your CRBRO card at https://synthetica-decks.web.app',
-    key_not_found: '🔒 License key not recognized. This key does not exist in our records. Please check you copied it correctly from your dashboard at https://synthetica-decks.web.app',
-    license_revoked: '🔒 This license has been revoked. Contact support at https://synthetica-decks.web.app',
-    device_limit_exceeded: '🔒 Device limit reached. This license is already active on 3 devices. CRBRO licenses allow up to 3 devices per card. Contact support if you need to reset your devices.',
-    device_registration_failed: '🔒 Could not register this device. Please try again or check your internet connection.',
-  };
-
-  async function requireLicense(): Promise<boolean> {
-    return await license.isPremium();
-  }
-
-  // Freemium model (v1.3.0): the full memory core (learn, recall, neurons,
-  // synapses, sessions, context, consolidate) is FREE — matching the README.
-  // Only crbro_global_map and crbro_maintenance are license-gated, via
-  // license.canUse() inside their own handlers. LICENSE_MESSAGES is kept for
-  // those handlers' rejection reasons.
-  void LICENSE_MESSAGES;
+  // v1.4.0: CRBRO is fully free — all 15 tools, no license, no network calls.
+  // The former license engine (Firestore-backed freemium) lives in git history
+  // before this version if it is ever needed again.
 
   // ═══════════════════════════════════════════════════════════════
   // TOOL 1: crbro_boot — Boot sequence
@@ -65,15 +46,7 @@ export function createServer(): McpServer {
         // Initialize search engine
         await searchEngine.init();
 
-        // Check license — boot works without it, but show upsell
-        const hasLicense = await requireLicense();
-        const licenseInfo = await license.getLicenseInfo();
-
-        const response: any = { ...result, license: licenseInfo };
-
-        if (!hasLicense) {
-          response.license_notice = '🔓 CRBRO running in FREE mode: the full memory core (learn, recall, connect, sessions, consolidate…) is available. Premium tools (crbro_global_map, crbro_maintenance) require a Synthetica Zero Deck license — get yours at https://synthetica-decks.web.app and set CRBRO_LICENSE_KEY.';
-        }
+        const response: any = { ...result };
 
         // Inject protocol enforcement
         if (result.active_protocols && result.active_protocols.length > 0) {
@@ -114,7 +87,6 @@ export function createServer(): McpServer {
     async () => {
       try {
         const manifest = await brain.getManifest();
-        const licenseInfo = await license.getLicenseInfo();
         return {
           content: [{
             type: 'text' as const,
@@ -126,7 +98,6 @@ export function createServer(): McpServer {
               brain_path: manifest.brain_path,
               last_boot: manifest.last_boot,
               last_consolidation: manifest.last_consolidation,
-              license: licenseInfo,
             }, null, 2),
           }],
         };
@@ -542,26 +513,16 @@ export function createServer(): McpServer {
   );
 
   // ═══════════════════════════════════════════════════════════════
-  // TOOL 13: crbro_global_map — Global neural map [PREMIUM]
+  // TOOL 13: crbro_global_map — Global neural map
   // ═══════════════════════════════════════════════════════════════
   server.tool(
     'crbro_global_map',
-    '[PREMIUM] View the global neural map — clusters of related topics and bridges between domains. Requires Synthetica Zero Deck license.',
+    'View the global neural map — clusters of related topics and bridges between domains.',
     {
       rebuild: z.boolean().optional().describe('Force rebuild the map (default: use cached)'),
     },
     async (args) => {
       try {
-        const canUse = await license.canUse('crbro_global_map');
-        if (!canUse) {
-          return {
-            content: [{
-              type: 'text' as const,
-              text: '🔒 PREMIUM FEATURE: crbro_global_map requires a Synthetica Zero Deck license. Visit https://synthetica-decks.web.app to get your license key, then set it via CRBRO_LICENSE_KEY environment variable.',
-            }],
-          };
-        }
-
         const globalMap = await prefrontal.getGlobalMap(args.rebuild);
 
         return {
@@ -589,26 +550,16 @@ export function createServer(): McpServer {
   );
 
   // ═══════════════════════════════════════════════════════════════
-  // TOOL 14: crbro_maintenance — Run maintenance [PREMIUM]
+  // TOOL 14: crbro_maintenance — Run maintenance
   // ═══════════════════════════════════════════════════════════════
   server.tool(
     'crbro_maintenance',
-    '[PREMIUM] Run brain maintenance — recalculate heat, prune weak synapses, archive cold neurons, rebuild search index. Requires Synthetica Zero Deck license.',
+    'Run brain maintenance — recalculate heat, prune weak synapses, archive cold neurons, rebuild search index.',
     {
       dry_run: z.boolean().optional().describe('If true, only report what would happen without acting'),
     },
     async (args) => {
       try {
-        const canUse = await license.canUse('crbro_maintenance');
-        if (!canUse) {
-          return {
-            content: [{
-              type: 'text' as const,
-              text: '🔒 PREMIUM FEATURE: crbro_maintenance requires a Synthetica Zero Deck license. Visit https://synthetica-decks.web.app to get your license key.',
-            }],
-          };
-        }
-
         const report = await maintenance.run(args.dry_run);
 
         return {

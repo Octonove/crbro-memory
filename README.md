@@ -2,16 +2,18 @@
 
 **CRBRO** is a local MCP (Model Context Protocol) server that gives your AI assistant **persistent long-term memory** across sessions. It uses a biological neural architecture — cortex, synapses, hippocampus — to store, connect, and retrieve knowledge automatically.
 
+Free and open source (MIT). All 15 tools included — no license, no account, no tiers.
 
 ## Features
 
 - **🧬 Biological Architecture** — Knowledge organized as neurons (cortex), connections (synapses), and session memory (hippocampus)
 - **🔍 Hybrid Search** — Powered by [Orama](https://orama.com/) for fast BM25 + fuzzy text search
 - **🔥 Heat Scores** — Automatic relevance tracking based on frequency, recency, and connectivity
-- **🗺️ Global Map** — Cluster detection and cross-domain bridge identification *(premium)*
-- **📦 Zero Dependencies** — Pure Node.js, no Python, no Docker, no external databases
-- **💾 File-Based** — All data stored as readable JSON files in `~/.crbro/`
-- **🔌 MCP Native** — Works with Claude Desktop, Cursor, Windsurf, and any MCP-compatible client
+- **🗺️ Global Map** — Cluster detection and cross-domain bridge identification
+- **⛏️ Knowledge Miner** — Optionally scans your local `.md`/`.txt` notes and feeds them into the brain
+- **🔒 Fully Local** — Runs on Node.js alone: no Python, no Docker, no databases, no external services. Your memory never leaves your machine
+- **💾 File-Based** — All data stored as readable JSON files in `~/.crbro/` — inspectable, diffable, and versionable with git
+- **🔌 MCP Native** — Works with Claude Desktop, Claude Code, Cursor, Windsurf, and any MCP-compatible client
 
 ## Quick Start
 
@@ -53,8 +55,6 @@ Your AI will now have access to 15 memory tools. Start any session with `crbro_b
 
 ## Tools
 
-### Free (always available)
-
 | Tool | Description |
 |------|-------------|
 | `crbro_boot` | Boot the brain at session start — loads hot topics and context |
@@ -69,14 +69,9 @@ Your AI will now have access to 15 memory tools. Start any session with `crbro_b
 | `crbro_sessions` | List recent sessions |
 | `crbro_context` | Read/update active working context |
 | `crbro_hot_topics` | Get the most active topics by heat score |
-| `crbro_consolidate` | End-of-session consolidation |
-
-### Premium (requires Synthetica Zero Deck license)
-
-| Tool | Description |
-|------|-------------|
 | `crbro_global_map` | View the neural network — clusters and cross-domain bridges |
 | `crbro_maintenance` | Full brain maintenance — archive, prune, rebuild |
+| `crbro_consolidate` | End-of-session consolidation |
 
 ## Architecture
 
@@ -107,15 +102,28 @@ Each neuron has a heat score (0.0 - 1.0) calculated from:
 - **Recency (40%)** — When it was last accessed (today = 1.0, >3 months = 0.05)
 - **Connectivity (25%)** — How many synapses connect to it
 
+## Knowledge Miner
+
+The miner is an **optional, fully local** helper that scans a directory for `.md` and `.txt` files (notes, docs, journals) and extracts knowledge into the brain — so CRBRO can learn from what you already wrote, not just from conversations. It never touches the network and never leaves your machine.
+
+```bash
+npx crbro-memory mine [dir]       # One-shot scan of a directory
+npx crbro-memory setup-miner      # Install a scheduled auto-scan (OS task scheduler)
+npx crbro-memory miner-status     # Check the auto-miner status
+npx crbro-memory remove-miner     # Remove the scheduled task
+```
+
+> Naming note: "miner" here means *knowledge* mining — extracting facts from your own text files. Nothing to do with cryptocurrency.
+
 ## CLI Commands
 
 ```bash
-npx crbro-memory          # Start MCP server
-npx crbro-memory init     # Initialize brain
+npx crbro-memory          # Start MCP server (stdio)
+npx crbro-memory init     # Initialize brain + detect IDEs
 npx crbro-memory status   # Show brain status
 npx crbro-memory --help   # Help
 ```
 
 ## License
 
-MIT — Part of Octonove Agency.
+MIT — see [LICENSE](LICENSE). Built by [Octonove](https://github.com/Octonove).

@@ -1,0 +1,36 @@
+name: Publish to MCP Registry
+
+# Publica el servidor en el MCP Registry oficial cuando se empuja un tag v*.
+# Autenticación por GitHub OIDC: sin secretos, sin tokens que caduquen.
+# Prerrequisito: la versión correspondiente del paquete DEBE estar ya
+# publicada en npm (el registry valida el campo mcpName del package.json
+# publicado). Ver RELEASING.md.
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write # necesario para la autenticación OIDC
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install mcp-publisher
+        run: |
+          curl -L "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz" | tar xz mcp-publisher
+
+      - name: Sync server.json version with tag
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          jq --arg v "$VERSION" '.version = $v | .packages[].version = $v' server.json > server.tmp && mv server.tmp server.json
+          echo "Publishing version $VERSION"
+
+      - name: Authenticate to MCP Registry (GitHub OIDC)
+        run: ./mcp-publisher login github-oidc
+
+      - name: Publish server to MCP Registry
+        run: ./mcp-publisher publish

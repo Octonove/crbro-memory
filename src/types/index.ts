@@ -118,7 +118,6 @@ export interface Manifest {
   total_sessions: number;
   last_boot: string | null;
   last_consolidation: string | null;
-  license_key: string | null;
 }
 
 // ─── Boot Result ─────────────────────────────────────────────────
@@ -152,14 +151,4 @@ export interface SearchResult {
   relevance_score: number;
   matching_content: string;
   heat: number;
-}
-
-// ─── Premium Features ────────────────────────────────────────────
-
-export type PremiumFeature = 'global_map' | 'maintenance' | 'export' | 'import' | 'advanced_search';
-
-export interface LicenseInfo {
-  valid: boolean;
-  tier: 'free' | 'premium';
-  features: PremiumFeature[];
 }

@@ -68,7 +68,7 @@ export class Prefrontal {
     };
   }
 
-  // ─── Global Map (Premium Feature) ──────────────────────────────
+  // ─── Global Map ────────────────────────────────────────────────
 
   /**
    * Build the global map — clusters of related neurons and bridges between domains.
