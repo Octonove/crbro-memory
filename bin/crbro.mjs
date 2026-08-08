@@ -2,7 +2,7 @@
 
 // ─── CRBRO CLI ───────────────────────────────────────────────────
 // Command-line interface for CRBRO memory system
-// Supports: init, status, activate, mine, setup-miner, miner-status,
+// Supports: init, status, mine, setup-miner, miner-status,
 //           remove-miner, and MCP server mode (default)
 
 import { platform, homedir } from 'os';
@@ -132,9 +132,8 @@ if (command === 'init') {
     console.log('');
     console.log('  Next steps:');
     console.log('    1. Add the config above to your IDE\'s MCP settings');
-    console.log('    2. npx crbro-memory activate YOUR-LICENSE-KEY');
-    console.log('    3. (Optional) npx crbro-memory setup-miner');
-    console.log('    4. Restart your IDE — CRBRO boots automatically!');
+    console.log('    2. (Optional) npx crbro-memory setup-miner');
+    console.log('    3. Restart your IDE — CRBRO boots automatically!');
     console.log('');
   }).catch(console.error);
 
@@ -154,7 +153,6 @@ if (command === 'init') {
       console.log(`  Sessions:        ${manifest.total_sessions}`);
       console.log(`  Last Boot:       ${manifest.last_boot || 'never'}`);
       console.log(`  Last Consolidate: ${manifest.last_consolidation || 'never'}`);
-      console.log(`  License:         ${manifest.license_key ? '✅ Active' : '❌ Not activated'}`);
       console.log('');
 
       // Show detected IDEs
@@ -175,45 +173,11 @@ if (command === 'init') {
   }).catch(console.error);
 
 } else if (command === 'activate') {
-  // ─── Activate license key ──────────────────────────────────────
-  const key = args[1];
-  if (!key) {
-    console.log('');
-    console.log('  ❌ Usage: npx crbro-memory activate SYNTH-ZERO-XXXX-XXXX-XXXX');
-    console.log('');
-    console.log('  Get your license key at https://synthetica-decks.web.app');
-    console.log('');
-    process.exit(1);
-  }
-
-  import('../dist/engine/brain.js').then(async ({ Brain }) => {
-    const brain = new Brain();
-    try {
-      await brain.getManifest();
-    } catch {
-      console.log('  🧠 Brain not initialized. Initializing now...');
-      await brain.initialize();
-    }
-
-    // Validate key format
-    if (!key.startsWith('SYNTH-ZERO-') || key.length < 20) {
-      console.log('  ❌ Invalid license key format.');
-      console.log('     Keys start with SYNTH-ZERO- and are at least 20 characters.');
-      process.exit(1);
-    }
-
-    // Persist key in manifest
-    await brain.updateManifest({ license_key: key });
-    console.log('');
-    console.log('  ✅ License key activated!');
-    console.log('');
-    console.log('  🔓 Premium features unlocked:');
-    console.log('     • crbro_global_map  — Neural cluster visualization');
-    console.log('     • crbro_maintenance — Automated brain optimization');
-    console.log('');
-    console.log('  Restart your IDE to apply changes.');
-    console.log('');
-  }).catch(console.error);
+  // ─── Legacy command (pre-1.4.0) — CRBRO is now fully free ──────
+  console.log('');
+  console.log('  ✅ Good news: since v1.4.0 CRBRO is fully free.');
+  console.log('     All 15 tools are available — no license key needed.');
+  console.log('');
 
 } else if (command === 'mine') {
   // ─── One-shot mining ───────────────────────────────────────────
@@ -316,8 +280,7 @@ if (command === 'init') {
   console.log('  ═══════════════════════════════════════════');
   console.log('');
   console.log('  Setup:');
-  console.log('    npx crbro-memory init            Initialize brain + detect IDEs');
-  console.log('    npx crbro-memory activate KEY     Activate premium license');
+  console.log('    npx crbro-memory init             Initialize brain + detect IDEs');
   console.log('    npx crbro-memory status           Show brain status');
   console.log('');
   console.log('  Auto-Mining:');
@@ -329,7 +292,7 @@ if (command === 'init') {
   console.log('  Server:');
   console.log('    npx crbro-memory                  Start MCP server (stdio)');
   console.log('');
-  console.log('  Part of Synthetica Decks — https://synthetica-decks.web.app');
+  console.log('  Open source (MIT) — https://github.com/Octonove/crbro-memory');
   console.log('');
 
 } else {

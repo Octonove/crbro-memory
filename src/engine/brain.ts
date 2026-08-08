@@ -107,7 +107,6 @@ export class Brain {
       total_sessions: 0,
       last_boot: null,
       last_consolidation: null,
-      license_key: null,
     };
 
     await writeJSON(this.paths.manifest(), manifest);
