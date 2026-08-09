@@ -25,6 +25,17 @@ npx crbro-memory init
 
 ### 2. Add to your MCP config
 
+> **Register CRBRO at the user level, not per-project.** Your brain lives in
+> `~/.crbro/` and is shared across every folder — but if you register the
+> server inside a single project, other folders won't have the tools and it
+> will *look* like the memory is gone. User-level registration makes it
+> available everywhere, which is the whole point.
+
+**Claude Code** (one command, available in every folder):
+```bash
+claude mcp add --scope user crbro -- npx -y crbro-memory
+```
+
 **Claude Desktop** (`~/AppData/Roaming/Claude/claude_desktop_config.json`):
 ```json
 {
@@ -37,7 +48,7 @@ npx crbro-memory init
 }
 ```
 
-**Cursor** (`.cursor/mcp.json`):
+**Cursor** (`~/.cursor/mcp.json` — the one in your home folder, not a project's `.cursor/`):
 ```json
 {
   "mcpServers": {
