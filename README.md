@@ -1,8 +1,16 @@
 # 🧠 CRBRO — Persistent Neural Memory for AI
 
+[![npm](https://img.shields.io/npm/v/crbro-memory)](https://www.npmjs.com/package/crbro-memory)
+[![license](https://img.shields.io/github/license/Octonove/crbro-memory)](LICENSE)
+[![MCP](https://img.shields.io/badge/MCP-Claude%20Code%20%C2%B7%20Claude%20Desktop%20%C2%B7%20Cursor-1E3A5F)](https://modelcontextprotocol.io)
+
 **CRBRO** is a local MCP (Model Context Protocol) server that gives your AI assistant **persistent long-term memory** across sessions. It uses a biological neural architecture — cortex, synapses, hippocampus — to store, connect, and retrieve knowledge automatically.
 
+![CRBRO demo](docs/demo.gif)
+
 Free and open source (MIT). All 15 tools included — no license, no account, no tiers.
+
+> ⭐ **If CRBRO gives your AI a memory worth keeping, a star on GitHub is the best way to support it.**
 
 ## Features
 
