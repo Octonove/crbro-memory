@@ -2,6 +2,13 @@
 
 All notable changes to CRBRO.
 
+## [1.5.1] — 2026-08-21
+
+Housekeeping only, no behaviour change. The 1.5.0 build carried a handful of
+neuron names from the brain it was debugged against inside compiled comments.
+They were only names, never any stored knowledge, but a published package is no
+place for them. Replaced with generic examples.
+
 ## [1.5.0] — 2026-08-21
 
 Retrieval rewrite. Everything you had saved is preserved: no neuron file is
@@ -50,9 +57,10 @@ to disk.
 
 ### Fixed — writes landed in the wrong neuron
 
-`findByName` fell back to substring containment in either direction, so "Coches
-Chinos" resolved to `project_walkthrough_skill_articulo_coches_chinos_...` and
-"SEO" to `process_walkthrough_creacin_de_4_2_pendientes_...`. Knowledge written
+`findByName` fell back to substring containment in either direction, so a
+two-word topic resolved to any long neuron id that happened to contain it, and a
+short name like "SEO" was swallowed by a sixty-character id that merely
+mentioned it. Knowledge written
 into the wrong neuron is recalled attributed to the wrong neuron, and no amount
 of index tuning repairs it. Matching is now exact, or a genuine near-miss above
 a high similarity threshold; otherwise it returns null and a new neuron is
@@ -105,8 +113,9 @@ felt.
 ### Changed — the miner enriches, it does not invent
 
 The miner created a neuron per detected topic, which produced roughly a thousand
-junk neurons on the reference brain (`lang_juego_billar_8_ball`, a markdown
-heading turned into `project_findings` that then attracted unrelated writes).
+junk neurons on the reference brain: a passing mention of a board game became a
+"language", and a markdown heading like "Findings" became a neuron that then
+attracted unrelated writes.
 They were tiny, so they outranked real knowledge, and they poisoned name
 resolution. The miner now only writes into neurons that already exist, tags its
 facts `source: 'miner'`, and no longer records contentless "Referenced in:

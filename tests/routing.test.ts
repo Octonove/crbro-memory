@@ -36,21 +36,21 @@ describe('findByName does not guess', () => {
   beforeEach(async () => {
     // The kind of neuron the miner used to manufacture out of a heading.
     await cortex.learn(
-      'walkthrough skill articulo coches chinos primera publicacion',
+      'walkthrough guide widget catalog first release',
       'fact',
-      'Paso 3 del walkthrough.',
+      'Step 3 of the walkthrough.',
     );
-    await cortex.learn('Coches Chinos', 'fact', 'Blog SEO sobre coches chinos en Espana.');
+    await cortex.learn('Widget Catalog', 'fact', 'Product catalogue for the storefront.');
     await cortex.learn(
-      'walkthrough creacion de 4 2 pendientes workflows de backlinks seo',
+      'walkthrough creation of 4 2 pending backlink seo workflows',
       'fact',
-      'Pendiente 4.2 del walkthrough.',
+      'Pending item 4.2 of the walkthrough.',
     );
   });
 
   it('routes an exact name to its own neuron', async () => {
-    const n = await cortex.findByName('Coches Chinos');
-    expect(n?.id).toBe('project_coches_chinos');
+    const n = await cortex.findByName('Widget Catalog');
+    expect(n?.id).toBe('project_widget_catalog');
   });
 
   it('does not swallow a short name into a long unrelated id', async () => {
@@ -68,8 +68,8 @@ describe('findByName does not guess', () => {
   });
 
   it('never overwrites an existing neuron when creating', async () => {
-    const before = await cortex.peek('project_coches_chinos');
-    const again = await cortex.create('Coches Chinos', 'project', 'otro-dominio');
+    const before = await cortex.peek('project_widget_catalog');
+    const again = await cortex.create('Widget Catalog', 'project', 'another-domain');
     expect(again.facts.length).toBe(before!.facts.length);
     expect(again.facts[0].text).toBe(before!.facts[0].text);
   });
@@ -195,13 +195,13 @@ describe('pending items can actually be closed', () => {
 
 describe('the miner enriches but does not invent', () => {
   it('skips a topic that has no neuron yet', async () => {
-    const result = await cortex.learn('Juego Billar 8 Ball', 'fact', 'Mencionado en un fichero.', {
+    const result = await cortex.learn('Pool 8 Ball', 'fact', 'Mentioned in passing in a file.', {
       source: 'miner',
       createIfMissing: false,
     });
     expect(result.action).toBe('skipped');
     expect(result.neuron).toBeNull();
-    expect(await fileExists(brain.paths.neuron('project_juego_billar_8_ball'))).toBe(false);
+    expect(await fileExists(brain.paths.neuron('project_pool_8_ball'))).toBe(false);
   });
 
   it('still writes into a neuron that exists, tagged as mined', async () => {
