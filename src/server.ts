@@ -16,7 +16,7 @@ import { Maintenance } from './engine/maintenance.js';
 export function createServer(): McpServer {
   const server = new McpServer({
     name: 'crbro-memory',
-    version: '1.4.0',
+    version: '1.5.1',
   });
 
   // ─── Initialize engines ──────────────────────────────────────
@@ -28,6 +28,12 @@ export function createServer(): McpServer {
   const prefrontal = new Prefrontal(brain);
   const searchEngine = new SearchEngine(brain);
   const maintenance = new Maintenance(brain, cortex, synapses, heatEngine, hippocampus, prefrontal, searchEngine);
+
+  // Every write to the cortex reaches the index, whoever made it. Wiring this
+  // once here - instead of calling indexNeuron from each caller - is what fixes
+  // the miner path, which used to write straight to disk. Result on the
+  // reference brain: only 106 of 1,183 neurons were searchable.
+  cortex.setIndexer(neuron => searchEngine.indexNeuron(neuron));
 
   // v1.4.0: CRBRO is fully free — all 15 tools, no license, no network calls.
   // The former license engine (Firestore-backed freemium) lives in git history
@@ -48,15 +54,33 @@ export function createServer(): McpServer {
 
         const response: any = { ...result };
 
-        // Inject protocol enforcement
+        // Inject protocol enforcement.
+        // The instruction text goes in ONE place. It used to be emitted twice --
+        // inside active_protocols[].instructions and again here -- which on a
+        // normal brain spent 1,407 of 2,713 tokens saying the same thing twice
+        // to the same reader.
         if (result.active_protocols && result.active_protocols.length > 0) {
           const protocolBlock = result.active_protocols.map((p: any) =>
             `## 📋 ${p.name} [priority: ${p.priority}]\n\n${p.instructions}`
           ).join('\n\n───────────────────\n\n');
 
+          response.active_protocols = result.active_protocols.map((p: any) => ({
+            id: p.id, name: p.name, priority: p.priority, source: p.source,
+          }));
+
           response.protocol_enforcement =
             '⚡ ACTIVE PROTOCOLS — These are MANDATORY behavioral directives. ' +
             'You MUST follow them in every interaction:\n\n' + protocolBlock;
+        }
+
+        // Pending items: say plainly what is open and what was just closed, so a
+        // stale to-do list carried over in a conversation summary is not repeated
+        // back to the user as if it were still live.
+        if ((result.recently_closed || []).length > 0) {
+          response.pending_guidance =
+            'ℹ️ `recently_closed` lists items already resolved - do not report them as pending. ' +
+            'And treat `open_items` as a starting point, not gospel: an item can be finished without ' +
+            'anyone closing it here, so verify before repeating it back to the user.';
         }
 
         return {
@@ -118,7 +142,7 @@ export function createServer(): McpServer {
   // ═══════════════════════════════════════════════════════════════
   server.tool(
     'crbro_learn',
-    'Teach the brain a fact, decision, pattern, or preference about a topic. If the neuron (topic) does not exist, it will be created automatically. Use this to store knowledge that should persist across sessions.',
+    'Teach the brain a fact, decision, pattern, or preference about a topic. If the neuron (topic) does not exist, it will be created automatically. Use this to store knowledge that should persist across sessions. If this replaces something you stored before, pass `supersedes` - otherwise the old version stays exactly as valid as the new one and both keep coming back on recall.',
     {
       topic: z.string().describe('The topic name (e.g., "OctoChat", "Firebase", "SEO Strategy")'),
       type: z.enum(['fact', 'decision', 'pattern', 'preference']).describe('Type of knowledge to store'),
@@ -126,16 +150,29 @@ export function createServer(): McpServer {
       confidence: z.number().min(0).max(1).optional().describe('Confidence level 0.0-1.0 (default 1.0)'),
       domain: z.string().optional().describe('Domain category (e.g., "proyectos-web", "infraestructura")'),
       rationale: z.string().optional().describe('Rationale for decisions'),
+      neuron_id: z.string().optional().describe('Exact neuron ID to write to (e.g. "project_octochat"). Pass the neuron_id you got back from crbro_recall: it skips name matching entirely and guarantees the knowledge lands where you mean.'),
+      supersedes: z.array(z.string()).optional().describe('Facts this one replaces: their ids, or their exact text. They stop showing up in recall but stay in the neuron file.'),
     },
     async (args) => {
       try {        const result = await cortex.learn(args.topic, args.type, args.content, {
           confidence: args.confidence,
           domain: args.domain,
           rationale: args.rationale,
+          neuronId: args.neuron_id,
+          supersedes: args.supersedes,
         });
+        // Indexing happens inside cortex.learn, through the indexer hook.
 
-        // Update search index
-        await searchEngine.indexNeuron(result.neuron);
+        // `neuron` is only null when the caller asked not to create one,
+        // which the MCP path never does. Guard anyway so the types stay honest.
+        if (!result.neuron) {
+          return {
+            content: [{
+              type: 'text' as const,
+              text: `No neuron matched "${args.topic}" and none was created.`,
+            }],
+          };
+        }
 
         return {
           content: [{
@@ -143,12 +180,14 @@ export function createServer(): McpServer {
             text: JSON.stringify({
               neuron_id: result.neuron.id,
               action: result.action,
+              superseded_facts: result.superseded,
               total_facts: result.neuron.facts.length,
               total_decisions: result.neuron.decisions.length,
               total_patterns: result.neuron.patterns.length,
               message: result.action === 'created'
                 ? `New neuron "${result.neuron.name}" created in ${result.neuron.domain}`
-                : `Updated neuron "${result.neuron.name}" — ${args.type} added`,
+                : `Updated neuron "${result.neuron.name}" — ${args.type} added` +
+                  (result.superseded > 0 ? `, ${result.superseded} older fact(s) superseded` : ''),
             }, null, 2),
           }],
         };
@@ -169,9 +208,12 @@ export function createServer(): McpServer {
   // ═══════════════════════════════════════════════════════════════
   server.tool(
     'crbro_neuron',
-    'Read a specific neuron by ID or name. Returns all facts, decisions, patterns, connections, and heat score.',
+    'Read a specific neuron by ID or name. Returns its facts (newest first), decisions, patterns, connections and heat. Big neurons are paginated - page through them with offset instead of trying to pull everything at once.',
     {
       id: z.string().describe('Neuron ID (e.g., "project_octochat") or name (e.g., "OctoChat")'),
+      limit: z.number().optional().describe('How many facts to return (default 40, max 200)'),
+      offset: z.number().optional().describe('Skip this many facts. Facts come newest first.'),
+      include_superseded: z.boolean().optional().describe('Include facts marked superseded or retracted (default false)'),
     },
     async (args) => {
       try {        // Try by ID first, then by name
@@ -193,10 +235,35 @@ export function createServer(): McpServer {
           };
         }
 
+        // A whole neuron can be enormous - the biggest on the reference brain
+        // serialises to 528,836 characters, more than most models can hold - so
+        // facts are paged instead of dumped.
+        const limit = Math.min(Math.max(args.limit ?? 40, 1), 200);
+        const offset = Math.max(args.offset ?? 0, 0);
+
+        const visible = (neuron.facts || []).filter(f =>
+          args.include_superseded ? true : (f.status !== 'superseded' && f.status !== 'retracted')
+        );
+        const ordered = [...visible].sort((a, b) =>
+          String(b.added || '').localeCompare(String(a.added || ''))
+        );
+        const page = ordered.slice(offset, offset + limit);
+
         return {
           content: [{
             type: 'text' as const,
-            text: JSON.stringify(neuron, null, 2),
+            text: JSON.stringify({
+              ...neuron,
+              facts: page,
+              facts_pagination: {
+                total: ordered.length,
+                returned: page.length,
+                offset,
+                has_more: offset + page.length < ordered.length,
+                order: 'newest first',
+                hidden_superseded: (neuron.facts || []).length - visible.length,
+              },
+            }, null, 2),
           }],
         };
       } catch (err) {
@@ -257,7 +324,7 @@ export function createServer(): McpServer {
   // ═══════════════════════════════════════════════════════════════
   server.tool(
     'crbro_recall',
-    'Search the brain for relevant knowledge using hybrid text search. Returns matching neurons ranked by relevance.',
+    'Search the brain for knowledge saved in earlier sessions. Searches the full text of every fact, decision and pattern, not just topic names, and each result carries the exact fact that matched plus the date it was recorded. Call this before asking the user something they may already have told you, and before assuming a past decision. If a result looks right, pass its neuron_id back to crbro_learn so new knowledge lands in the same place.',
     {
       query: z.string().describe('What to search for (e.g., "Firebase authentication setup")'),
       domain: z.string().optional().describe('Filter by domain'),
@@ -276,6 +343,9 @@ export function createServer(): McpServer {
               query: args.query,
               total_results: results.length,
               results,
+              hint: results.length === 0
+                ? 'Nothing matched. Try fewer, more distinctive words - names, ids, filenames - rather than a full sentence.'
+                : 'matching_content is the fact that matched; matched_added is when it was recorded. Prefer recent facts when two disagree.',
             }, null, 2),
           }],
         };
@@ -451,11 +521,11 @@ export function createServer(): McpServer {
   // ═══════════════════════════════════════════════════════════════
   server.tool(
     'crbro_context',
-    'Read or update the active working context. Tracks current topics, pending tasks, and last session.',
+    'Read or update the active working context: current topics, open items and last session. Close items as soon as they are done - an item left open here gets repeated back to the user in later sessions long after it was finished.',
     {
       set_topics: z.array(z.string()).optional().describe('Set active topics (neuron IDs)'),
-      add_pending: z.string().optional().describe('Add a pending task'),
-      resolve_pending: z.string().optional().describe('Mark a pending task as resolved'),
+      add_pending: z.string().optional().describe('Add an open item. Write it so it can be checked later, not as a vague reminder.'),
+      resolve_pending: z.string().optional().describe('Close an open item: its id (e.g. "p_ab12cd"), or enough of its text to identify it. It moves to recently_closed.'),
     },
     async (args) => {
       try {        const ctx = await prefrontal.updateContext({
@@ -554,13 +624,14 @@ export function createServer(): McpServer {
   // ═══════════════════════════════════════════════════════════════
   server.tool(
     'crbro_maintenance',
-    'Run brain maintenance — recalculate heat, prune weak synapses, archive cold neurons, rebuild search index.',
+    'Run brain maintenance: recalculate heat, prune weak synapses, check integrity and rebuild the search index. Archiving cold neurons is OFF unless you ask for it - on a mature brain most neurons look cold, and archived ones stop being searchable.',
     {
       dry_run: z.boolean().optional().describe('If true, only report what would happen without acting'),
+      archive: z.boolean().optional().describe('Also move cold neurons (heat < 0.05, untouched 90+ days) out of the cortex. Off by default. Run with dry_run first and read archivable_neurons before turning this on.'),
     },
     async (args) => {
       try {
-        const report = await maintenance.run(args.dry_run);
+        const report = await maintenance.run(args.dry_run, { archive: args.archive });
 
         return {
           content: [{
@@ -594,6 +665,9 @@ export function createServer(): McpServer {
     },
     async (args) => {
       try {        const result = await maintenance.consolidate(args.summary);
+        // Flush any index writes still sitting in the debounce window, so a
+        // session that ends right after a learn does not lose it.
+        await searchEngine.flush();
 
         return {
           content: [{
@@ -609,6 +683,59 @@ export function createServer(): McpServer {
           content: [{
             type: 'text' as const,
             text: `CRBRO consolidate error: ${err instanceof Error ? err.message : String(err)}`,
+          }],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  // ═══════════════════════════════════════════════════════════════
+  // TOOL 16: crbro_revise — Retire knowledge that stopped being true
+  // ═══════════════════════════════════════════════════════════════
+  server.tool(
+    'crbro_revise',
+    'Mark stored facts as no longer current. Use this the moment you discover something you saved is out of date or was wrong: a memory that only ever appends keeps serving the old version alongside the new one, with equal confidence. Superseded facts disappear from crbro_recall but stay in the neuron file, so nothing is lost and the correction is auditable.',
+    {
+      neuron: z.string().describe('Neuron ID or name holding the facts (e.g. "project_octochat")'),
+      facts: z.array(z.string()).describe('Which facts to retire: their ids, or their exact text.'),
+      status: z.enum(['superseded', 'retracted']).optional().describe('"superseded" = there is a newer truth (default). "retracted" = it was never true.'),
+      note: z.string().optional().describe('Why it stopped being true. Worth writing: the next reader will wonder.'),
+    },
+    async (args) => {
+      try {
+        const result = await cortex.revise(args.neuron, args.facts, {
+          status: args.status,
+          note: args.note,
+        });
+
+        if (!result.neuron) {
+          return {
+            content: [{
+              type: 'text' as const,
+              text: `Neuron not found: "${args.neuron}". Use crbro_recall to find the right neuron_id first.`,
+            }],
+          };
+        }
+
+        return {
+          content: [{
+            type: 'text' as const,
+            text: JSON.stringify({
+              neuron_id: result.neuron.id,
+              revised: result.revised,
+              status: args.status || 'superseded',
+              message: result.revised > 0
+                ? `${result.revised} fact(s) retired in "${result.neuron.name}". They no longer appear in recall.`
+                : 'Nothing matched. Pass the fact id from crbro_recall, or its exact text.',
+            }, null, 2),
+          }],
+        };
+      } catch (err) {
+        return {
+          content: [{
+            type: 'text' as const,
+            text: `CRBRO revise error: ${err instanceof Error ? err.message : String(err)}`,
           }],
           isError: true,
         };

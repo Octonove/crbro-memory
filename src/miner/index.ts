@@ -226,65 +226,73 @@ export class Miner {
     extracted: ExtractedContent,
     sourcePath: string,
   ): Promise<{ created: number; updated: number; facts: number; decisions: number }> {
-    let created = 0;
+    // The miner no longer creates neurons, so this stays at zero.
+    const created = 0;
     let updated = 0;
     let factsAdded = 0;
     let decisionsAdded = 0;
 
-    // Create/update neurons for each detected technology
+    // The miner ENRICHES neurons; it does not invent them.
+    //
+    // It used to create one per detected topic, which on a real brain produced
+    // roughly a thousand junk neurons: a passing mention of a board game became
+    // a "language", and a markdown heading like "Findings" became a neuron that
+    // then acted as a magnet for unrelated writes. They were all tiny, so
+    // they outranked the real knowledge, and they poisoned name resolution.
+    // A miss is now simply skipped: neurons are created by a human calling
+    // crbro_learn, never by a background pass guessing at topic names.
+    const MINER = { source: 'miner', createIfMissing: false as const };
+
+    // Technologies: recorded only against a neuron that already exists.
+    // The old "Referenced in: <file>" note is gone entirely -- it carried no
+    // knowledge and accounted for 708 of 4,273 facts on the reference brain.
     for (const tech of extracted.technologies) {
-      const neuronId = `tech_${tech.replace(/[^a-z0-9]/gi, '_').toLowerCase()}`;
       try {
-        const existing = await this.cortex.get(neuronId);
-        if (!existing) {
-          await this.cortex.learn(tech, 'fact', `Referenced in: ${basename(sourcePath)}`, {
-            domain: 'conocimiento',
-          });
-          created++;
-        }
-      } catch {
-        // Neuron might not exist yet
-        try {
-          await this.cortex.learn(tech, 'fact', `Referenced in: ${basename(sourcePath)}`, {
-            domain: 'conocimiento',
-          });
-          created++;
-        } catch { /* skip */ }
-      }
+        const result = await this.cortex.learn(
+          tech,
+          'fact',
+          `Used in ${basename(sourcePath)}.`,
+          { ...MINER, domain: 'conocimiento', confidence: 0.6 },
+        );
+        if (result.action === 'updated') updated++;
+      } catch { /* skip */ }
     }
 
-    // Create neurons from extracted topics (if substantial)
+    // Topic summaries, into existing neurons only.
     for (const topic of extracted.topics.slice(0, 3)) {
       if (topic.length < 5) continue;
-      
+      if (!extracted.summary) continue;
       try {
-        const result = await this.cortex.learn(topic, 'fact', extracted.summary || `Mined from ${basename(sourcePath)}`, {
+        const result = await this.cortex.learn(topic, 'fact', extracted.summary, {
+          ...MINER,
           domain: 'general',
+          confidence: 0.7,
         });
-        if (result.action === 'created') created++;
-        else updated++;
+        if (result.action === 'updated') updated++;
       } catch { /* skip duplicates */ }
     }
 
-    // Add facts to first topic neuron
+    // Facts and decisions attach to the primary topic, again only if it exists.
     if (extracted.topics.length > 0) {
       const primaryTopic = extracted.topics[0];
-      
+
       for (const fact of extracted.facts.slice(0, 5)) {
         try {
-          await this.cortex.learn(primaryTopic, 'fact', fact, {
+          const result = await this.cortex.learn(primaryTopic, 'fact', fact, {
+            ...MINER,
             confidence: 0.7, // Lower confidence for auto-mined data
           });
-          factsAdded++;
+          if (result.action !== 'skipped') factsAdded++;
         } catch { /* skip */ }
       }
 
       for (const decision of extracted.decisions.slice(0, 3)) {
         try {
-          await this.cortex.learn(primaryTopic, 'decision', decision, {
+          const result = await this.cortex.learn(primaryTopic, 'decision', decision, {
+            ...MINER,
             rationale: `Auto-mined from ${basename(sourcePath)}`,
           });
-          decisionsAdded++;
+          if (result.action !== 'skipped') decisionsAdded++;
         } catch { /* skip */ }
       }
     }
