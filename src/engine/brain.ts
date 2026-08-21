@@ -61,8 +61,14 @@ export class BrainPaths {
     return path.join(this.prefrontal, 'global_map.json');
   }
 
+  /** Pre-v2 index. Kept only so the migration can delete it. */
   searchIndex(): string {
     return path.join(this.search, 'orama.index.json');
+  }
+
+  /** Chunk-level index (v2+). Separate filename so an old index is never loaded. */
+  chunksIndex(): string {
+    return path.join(this.search, 'chunks.index.json');
   }
 }
 
@@ -168,6 +174,14 @@ export class Brain {
     // Load active protocols
     const activeProtocols = await this.loadProtocols();
 
+    // Pending items, split into what is open and what was just closed.
+    const openItems = (activeContext?.pending_tasks || []).map(t =>
+      typeof t === 'string'
+        ? { id: '', text: t, added: '' }
+        : t
+    );
+    const recentlyClosed = activeContext?.recently_closed || [];
+
     // Update boot timestamp
     this.manifest.last_boot = now();
     await writeJSON(this.paths.manifest(), this.manifest);
@@ -181,7 +195,12 @@ export class Brain {
       last_session: activeContext?.last_session || null,
       active_context: activeContext,
       active_protocols: activeProtocols,
-      message: `CRBRO boot complete. ${this.manifest.total_neurons} neurons, ${this.manifest.total_synapses} synapses, ${this.manifest.total_sessions} sessions. ${activeProtocols.length} active protocol(s).`,
+      open_items: openItems,
+      recently_closed: recentlyClosed,
+      message:
+        `CRBRO boot complete. ${this.manifest.total_neurons} neurons, ${this.manifest.total_synapses} synapses, ` +
+        `${this.manifest.total_sessions} sessions. ${activeProtocols.length} active protocol(s). ` +
+        `${openItems.length} open item(s), ${recentlyClosed.length} recently closed.`,
     };
   }
 

@@ -24,12 +24,20 @@ export async function readJSON<T>(filePath: string): Promise<T | null> {
  * Write JSON to file atomically (write to temp, then rename).
  * Creates parent directories if they don't exist.
  */
-export async function writeJSON<T>(filePath: string, data: T): Promise<void> {
+export async function writeJSON<T>(
+  filePath: string,
+  data: T,
+  options?: { pretty?: boolean }
+): Promise<void> {
   const dir = path.dirname(filePath);
   await fs.mkdir(dir, { recursive: true });
 
   const tempPath = `${filePath}.tmp`;
-  const content = JSON.stringify(data, null, 2);
+  // Pretty by default: these files are meant to be read and diffed by humans.
+  // The search index opts out — it reaches tens of MB and nobody reads it.
+  const content = options?.pretty === false
+    ? JSON.stringify(data)
+    : JSON.stringify(data, null, 2);
 
   await fs.writeFile(tempPath, content, 'utf-8');
   await fs.rename(tempPath, filePath);

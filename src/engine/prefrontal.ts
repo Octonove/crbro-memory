@@ -2,8 +2,20 @@
 // Active context, hot topics, and global map (clustering + bridges)
 
 import { readJSON, writeJSON, listJSONFiles, now } from '../utils/fs.js';
+import { pendingId } from '../utils/hash.js';
 import type { Brain } from './brain.js';
-import type { ActiveContext, HotTopics, GlobalMap, Cluster, Bridge, Neuron } from '../types/index.js';
+import type { ActiveContext, HotTopics, GlobalMap, Cluster, Bridge, Neuron, PendingTask } from '../types/index.js';
+
+/** How many resolved items to keep around as a reminder. */
+const RECENTLY_CLOSED_CAP = 15;
+
+/** Normalise a stored entry: v1 brains hold plain strings. */
+function toTask(entry: PendingTask | string): PendingTask {
+  if (typeof entry === 'string') {
+    return { id: pendingId(entry), text: entry, added: '' };
+  }
+  return entry;
+}
 
 export class Prefrontal {
   constructor(private brain: Brain) {}
@@ -15,12 +27,19 @@ export class Prefrontal {
    */
   async getContext(): Promise<ActiveContext> {
     const ctx = await readJSON<ActiveContext>(this.brain.paths.activeContext());
-    return ctx || {
-      last_session: '',
-      active_topics: [],
-      pending_tasks: [],
-      last_updated: now(),
-    };
+    if (!ctx) {
+      return {
+        last_session: '',
+        active_topics: [],
+        pending_tasks: [],
+        recently_closed: [],
+        last_updated: now(),
+      };
+    }
+    // Upgrade v1 string entries in memory; they get written back on next update.
+    ctx.pending_tasks = (ctx.pending_tasks || []).map(toTask);
+    ctx.recently_closed = ctx.recently_closed || [];
+    return ctx;
   }
 
   /**
@@ -29,27 +48,58 @@ export class Prefrontal {
   async updateContext(updates: {
     set_topics?: string[];
     add_pending?: string;
+    /**
+     * Id of the item to close, or enough of its text to identify it.
+     *
+     * This used to filter by exact string equality, which made real pending
+     * items unresolvable: they run to hundreds of characters with quotes and
+     * file paths inside, and nothing ever reproduced one byte-for-byte. So
+     * items accumulated forever and got repeated back to the user long after
+     * they were done.
+     */
     resolve_pending?: string;
-  }): Promise<ActiveContext> {
+  }): Promise<ActiveContext & { resolved?: PendingTask[] }> {
     const ctx = await this.getContext();
+    const tasks = ctx.pending_tasks.map(toTask);
+    let resolved: PendingTask[] = [];
 
     if (updates.set_topics) {
       ctx.active_topics = updates.set_topics;
     }
 
     if (updates.add_pending) {
-      if (!ctx.pending_tasks.includes(updates.add_pending)) {
-        ctx.pending_tasks.push(updates.add_pending);
+      const text = updates.add_pending.trim();
+      const id = pendingId(text);
+      if (!tasks.some(t => t.id === id)) {
+        tasks.push({ id, text, added: now() });
       }
     }
 
     if (updates.resolve_pending) {
-      ctx.pending_tasks = ctx.pending_tasks.filter(t => t !== updates.resolve_pending);
+      const needle = updates.resolve_pending.trim();
+      const lower = needle.toLowerCase();
+
+      const hit = (t: PendingTask) =>
+        t.id === needle ||
+        t.text === needle ||
+        (lower.length >= 8 &&
+          (t.text.toLowerCase().includes(lower) || lower.includes(t.text.toLowerCase())));
+
+      resolved = tasks.filter(hit).map(t => ({ ...t, closed: now() }));
+      const keep = tasks.filter(t => !hit(t));
+
+      if (resolved.length > 0) {
+        ctx.recently_closed = [...resolved, ...(ctx.recently_closed || [])]
+          .slice(0, RECENTLY_CLOSED_CAP);
+      }
+      ctx.pending_tasks = keep;
+    } else {
+      ctx.pending_tasks = tasks;
     }
 
     ctx.last_updated = now();
     await writeJSON(this.brain.paths.activeContext(), ctx);
-    return ctx;
+    return { ...ctx, resolved };
   }
 
   // ─── Hot Topics ─────────────────────────────────────────────────
