@@ -8,7 +8,7 @@
 
 ![CRBRO demo](docs/demo.gif)
 
-Free and open source (MIT). All 18 tools included — no license, no account, no tiers.
+Free and open source (MIT). All 21 tools included — no license, no account, no tiers.
 
 > ⭐ **If CRBRO gives your AI a memory worth keeping, a star on GitHub is the best way to support it.**
 
@@ -20,6 +20,7 @@ Free and open source (MIT). All 18 tools included — no license, no account, no
 - **✏️ Correctable** — Knowledge can be superseded or retracted, not just piled up. A memory that only appends keeps serving yesterday's answer with today's confidence
 - **🔐 Credential-aware** — API keys, tokens and passwords are replaced with a marker before they touch the disk. The sentence around them survives; the secret does not
 - **👥 Safe with two editors open** — Writes are serialised per neuron, so running CRBRO in two IDEs at once does not silently lose facts
+- **🤝 Shareable per project** — Put one project in a team space and it stays in step across everyone's machine. Everything else in your brain never leaves it
 - **🗺️ Global Map** — Cluster detection and cross-domain bridge identification
 - **⛏️ Knowledge Miner** — Optionally scans your local `.md`/`.txt` notes and feeds them into the brain
 - **🔒 Fully Local** — Runs on Node.js alone: no Python, no Docker, no databases, no external services. Your memory never leaves your machine
@@ -73,7 +74,7 @@ claude mcp add --scope user crbro -- npx -y crbro-memory
 
 ### 3. Start using it
 
-Your AI will now have access to 18 memory tools. Start any session with `crbro_boot`.
+Your AI will now have access to 21 memory tools. Start any session with `crbro_boot`.
 
 ## Tools
 
@@ -95,8 +96,54 @@ Your AI will now have access to 18 memory tools. Start any session with `crbro_b
 | `crbro_revise` | Mark facts as superseded or retracted when they stop being true |
 | `crbro_audit` | Find credentials stored in the brain — reports the kind, never the value |
 | `crbro_forget` | Remove facts for good, keeping a copy in `.quarantine/` first |
+| `crbro_space` | Create or join a team space — a private git repo for shared projects |
+| `crbro_share` | Put one project into a space, after showing exactly what would be sent |
+| `crbro_sync` | Exchange notes with teammates now, instead of waiting for the next session |
 | `crbro_maintenance` | Brain maintenance — heat, pruning, integrity, index rebuild |
 | `crbro_consolidate` | End-of-session consolidation |
+
+## Team memory
+
+Two people working on the same thing shouldn't have to tell their assistants
+the same things twice. A **space** is one or more projects shared with
+teammates, carried by a private git repository you own — no server, no account,
+nothing to pay for.
+
+```bash
+# One person, once:
+crbro_space  action: create   name: "team"   remote: git@github.com:acme/team-memory.git   author: "ana"
+crbro_share  neuron: "project_x"   space: "team"
+
+# Everyone else, once:
+crbro_space  action: join     name: "team"   remote: git@github.com:acme/team-memory.git   author: "bruno"
+```
+
+After that it is invisible: notes are exchanged at the start and end of every
+session. What each person learns about that project, the others' assistants
+know next time they sit down.
+
+**How it stays out of your way**
+
+- Nobody ever writes to anybody else's file. Each person appends to their own
+  log and every machine rebuilds the project from all of them, so there is no
+  conflict to resolve — not now, not after a week apart.
+- If someone marks a fact as no longer true, that wins. Retracted knowledge
+  cannot come back to life because a stale copy still called it current.
+- No connection is a normal answer, not an error. Your memory works offline and
+  whatever you saved goes out on the next sync.
+
+**What never leaves your machine**
+
+- Every project you did not explicitly share.
+- Preferences — not shareable at all, at any setting. They are the field most
+  likely to hold a key.
+- Credentials. `crbro_share` refuses outright if it finds one, and tells you
+  where. It will not redact it and send the rest.
+
+> **Sharing cannot be undone.** Once a teammate has pulled a project it is on
+> their disk. Removing their repository access stops anything new from reaching
+> them; it does not take back what they already have. That is true of any
+> sync system — worth knowing before you share, not after.
 
 ## Architecture
 
@@ -115,6 +162,9 @@ Your AI will now have access to 18 memory tools. Start any session with `crbro_b
 │   ├── hot_topics.json
 │   └── global_map.json
 ├── archives/               ← Cold neurons (opt-in; nothing is archived unless you ask)
+├── shared/                 ← One git repo per team space. Notes only, never the cortex
+│   └── team/
+│       └── neurons/project_x/ops/ana.a1b2c3.jsonl
 └── .search/                ← Orama search index
     └── chunks.index.json   ← one document per fact
 ```
