@@ -1,9 +1,10 @@
 // ─── CRBRO Cortex Engine ─────────────────────────────────────────
 // Neuron CRUD — create, read, update, list neurons
 
-import { readJSON, writeJSON, listJSONFiles, now } from '../utils/fs.js';
+import { readJSON, writeJSON, updateJSON, listJSONFiles, now } from '../utils/fs.js';
 import { neuronId, inferNeuronType, toSnakeCase, legacySnakeCase } from '../utils/ids.js';
 import { factId } from '../utils/hash.js';
+import { redact, secretKinds } from './secrets.js';
 import type { Brain } from './brain.js';
 import type { Neuron, NeuronType, Fact, Decision, FactStatus } from '../types/index.js';
 
@@ -101,14 +102,14 @@ export class Cortex {
    * Get a neuron by ID.
    */
   async get(id: string): Promise<Neuron | null> {
-    const neuron = await readJSON<Neuron>(this.brain.paths.neuron(id));
-    if (neuron) {
-      // Touch — update access time and count
-      neuron.last_accessed = now();
-      neuron.access_count = (neuron.access_count || 0) + 1;
-      await writeJSON(this.brain.paths.neuron(id), neuron);
-    }
-    return neuron;
+    // Even a read touches the file (access time and count), so it goes through
+    // the same locked read-modify-write as everything else.
+    return updateJSON<Neuron>(this.brain.paths.neuron(id), current => {
+      if (!current) return null;
+      current.last_accessed = now();
+      current.access_count = (current.access_count || 0) + 1;
+      return current;
+    });
   }
 
   /**
@@ -183,34 +184,38 @@ export class Cortex {
   async create(name: string, type: NeuronType, domain: string, summary?: string): Promise<Neuron> {
     const id = neuronId(name, type);
 
-    const existing = await this.peek(id);
-    if (existing) return existing;
+    // Check-then-create has to happen inside the lock, or two clients starting
+    // the same topic at the same moment both think they are the first.
+    let creada = false;
+    const neuron = await updateJSON<Neuron>(this.brain.paths.neuron(id), current => {
+      if (current) return null;
+      creada = true;
+      return {
+        id,
+        name,
+        domain,
+        type,
+        created: now(),
+        last_accessed: now(),
+        access_count: 1,
+        heat: 0.5, // Initial heat
+        summary: summary || '',
+        facts: [],
+        decisions: [],
+        patterns: [],
+        preferences: [],
+        connections: [],
+        tags: [],
+      };
+    });
 
-    const neuron: Neuron = {
-      id,
-      name,
-      domain,
-      type,
-      created: now(),
-      last_accessed: now(),
-      access_count: 1,
-      heat: 0.5, // Initial heat
-      summary: summary || '',
-      facts: [],
-      decisions: [],
-      patterns: [],
-      preferences: [],
-      connections: [],
-      tags: [],
-    };
+    if (creada) {
+      // Only count a neuron that was really created, or the manifest drifts.
+      const manifest = await this.brain.getManifest();
+      await this.brain.updateManifest({ total_neurons: manifest.total_neurons + 1 });
+    }
 
-    await writeJSON(this.brain.paths.neuron(id), neuron);
-
-    // Only count a neuron that was really created, or the manifest drifts.
-    const manifest = await this.brain.getManifest();
-    await this.brain.updateManifest({ total_neurons: manifest.total_neurons + 1 });
-
-    return neuron;
+    return neuron as Neuron;
   }
 
   /**
@@ -241,7 +246,18 @@ export class Cortex {
        */
       createIfMissing?: boolean;
     }
-  ): Promise<{ neuron: Neuron | null; action: 'created' | 'updated' | 'skipped'; superseded: number }> {
+  ): Promise<{
+    neuron: Neuron | null;
+    action: 'created' | 'updated' | 'skipped';
+    superseded: number;
+    redacted: string[];
+  }> {
+    // Credentials never make it to disk. The sentence around them survives, so
+    // "the deploy token is [REDACTED: npm token]" still records that a token
+    // exists and what kind — the knowledge without the liability.
+    const limpio = redact(content);
+    content = limpio.text;
+
     let neuron: Neuron | null = null;
     let action: 'created' | 'updated' | 'skipped' = 'updated';
 
@@ -254,7 +270,7 @@ export class Cortex {
 
     if (!neuron) {
       if (options?.createIfMissing === false) {
-        return { neuron: null, action: 'skipped', superseded: 0 };
+        return { neuron: null, action: 'skipped', superseded: 0, redacted: limpio.found };
       }
       const nType = options?.neuronType || inferNeuronType(topic);
       const domain = options?.domain || 'general';
@@ -264,66 +280,74 @@ export class Cortex {
 
     let superseded = 0;
 
-    switch (type) {
-      case 'fact': {
-        const id = factId(content);
-        const isDuplicate = neuron.facts.some(
-          f => f.text.toLowerCase() === content.toLowerCase()
-        );
-        if (!isDuplicate) {
-          if (options?.supersedes?.length) {
-            superseded = this.retire(neuron, options.supersedes, id, 'superseded');
+    // From here on we work on a fresh read inside the lock. Mutating the copy
+    // fetched a moment ago and saving it over the top is exactly how a
+    // concurrent writer's facts disappeared.
+    const actualizada = await updateJSON<Neuron>(
+      this.brain.paths.neuron(neuron.id),
+      current => {
+        const n = current || neuron;
+
+        switch (type) {
+          case 'fact': {
+            const id = factId(content);
+            const isDuplicate = n.facts.some(
+              f => f.text.toLowerCase() === content.toLowerCase()
+            );
+            if (!isDuplicate) {
+              if (options?.supersedes?.length) {
+                superseded = this.retire(n, options.supersedes, id, 'superseded');
+              }
+              const fact: Fact = {
+                text: content,
+                confidence: options?.confidence ?? 1.0,
+                added: now(),
+                source: options?.source || 'session',
+                id,
+                status: 'active',
+              };
+              if (options?.supersedes?.length) fact.supersedes = options.supersedes;
+              n.facts.push(fact);
+              this.tally.facts++;
+              this.tally.topics.add(n.id);
+            }
+            break;
           }
-          const fact: Fact = {
-            text: content,
-            confidence: options?.confidence ?? 1.0,
-            added: now(),
-            source: options?.source || 'session',
-            id,
-            status: 'active',
-          };
-          if (options?.supersedes?.length) fact.supersedes = options.supersedes;
-          neuron.facts.push(fact);
-          this.tally.facts++;
-          this.tally.topics.add(neuron.id);
+          case 'decision': {
+            const decision: Decision = {
+              text: content,
+              date: now(),
+              rationale: options?.rationale || '',
+            };
+            n.decisions.push(decision);
+            this.tally.decisions++;
+            this.tally.topics.add(n.id);
+            break;
+          }
+          case 'pattern': {
+            if (!n.patterns.includes(content)) n.patterns.push(content);
+            break;
+          }
+          case 'preference': {
+            if (!n.preferences.includes(content)) n.preferences.push(content);
+            break;
+          }
         }
-        break;
-      }
-      case 'decision': {
-        const decision: Decision = {
-          text: content,
-          date: now(),
-          rationale: options?.rationale || '',
-        };
-        neuron.decisions.push(decision);
-        this.tally.decisions++;
-        this.tally.topics.add(neuron.id);
-        break;
-      }
-      case 'pattern': {
-        if (!neuron.patterns.includes(content)) {
-          neuron.patterns.push(content);
+
+        n.last_accessed = now();
+        n.access_count = (n.access_count || 0) + 1;
+
+        if (options?.domain && n.domain === 'general') {
+          n.domain = options.domain;
         }
-        break;
+
+        return n;
       }
-      case 'preference': {
-        if (!neuron.preferences.includes(content)) {
-          neuron.preferences.push(content);
-        }
-        break;
-      }
-    }
+    );
 
-    neuron.last_accessed = now();
-    neuron.access_count = (neuron.access_count || 0) + 1;
-
-    if (options?.domain && neuron.domain === 'general') {
-      neuron.domain = options.domain;
-    }
-
-    await writeJSON(this.brain.paths.neuron(neuron.id), neuron);
-    await this.reindex(neuron);
-    return { neuron, action, superseded };
+    const final = (actualizada || neuron) as Neuron;
+    await this.reindex(final);
+    return { neuron: final, action, superseded, redacted: limpio.found };
   }
 
   /**
@@ -344,23 +368,31 @@ export class Cortex {
       (await this.peek(neuronRef)) || (await this.findByName(neuronRef));
     if (!neuron) return { neuron: null, revised: 0 };
 
-    const revised = this.retire(
-      neuron,
-      targets,
-      options?.replacedBy,
-      options?.status || 'superseded',
-      options?.note
+    let revised = 0;
+    const actualizada = await updateJSON<Neuron>(
+      this.brain.paths.neuron(neuron.id),
+      current => {
+        const n = current || neuron;
+        revised = this.retire(
+          n,
+          targets,
+          options?.replacedBy,
+          options?.status || 'superseded',
+          options?.note
+        );
+        if (revised === 0) return null;
+        n.last_accessed = now();
+        return n;
+      }
     );
 
     if (revised > 0) {
-      neuron.last_accessed = now();
-      await writeJSON(this.brain.paths.neuron(neuron.id), neuron);
       // Must reindex, or the correction is silently lost on next boot —
       // which is exactly the failure this feature exists to close.
-      await this.reindex(neuron);
+      await this.reindex((actualizada || neuron) as Neuron);
     }
 
-    return { neuron, revised };
+    return { neuron: (actualizada || neuron) as Neuron, revised };
   }
 
   /** Flip matching facts to a non-active status. Returns how many changed. */
@@ -453,12 +485,13 @@ export class Cortex {
    * Update a neuron's summary.
    */
   async updateSummary(id: string, summary: string): Promise<Neuron | null> {
-    const neuron = await this.peek(id);
+    const neuron = await updateJSON<Neuron>(this.brain.paths.neuron(id), current => {
+      if (!current) return null;
+      current.summary = summary;
+      current.last_accessed = now();
+      return current;
+    });
     if (!neuron) return null;
-
-    neuron.summary = summary;
-    neuron.last_accessed = now();
-    await writeJSON(this.brain.paths.neuron(id), neuron);
     await this.reindex(neuron);
     return neuron;
   }
@@ -467,17 +500,80 @@ export class Cortex {
    * Add tags to a neuron.
    */
   async addTags(id: string, tags: string[]): Promise<Neuron | null> {
-    const neuron = await this.peek(id);
-    if (!neuron) return null;
-
-    for (const tag of tags) {
-      if (!neuron.tags.includes(tag)) {
-        neuron.tags.push(tag);
+    const neuron = await updateJSON<Neuron>(this.brain.paths.neuron(id), current => {
+      if (!current) return null;
+      for (const tag of tags) {
+        if (!current.tags.includes(tag)) current.tags.push(tag);
       }
-    }
-    await writeJSON(this.brain.paths.neuron(id), neuron);
+      return current;
+    });
+    if (!neuron) return null;
     await this.reindex(neuron);
     return neuron;
+  }
+
+  /**
+   * Remove facts for good.
+   *
+   * The only destructive operation in CRBRO, so it never edits in place: the
+   * whole neuron is copied to .quarantine/ first, with a timestamp, and can be
+   * put back by hand. Superseding hides a fact; this is for the ones that must
+   * not exist at all — a credential, someone's personal data.
+   */
+  async forget(
+    neuronRef: string,
+    targets: string[]
+  ): Promise<{ neuron_id: string | null; removed: number; backup: string | null }> {
+    const found = (await this.peek(neuronRef)) || (await this.findByName(neuronRef));
+    if (!found) return { neuron_id: null, removed: 0, backup: null };
+
+    const sello = now().replace(/[:.]/g, '-');
+    const backup = `${this.brain.paths.quarantine}/${found.id}.${sello}.json`;
+    await writeJSON(backup, found);
+
+    let removed = 0;
+    const wanted = targets.map(t => t.trim().toLowerCase());
+
+    const after = await updateJSON<Neuron>(this.brain.paths.neuron(found.id), current => {
+      if (!current) return null;
+      const before = current.facts.length;
+      current.facts = current.facts.filter(f => {
+        const fid = (f.id || factId(f.text)).toLowerCase();
+        return !(wanted.includes(fid) || wanted.includes(f.text.trim().toLowerCase()));
+      });
+      removed = before - current.facts.length;
+      if (removed === 0) return null;
+      current.last_accessed = now();
+      return current;
+    });
+
+    if (removed > 0 && after) await this.reindex(after);
+    return { neuron_id: found.id, removed, backup: removed > 0 ? backup : null };
+  }
+
+  /**
+   * Which neurons hold something that looks like a credential.
+   * Reports the kind and where it is, never the value.
+   */
+  async auditSecrets(): Promise<Array<{ neuron_id: string; name: string; kinds: string[]; facts: number }>> {
+    const out: Array<{ neuron_id: string; name: string; kinds: string[]; facts: number }> = [];
+    for (const id of await listJSONFiles(this.brain.paths.cortex)) {
+      const n = await readJSON<Neuron>(this.brain.paths.neuron(id));
+      if (!n) continue;
+      const kinds = new Set<string>();
+      let afectados = 0;
+      for (const f of n.facts || []) {
+        const k = secretKinds(f.text || '');
+        if (k.length) {
+          afectados++;
+          k.forEach(x => kinds.add(x));
+        }
+      }
+      if (afectados > 0) {
+        out.push({ neuron_id: n.id, name: n.name, kinds: [...kinds], facts: afectados });
+      }
+    }
+    return out;
   }
 
   /**

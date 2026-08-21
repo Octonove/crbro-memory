@@ -16,7 +16,7 @@ import { Maintenance } from './engine/maintenance.js';
 export function createServer(): McpServer {
   const server = new McpServer({
     name: 'crbro-memory',
-    version: '1.5.2',
+    version: '1.6.0',
   });
 
   // ─── Initialize engines ──────────────────────────────────────
@@ -181,6 +181,12 @@ export function createServer(): McpServer {
               neuron_id: result.neuron.id,
               action: result.action,
               superseded_facts: result.superseded,
+              redacted: result.redacted.length > 0 ? result.redacted : undefined,
+              redaction_note: result.redacted.length > 0
+                ? `Stored, but ${result.redacted.length} credential(s) were replaced with a marker: ` +
+                  `${result.redacted.join(', ')}. The sentence around them was kept. ` +
+                  'Tell the user, and do not try to store the value again.'
+                : undefined,
               total_facts: result.neuron.facts.length,
               total_decisions: result.neuron.decisions.length,
               total_patterns: result.neuron.patterns.length,
@@ -628,10 +634,11 @@ export function createServer(): McpServer {
     {
       dry_run: z.boolean().optional().describe('If true, only report what would happen without acting'),
       archive: z.boolean().optional().describe('Also move cold neurons (heat < 0.05, untouched 90+ days) out of the cortex. Off by default. Run with dry_run first and read archivable_neurons before turning this on.'),
+      purge_boilerplate: z.boolean().optional().describe('Also delete contentless facts left by early versions of the miner ("Referenced in: file.md"). Off by default; every run reports how many there are.'),
     },
     async (args) => {
       try {
-        const report = await maintenance.run(args.dry_run, { archive: args.archive });
+        const report = await maintenance.run(args.dry_run, { archive: args.archive, purgeBoilerplate: args.purge_boilerplate });
 
         return {
           content: [{
@@ -736,6 +743,95 @@ export function createServer(): McpServer {
           content: [{
             type: 'text' as const,
             text: `CRBRO revise error: ${err instanceof Error ? err.message : String(err)}`,
+          }],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  // ═══════════════════════════════════════════════════════════════
+  // TOOL 17: crbro_audit — What should not be in the brain
+  // ═══════════════════════════════════════════════════════════════
+  server.tool(
+    'crbro_audit',
+    'Check the brain for credentials that were stored before they could be filtered out — API keys, tokens, passwords. Reports which neurons hold them and what kind, never the values themselves. Run it once after upgrading, and any time you suspect a secret was pasted into a conversation. Use crbro_forget to remove what it finds.',
+    {},
+    async () => {
+      try {
+        const hallazgos = await cortex.auditSecrets();
+        const total = hallazgos.reduce((n, h) => n + h.facts, 0);
+
+        return {
+          content: [{
+            type: 'text' as const,
+            text: JSON.stringify({
+              neurons_affected: hallazgos.length,
+              facts_affected: total,
+              findings: hallazgos,
+              message: hallazgos.length === 0
+                ? 'No credentials found in the brain.'
+                : `${total} fact(s) across ${hallazgos.length} neuron(s) contain something that looks like a credential. ` +
+                  'They are also inside the search index, so recall can return them. ' +
+                  'Remove them with crbro_forget, then rotate the credentials — assume they are compromised.',
+              note: 'Values are never shown here, by design.',
+            }, null, 2),
+          }],
+        };
+      } catch (err) {
+        return {
+          content: [{
+            type: 'text' as const,
+            text: `CRBRO audit error: ${err instanceof Error ? err.message : String(err)}`,
+          }],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  // ═══════════════════════════════════════════════════════════════
+  // TOOL 18: crbro_forget — Remove knowledge for good
+  // ═══════════════════════════════════════════════════════════════
+  server.tool(
+    'crbro_forget',
+    'Permanently remove facts from a neuron. This is for things that must not exist at all — a credential, personal data, something stored by mistake. For knowledge that merely stopped being true, use crbro_revise instead, which keeps the history. The whole neuron is copied to .quarantine/ before anything is removed, so a mistake can be undone by hand. Always tell the user what you are about to remove and get their agreement first.',
+    {
+      neuron: z.string().describe('Neuron ID or name holding the facts'),
+      facts: z.array(z.string()).describe('Which facts to remove: their ids, or their exact text'),
+    },
+    async (args) => {
+      try {
+        const r = await cortex.forget(args.neuron, args.facts);
+
+        if (!r.neuron_id) {
+          return {
+            content: [{
+              type: 'text' as const,
+              text: `Neuron not found: "${args.neuron}". Use crbro_recall or crbro_audit to find the right one.`,
+            }],
+          };
+        }
+
+        return {
+          content: [{
+            type: 'text' as const,
+            text: JSON.stringify({
+              neuron_id: r.neuron_id,
+              removed: r.removed,
+              backup: r.backup,
+              message: r.removed > 0
+                ? `${r.removed} fact(s) removed from "${r.neuron_id}". A copy of the neuron as it was is in ${r.backup}. ` +
+                  'If any of them was a credential, rotate it: it existed on disk and in the index.'
+                : 'Nothing matched. Pass the fact id from crbro_recall, or its exact text.',
+            }, null, 2),
+          }],
+        };
+      } catch (err) {
+        return {
+          content: [{
+            type: 'text' as const,
+            text: `CRBRO forget error: ${err instanceof Error ? err.message : String(err)}`,
           }],
           isError: true,
         };

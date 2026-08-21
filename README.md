@@ -8,7 +8,7 @@
 
 ![CRBRO demo](docs/demo.gif)
 
-Free and open source (MIT). All 16 tools included — no license, no account, no tiers.
+Free and open source (MIT). All 18 tools included — no license, no account, no tiers.
 
 > ⭐ **If CRBRO gives your AI a memory worth keeping, a star on GitHub is the best way to support it.**
 
@@ -18,6 +18,8 @@ Free and open source (MIT). All 16 tools included — no license, no account, no
 - **🔍 Fact-Level Search** — Powered by [Orama](https://orama.com/). Every fact is indexed on its own, so a topic with hundreds of facts stays as findable as one with three, and each result comes back with the exact fact that matched and the date it was recorded
 - **🔥 Heat Scores** — Automatic relevance tracking based on frequency, recency, and connectivity
 - **✏️ Correctable** — Knowledge can be superseded or retracted, not just piled up. A memory that only appends keeps serving yesterday's answer with today's confidence
+- **🔐 Credential-aware** — API keys, tokens and passwords are replaced with a marker before they touch the disk. The sentence around them survives; the secret does not
+- **👥 Safe with two editors open** — Writes are serialised per neuron, so running CRBRO in two IDEs at once does not silently lose facts
 - **🗺️ Global Map** — Cluster detection and cross-domain bridge identification
 - **⛏️ Knowledge Miner** — Optionally scans your local `.md`/`.txt` notes and feeds them into the brain
 - **🔒 Fully Local** — Runs on Node.js alone: no Python, no Docker, no databases, no external services. Your memory never leaves your machine
@@ -71,7 +73,7 @@ claude mcp add --scope user crbro -- npx -y crbro-memory
 
 ### 3. Start using it
 
-Your AI will now have access to 16 memory tools. Start any session with `crbro_boot`.
+Your AI will now have access to 18 memory tools. Start any session with `crbro_boot`.
 
 ## Tools
 
@@ -91,6 +93,8 @@ Your AI will now have access to 16 memory tools. Start any session with `crbro_b
 | `crbro_hot_topics` | Get the most active topics by heat score |
 | `crbro_global_map` | View the neural network — clusters and cross-domain bridges |
 | `crbro_revise` | Mark facts as superseded or retracted when they stop being true |
+| `crbro_audit` | Find credentials stored in the brain — reports the kind, never the value |
+| `crbro_forget` | Remove facts for good, keeping a copy in `.quarantine/` first |
 | `crbro_maintenance` | Brain maintenance — heat, pruning, integrity, index rebuild |
 | `crbro_consolidate` | End-of-session consolidation |
 

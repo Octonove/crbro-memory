@@ -76,4 +76,33 @@ export function queryTerms(query: string): string[] {
   return fallback;
 }
 
+/**
+ * Singular and plural of the same word, so a query about "facturas" still
+ * finds the fact that says "factura".
+ *
+ * Deliberately NOT a stemmer and NOT a synonym table. A stemmer applied to
+ * Spanish mangles the very common -ción family; a synonym table is guesswork
+ * that quietly pulls in wrong results. Number agreement is mechanical, covers
+ * a large share of real misses, and cannot invent a meaning that was not there.
+ */
+export function variants(term: string): string[] {
+  const out = new Set<string>([term]);
+  if (term.length < 4) return [...out];
+
+  // Plural -> singular
+  if (term.endsWith('ces')) out.add(term.slice(0, -3) + 'z');   // luces -> luz
+  if (term.endsWith('es')) out.add(term.slice(0, -2));          // papeles -> papel
+  if (term.endsWith('ies')) out.add(term.slice(0, -3) + 'y');   // policies -> policy
+  if (term.endsWith('s')) out.add(term.slice(0, -1));           // datos -> dato
+
+  // Singular -> plural
+  if (!term.endsWith('s')) {
+    out.add(term + 's');
+    if (/[bcdfglmnprstz]$/.test(term)) out.add(term + 'es');    // papel -> papeles
+  }
+
+  // Nothing shorter than three letters: "es", "os" and friends are noise.
+  return [...out].filter(v => v.length >= 3);
+}
+
 export { STOPWORDS };

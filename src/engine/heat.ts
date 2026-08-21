@@ -2,7 +2,7 @@
 // Calculates relevance score based on frequency, recency, and connectivity
 
 import type { Neuron, HotTopic, HotTopics } from '../types/index.js';
-import { readJSON, writeJSON, listJSONFiles, now } from '../utils/fs.js';
+import { readJSON, writeJSON, updateJSON, listJSONFiles, now } from '../utils/fs.js';
 import type { Brain } from './brain.js';
 
 // Weight constants
@@ -103,11 +103,15 @@ export class HeatEngine {
       // not one of them changes — and each rewrite is a window in which a
       // concurrent write from another client gets clobbered.
       if (Math.abs((neuron.heat ?? 0) - heat) > 1e-9) {
-        neuron.heat = heat;
-        await writeJSON(this.brain.paths.neuron(neuron.id), neuron);
-      } else {
-        neuron.heat = heat;
+        // Under lock and re-reading: heat runs over every neuron, so without
+        // this it would happily overwrite whatever another client just saved.
+        await updateJSON<Neuron>(this.brain.paths.neuron(neuron.id), current => {
+          if (!current) return null;
+          current.heat = heat;
+          return current;
+        });
       }
+      neuron.heat = heat;
 
       hotTopics.push({
         id: neuron.id,

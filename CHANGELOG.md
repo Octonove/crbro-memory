@@ -2,6 +2,68 @@
 
 All notable changes to CRBRO.
 
+## [1.6.0] — 2026-08-21
+
+### Fixed — two editors at once lost facts, silently
+
+Every write read the whole neuron, changed it in memory and saved it back, so
+whoever saved last erased whatever the other had added in between. No error,
+either side. Measured: two processes storing 40 facts each into one neuron
+asked for 80 and kept **42**. With CRBRO registered at user level — which the
+README recommends — two editors open at once is the normal case.
+
+Writes are now serialised per neuron with an advisory lock, and every
+read-modify-write goes through it. Same test after the fix: **80 of 80**.
+Abandoned locks are broken after ten seconds and swept during maintenance, so a
+process dying mid-write cannot wedge a neuron.
+
+### Added — credentials are filtered before they reach the disk
+
+A memory stores whatever the assistant hands it, and assistants handle
+credentials all day. On the reference brain, five were sitting in the cortex —
+a cloud API key, a password in plain text, three WordPress application
+passwords — and all five were in the search index too, so a recall could hand
+them back.
+
+`crbro_learn` now replaces credentials with a marker naming what they were:
+`the deploy token is [REDACTED: npm token] and expires in January` keeps the
+knowledge and drops the liability. Detection favours precision over recall — a
+false positive would quietly corrupt real knowledge — so it matches
+vendor-prefixed tokens, private key blocks, JWTs and explicitly labelled
+passwords, and leaves ordinary prose alone.
+
+Two new tools for what is already stored:
+
+- **`crbro_audit`** lists which neurons hold credentials and of what kind,
+  never the values.
+- **`crbro_forget`** removes facts for good. It is the only destructive
+  operation in CRBRO, so it copies the whole neuron to `.quarantine/` first and
+  never edits in place. For knowledge that merely stopped being true, use
+  `crbro_revise` instead, which keeps the history.
+
+### Added — searching in the singular finds the plural
+
+Asking about "facturas" now finds the fact that says "factura", and the other
+way round. Deliberately not a stemmer and not a synonym table: a stemmer
+mangles the Spanish `-ción` family, and a synonym table is guesswork that pulls
+in wrong results. Number agreement is mechanical and cannot invent a meaning
+that was not there. Both forms count as one term, so query coverage stays
+honest.
+
+### Added — maintenance can clear the miner's leftovers
+
+Early versions recorded `Referenced in: <file>` for every technology spotted.
+That says a word appeared in a file, which is not knowledge; on the reference
+brain it was 708 of 4,273 facts, with 48 neurons made of nothing else. Every
+run now reports how many there are; `purge_boilerplate: true` removes them.
+
+### Added — CI runs on Windows
+
+The two most expensive defects this product has had were Windows-specific, and
+the suite had never run there. It now runs on Ubuntu and Windows, and there are
+tests for concurrent writes and for credential handling — neither of which had
+a single case before.
+
 ## [1.5.2] — 2026-08-21
 
 Six defects found by auditing 1.5.1 against the reference brain. No format

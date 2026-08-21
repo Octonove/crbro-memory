@@ -19,6 +19,8 @@ export class BrainPaths {
   readonly hippocampus: string;
   readonly prefrontal: string;
   readonly archives: string;
+  /** Copies kept before anything is removed. Nothing is deleted outright. */
+  readonly quarantine: string;
   readonly search: string;
   readonly prompts: string;
 
@@ -29,6 +31,7 @@ export class BrainPaths {
     this.hippocampus = path.join(this.root, 'hippocampus');
     this.prefrontal = path.join(this.root, 'prefrontal');
     this.archives = path.join(this.root, 'archives');
+    this.quarantine = path.join(this.root, '.quarantine');
     this.search = path.join(this.root, '.search');
     this.prompts = path.join(this.root, 'prompts');
   }
@@ -94,6 +97,7 @@ export class Brain {
       this.paths.hippocampus,
       this.paths.prefrontal,
       this.paths.archives,
+      this.paths.quarantine,
       this.paths.search,
       this.paths.prompts,
     ];

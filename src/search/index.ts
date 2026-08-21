@@ -18,7 +18,7 @@ import { create, insert, search, remove, save, load } from '@orama/orama';
 import type { AnyOrama, RawData } from '@orama/orama';
 import { readJSON, writeJSON, listJSONFiles, fileExists, deleteJSON, fileMtime, newestMtime } from '../utils/fs.js';
 import { chunkId } from '../utils/hash.js';
-import { queryTerms } from './tokenize.js';
+import { queryTerms, variants } from './tokenize.js';
 import type { Brain } from '../engine/brain.js';
 import type { Neuron, SearchResult, Fact } from '../types/index.js';
 
@@ -281,9 +281,9 @@ export class SearchEngine {
    * 1,166 of 1,183 documents, i.e. the ranking was noise).
    */
   private async searchTerm(term: string, domain?: string): Promise<any[]> {
-    const run = async (tolerance: number) => {
+    const run = async (tolerance: number, cual: string = term) => {
       const params: any = {
-        term,
+        term: cual,
         properties: ['text', 'name', 'tags'],
         boost: { name: 2, text: 1, tags: 1 },
         limit: Math.max(this.docCount, 10),
@@ -295,6 +295,23 @@ export class SearchEngine {
     };
 
     let hits = await run(0);
+
+    // Try the other grammatical number too, and keep the best score each
+    // chunk got. Counting as one term keeps query coverage honest: asking
+    // about "facturas" should not score twice for also matching "factura".
+    const otras = variants(term).filter(v => v !== term);
+    if (otras.length > 0) {
+      const mejor = new Map<string, any>();
+      for (const h of hits) mejor.set(h.document.id, h);
+      for (const v of otras) {
+        for (const h of await run(0, v)) {
+          const previo = mejor.get(h.document.id);
+          if (!previo || h.score > previo.score) mejor.set(h.document.id, h);
+        }
+      }
+      hits = [...mejor.values()].sort((a, b) => b.score - a.score);
+    }
+
     if (hits.length === 0 && term.length >= 5) {
       hits = await run(1);
     }
