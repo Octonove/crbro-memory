@@ -37,12 +37,18 @@ const PATTERNS: Pattern[] = [
   { kind: 'private key block', re: /-----BEGIN [A-Z ]*PRIVATE KEY-----/g },
   { kind: 'JSON Web Token', re: /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g },
 
-  // WordPress application password: six groups of four. Requires at least one
-  // digit and one letter per group, otherwise ordinary prose matches it —
-  // "ough them with offs" does, and that is not a credential.
+  // WordPress application password: six groups of four, anchored to the label.
+  //
+  // The first attempt required a digit AND a letter inside every one of the six
+  // groups, to stop ordinary prose from matching. That is 0.505^6 of random
+  // groups — about 1.6% — and it caught 0 of the 3 real ones sitting in the
+  // reference brain, because real passwords contain all-letter and all-digit
+  // groups. Anchoring to the words that always accompany them gives 3 of 3 and
+  // no false positives: prose does not say "application password" and then
+  // produce six quads.
   {
     kind: 'WordPress application password',
-    re: /\b(?=[A-Za-z0-9]*\d)(?=[A-Za-z0-9]*[A-Za-z])[A-Za-z0-9]{4}(?: (?=[A-Za-z0-9]*\d)(?=[A-Za-z0-9]*[A-Za-z])[A-Za-z0-9]{4}){5}\b/g,
+    re: /\b(?:application|app)[ _-]?password\b[^\n]{0,80}?\b([A-Za-z0-9]{4}(?: [A-Za-z0-9]{4}){5})\b/gi,
   },
 
   // A password stated as such. Needs the label, so "the password policy is
