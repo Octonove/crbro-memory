@@ -56,6 +56,39 @@ export async function fileExists(filePath: string): Promise<boolean> {
 }
 
 /**
+ * Last modification time of a file, in milliseconds. 0 if it does not exist.
+ */
+export async function fileMtime(filePath: string): Promise<number> {
+  try {
+    const st = await fs.stat(filePath);
+    return st.mtimeMs;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Most recent modification time among the files of a directory, in
+ * milliseconds. Used to tell whether a derived file has fallen behind.
+ */
+export async function newestMtime(dirPath: string): Promise<number> {
+  try {
+    const files = await fs.readdir(dirPath);
+    let newest = 0;
+    for (const f of files) {
+      if (!f.endsWith('.json')) continue;
+      try {
+        const st = await fs.stat(path.join(dirPath, f));
+        if (st.mtimeMs > newest) newest = st.mtimeMs;
+      } catch { /* skip */ }
+    }
+    return newest;
+  } catch {
+    return 0;
+  }
+}
+
+/**
  * List all JSON files in a directory. Returns filenames without extension.
  */
 export async function listJSONFiles(dirPath: string): Promise<string[]> {

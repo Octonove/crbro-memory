@@ -16,7 +16,7 @@
 
 import { create, insert, search, remove, save, load } from '@orama/orama';
 import type { AnyOrama, RawData } from '@orama/orama';
-import { readJSON, writeJSON, listJSONFiles, fileExists, deleteJSON } from '../utils/fs.js';
+import { readJSON, writeJSON, listJSONFiles, fileExists, deleteJSON, fileMtime, newestMtime } from '../utils/fs.js';
 import { chunkId } from '../utils/hash.js';
 import { queryTerms } from './tokenize.js';
 import type { Brain } from '../engine/brain.js';
@@ -88,7 +88,7 @@ export class SearchEngine {
     if (await fileExists(indexPath)) {
       try {
         const stored = await readJSON<StoredIndex>(indexPath);
-        if (stored && stored.v === INDEX_VERSION && stored.data) {
+        if (stored && stored.v === INDEX_VERSION && stored.data && !(await this.isStale())) {
           this.db = create({ schema: SCHEMA });
           load(this.db, stored.data);
           this.docCount = this.countDocs(stored.data);
@@ -100,6 +100,25 @@ export class SearchEngine {
     }
 
     await this.rebuild();
+  }
+
+  /**
+   * Has the cortex moved on without the index?
+   *
+   * This used to be impossible to notice: init() only rebuilt when the file
+   * was missing, the version had changed or the JSON was corrupt — never
+   * because it had simply fallen behind. So a lost flush, or a second client
+   * writing neurons while this one held a stale index in memory, left those
+   * facts invisible to recall indefinitely. On the reference brain the index
+   * was five and a half hours behind the newest neuron, and a term saved that
+   * afternoon returned nothing at all.
+   */
+  private async isStale(): Promise<boolean> {
+    const indexAt = await fileMtime(this.brain.paths.chunksIndex());
+    if (indexAt === 0) return true;
+    const cortexAt = await newestMtime(this.brain.paths.cortex);
+    // One second of slack: a write landing during a rebuild is not staleness.
+    return cortexAt > indexAt + 1000;
   }
 
   /**

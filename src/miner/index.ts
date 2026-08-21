@@ -9,6 +9,7 @@ import { existsSync } from 'fs';
 import { extractContent, type ExtractedContent } from './extractor.js';
 import { Brain } from '../engine/brain.js';
 import { Cortex } from '../engine/cortex.js';
+import { SearchEngine } from '../search/index.js';
 import type { MineResult } from './types.js';
 
 export interface MinerConfig {
@@ -81,12 +82,19 @@ export function detectScanDirs(): string[] {
 export class Miner {
   private brain: Brain;
   private cortex: Cortex;
+  private search: SearchEngine;
   private config: MinerConfig;
   private statePath: string;
 
   constructor(config?: Partial<MinerConfig>) {
     this.brain = new Brain();
     this.cortex = new Cortex(this.brain);
+
+    // The miner runs in its own process with its own Cortex, so it needs its
+    // own indexer. Without this it wrote straight to disk and nothing it
+    // learned was searchable until someone happened to run a full rebuild.
+    this.search = new SearchEngine(this.brain);
+    this.cortex.setIndexer(neuron => this.search.indexNeuron(neuron));
     this.config = { ...DEFAULT_CONFIG, ...config };
     this.statePath = join(this.brain.paths.root, 'miner_state.json');
 
@@ -178,6 +186,10 @@ export class Miner {
     state.last_run = new Date().toISOString();
     state.total_mined += result.new_files;
     await this.saveState(state);
+
+    // Flush the index: the miner is a short-lived process and the debounced
+    // write would never fire before it exits.
+    await this.search.flush();
 
     return result;
   }

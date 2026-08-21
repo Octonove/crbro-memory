@@ -49,9 +49,15 @@ export class Maintenance {
       notes: [],
     };
 
-    // 1. Recalculate heat scores
-    await this.heatEngine.recalculate();
-    report.heat_recalculated = true;
+    // 1. Recalculate heat scores.
+    // Not in a dry run: recalculate() writes to disk, so running it here was
+    // rewriting every neuron in what the caller was told was a simulation.
+    if (!dryRun) {
+      await this.heatEngine.recalculate();
+      report.heat_recalculated = true;
+    } else {
+      report.notes.push('Dry run: heat was not recalculated and nothing was written.');
+    }
 
     // 2. Cold neurons.
     //
@@ -113,6 +119,9 @@ export class Maintenance {
    */
   async consolidate(summary: string): Promise<{
     facts_saved: number;
+    decisions_saved: number;
+    topics_touched: number;
+    total_neurons: number;
     synapses_updated: number;
     session_logged: boolean;
   }> {
@@ -123,11 +132,17 @@ export class Maintenance {
     const neuronCount = await this.cortex.count();
     const synapseCount = await this.synapses.count();
 
+    // Real numbers, not the neuron count. `facts_saved` used to return the
+    // total number of neurons, so it answered the same figure whether the
+    // session had stored one fact or thirty — and it is the only number the
+    // assistant sees when closing a session.
+    const escrito = this.cortex.sessionTally();
+
     await this.hippocampus.logSession({
       summary,
-      topics_touched: [],
-      key_facts_added: 0,
-      decisions_made: 0,
+      topics_touched: escrito.topics,
+      key_facts_added: escrito.facts,
+      decisions_made: escrito.decisions,
     });
 
     // Update active context
@@ -143,8 +158,13 @@ export class Maintenance {
       last_consolidation: now(),
     });
 
+    this.cortex.resetSessionTally();
+
     return {
-      facts_saved: neuronCount,
+      facts_saved: escrito.facts,
+      decisions_saved: escrito.decisions,
+      topics_touched: escrito.topics.length,
+      total_neurons: neuronCount,
       synapses_updated: synapseCount,
       session_logged: true,
     };
