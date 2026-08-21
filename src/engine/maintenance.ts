@@ -13,11 +13,14 @@ import type { Neuron } from '../types/index.js';
 
 export interface MaintenanceReport {
   archived_neurons: number;
+  /** How many neurons WOULD be archived. Reported even when nothing is archived. */
+  archivable_neurons: number;
   pruned_synapses: number;
   integrity_issues: string[];
   clusters_detected: number;
   index_rebuilt: boolean;
   heat_recalculated: boolean;
+  notes: string[];
 }
 
 export class Maintenance {
@@ -34,25 +37,43 @@ export class Maintenance {
   /**
    * Run full maintenance cycle.
    */
-  async run(dryRun: boolean = false): Promise<MaintenanceReport> {
+  async run(dryRun: boolean = false, options?: { archive?: boolean }): Promise<MaintenanceReport> {
     const report: MaintenanceReport = {
       archived_neurons: 0,
+      archivable_neurons: 0,
       pruned_synapses: 0,
       integrity_issues: [],
       clusters_detected: 0,
       index_rebuilt: false,
       heat_recalculated: false,
+      notes: [],
     };
 
     // 1. Recalculate heat scores
     await this.heatEngine.recalculate();
     report.heat_recalculated = true;
 
-    // 2. Archive cold neurons (heat < 0.05, not accessed in 90+ days)
-    if (!dryRun) {
+    // 2. Cold neurons.
+    //
+    // Archiving is OPT-IN and off by default, and this is not caution for its
+    // own sake: on the reference brain 1,028 of 1,183 neurons satisfy
+    // "heat < 0.05 and untouched for 90 days" right now. The old code archived
+    // them on any maintenance run, into a directory that is not indexed, not
+    // searchable and has no restore path. One routine call would have swallowed
+    // 87% of the memory. Heat decays with time, so a brain that is merely old
+    // looks identical to a brain that is worthless.
+    report.archivable_neurons = await this.countColdNeurons();
+    if (options?.archive && !dryRun) {
       report.archived_neurons = await this.archiveColdNeurons();
-    } else {
-      report.archived_neurons = await this.countColdNeurons();
+      report.notes.push(
+        `Archived ${report.archived_neurons} cold neurons to ${this.brain.paths.archives}. ` +
+        'They are no longer searchable; move the files back into cortex/ to restore them.'
+      );
+    } else if (report.archivable_neurons > 0) {
+      report.notes.push(
+        `${report.archivable_neurons} neurons are cold enough to archive. Nothing was archived: ` +
+        'pass archive:true if you have reviewed the list and really want them out of the way.'
+      );
     }
 
     // 3. Decay and prune weak synapses
