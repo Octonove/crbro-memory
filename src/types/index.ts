@@ -32,6 +32,12 @@ export interface Decision {
   text: string;
   date: string;              // ISO date
   rationale: string;
+
+  // ─── Shared memory (optional: a v1 decision is a valid v2 decision) ───
+  /** Content hash, so the same decision from two people lines up. */
+  id?: string;
+  /** Who recorded it, when it arrived from a teammate. */
+  by?: string;
 }
 
 export type NeuronType = 'project' | 'tech' | 'lang' | 'person' | 'domain' | 'process' | 'protocol';

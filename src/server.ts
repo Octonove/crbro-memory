@@ -12,11 +12,15 @@ import { Hippocampus } from './engine/hippocampus.js';
 import { Prefrontal } from './engine/prefrontal.js';
 import { SearchEngine } from './search/index.js';
 import { Maintenance } from './engine/maintenance.js';
+import {
+  createSpace, joinSpace, listSpaces, readSpace, prepareShare, commitShare,
+  syncSpaceNow, syncAll, getIdentity, attachSync,
+} from './sync/space.js';
 
 export function createServer(): McpServer {
   const server = new McpServer({
     name: 'crbro-memory',
-    version: '1.6.1',
+    version: '1.7.0',
   });
 
   // ─── Initialize engines ──────────────────────────────────────
@@ -35,6 +39,11 @@ export function createServer(): McpServer {
   // reference brain: only 106 of 1,183 neurons were searchable.
   cortex.setIndexer(neuron => searchEngine.indexNeuron(neuron));
 
+  // When a neuron belongs to a shared space, every write also appends a note
+  // to this machine's own log. Nobody ever writes to anyone else's file, so
+  // two people working at once have nothing to collide over.
+  attachSync(brain, cortex);
+
   // v1.4.0: CRBRO is fully free — all 15 tools, no license, no network calls.
   // The former license engine (Firestore-backed freemium) lives in git history
   // before this version if it is ever needed again.
@@ -51,6 +60,11 @@ export function createServer(): McpServer {
         const result = await brain.boot();
         // Initialize search engine
         await searchEngine.init();
+
+        // Pull whatever the team learned, on a short budget. Being offline is
+        // a normal outcome, never an error: the local memory is complete on
+        // its own and anything pending goes out on the next sync.
+        const equipos = await syncAll(brain, cortex, 5_000);
 
         const response: any = { ...result };
 
@@ -81,6 +95,15 @@ export function createServer(): McpServer {
             'ℹ️ `recently_closed` lists items already resolved - do not report them as pending. ' +
             'And treat `open_items` as a starting point, not gospel: an item can be finished without ' +
             'anyone closing it here, so verify before repeating it back to the user.';
+        }
+
+        if (equipos.length > 0) {
+          response.shared_spaces = equipos.map(e => ({
+            space: e.space,
+            state: e.state,
+            neurons_updated: e.neurons_touched.length,
+            summary: e.message,
+          }));
         }
 
         return {
@@ -675,12 +698,17 @@ export function createServer(): McpServer {
         // Flush any index writes still sitting in the debounce window, so a
         // session that ends right after a learn does not lose it.
         await searchEngine.flush();
+        // Send the session's notes to the team before the lights go out.
+        const compartidos = await syncAll(brain, cortex, 10_000);
 
         return {
           content: [{
             type: 'text' as const,
             text: JSON.stringify({
               ...result,
+              shared_spaces: compartidos.length > 0
+                ? compartidos.map(c => ({ space: c.space, state: c.state, pushed: c.pushed }))
+                : undefined,
               message: 'Session consolidated. Brain state persisted.',
             }, null, 2),
           }],
@@ -834,6 +862,183 @@ export function createServer(): McpServer {
             type: 'text' as const,
             text: `CRBRO forget error: ${err instanceof Error ? err.message : String(err)}`,
           }],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  // ═══════════════════════════════════════════════════════════════
+  // TOOL 19: crbro_space — Join a team's shared memory
+  // ═══════════════════════════════════════════════════════════════
+  server.tool(
+    'crbro_space',
+    'Set up shared memory with teammates. A space is a private git repository holding notes about the projects you choose to share — nothing else from your brain goes near it. One person runs create with the repository URL; everyone else runs join with the same URL. After that it syncs by itself at the start and end of every session.',
+    {
+      action: z.enum(['create', 'join', 'status']).describe('create = start a new space, join = enter one a teammate created, status = what you are in'),
+      name: z.string().optional().describe('Short name for the space, e.g. "equipo". Same on everyone\'s machine.'),
+      remote: z.string().optional().describe('Git URL of an EMPTY private repository, e.g. git@github.com:acme/team-memory.git'),
+      author: z.string().optional().describe('How your notes are signed, e.g. "ana". Lowercase, no spaces.'),
+      branch: z.string().optional().describe('Branch to use (default "main")'),
+    },
+    async (args) => {
+      try {
+        if (args.action === 'status') {
+          const nombres = await listSpaces(brain);
+          const id = await getIdentity(brain);
+          const detalle = [];
+          for (const n of nombres) {
+            const cfg = await readSpace(brain, n);
+            if (cfg) detalle.push({ name: cfg.name, created_by: cfg.created_by, branch: cfg.branch });
+          }
+          return {
+            content: [{
+              type: 'text' as const,
+              text: JSON.stringify({
+                you_are: id.author,
+                device: id.device,
+                spaces: detalle,
+                message: detalle.length === 0
+                  ? 'You are not in any shared space. Use action "create" to start one, or "join" if a teammate already did.'
+                  : `In ${detalle.length} space(s). They sync automatically at boot and on consolidate.`,
+              }, null, 2),
+            }],
+          };
+        }
+
+        if (!args.name || !args.remote) {
+          return {
+            content: [{ type: 'text' as const, text: 'Both name and remote are required for create and join.' }],
+          };
+        }
+        if (!args.author) {
+          return {
+            content: [{ type: 'text' as const, text: 'Pass author so your notes carry your name, e.g. author: "ana".' }],
+          };
+        }
+
+        const r = args.action === 'create'
+          ? await createSpace(brain, args.name, args.remote, args.author, args.branch || 'main')
+          : await joinSpace(brain, args.name, args.remote, args.author, args.branch || 'main');
+
+        return {
+          content: [{
+            type: 'text' as const,
+            text: JSON.stringify({
+              ok: r.ok,
+              message: r.message,
+              detail: r.detail,
+              next: r.ok && args.action === 'create'
+                ? 'Now share a project into it with crbro_share, and invite your teammates to the repository.'
+                : r.ok
+                ? 'Run crbro_sync to pull in what the others already know.'
+                : undefined,
+            }, null, 2),
+          }],
+        };
+      } catch (err) {
+        return {
+          content: [{ type: 'text' as const, text: `CRBRO space error: ${err instanceof Error ? err.message : String(err)}` }],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  // ═══════════════════════════════════════════════════════════════
+  // TOOL 20: crbro_share — Put one project into a space
+  // ═══════════════════════════════════════════════════════════════
+  server.tool(
+    'crbro_share',
+    'Share one neuron with a team space. Always run it without a token first: it reports exactly what would be sent and refuses outright if it finds a credential — it will not redact and send anyway. Show the user that report and get their agreement before confirming. Once shared, everything you learn about that project flows to the team automatically; everything else in your brain stays private.',
+    {
+      neuron: z.string().describe('Neuron ID or name to share'),
+      space: z.string().describe('Name of the space'),
+      confirm: z.string().optional().describe('The confirm_token from the dry run. Omit it the first time.'),
+    },
+    async (args) => {
+      try {
+        if (!args.confirm) {
+          const prep = await prepareShare(brain, cortex, args.neuron, args.space);
+          if ('error' in prep) {
+            return { content: [{ type: 'text' as const, text: prep.error }] };
+          }
+          return {
+            content: [{
+              type: 'text' as const,
+              text: JSON.stringify({
+                ...prep,
+                message: prep.blocked.length > 0
+                  ? `Refused: ${prep.blocked.length} credential(s) found in this neuron. Nothing was sent. ` +
+                    'Remove them with crbro_forget and rotate them, then try again.'
+                  : `Ready to share ${prep.ops_to_emit} entries. ${prep.skipped_preferences} preference(s) will NOT be sent — ` +
+                    'preferences never leave this machine. Show the user what is about to be shared, then call again with the confirm token.',
+              }, null, 2),
+            }],
+          };
+        }
+
+        const r = await commitShare(brain, cortex, args.neuron, args.space, args.confirm);
+        return {
+          content: [{
+            type: 'text' as const,
+            text: JSON.stringify({
+              ...r,
+              next: r.ok ? 'Run crbro_sync to send it now, or let it go out on the next consolidate.' : undefined,
+            }, null, 2),
+          }],
+        };
+      } catch (err) {
+        return {
+          content: [{ type: 'text' as const, text: `CRBRO share error: ${err instanceof Error ? err.message : String(err)}` }],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  // ═══════════════════════════════════════════════════════════════
+  // TOOL 21: crbro_sync — Exchange notes with the team now
+  // ═══════════════════════════════════════════════════════════════
+  server.tool(
+    'crbro_sync',
+    'Exchange notes with your team right now, instead of waiting for the next boot or consolidate. Pulls what everyone else recorded and sends yours. Being offline is a normal answer, not a failure: your memory works either way and pending notes go out next time.',
+    {
+      space: z.string().optional().describe('Which space. Omit to sync all of them.'),
+    },
+    async (args) => {
+      try {
+        const informes = args.space
+          ? [await syncSpaceNow(brain, cortex, args.space, 30_000)]
+          : await syncAll(brain, cortex, 30_000);
+
+        if (informes.length === 0) {
+          return {
+            content: [{ type: 'text' as const, text: 'You are not in any shared space yet. Use crbro_space to create or join one.' }],
+          };
+        }
+
+        return {
+          content: [{
+            type: 'text' as const,
+            text: JSON.stringify({
+              spaces: informes.map(i => ({
+                space: i.space,
+                state: i.state,
+                neurons_updated: i.neurons_touched,
+                new_facts: i.merged.reduce((n, m) => n + m.facts_added, 0),
+                retracted: i.merged.reduce((n, m) => n + m.facts_retracted, 0),
+                teammates_seen: [...new Set(i.merged.flatMap(m => m.authors))],
+                divergence: i.merged.flatMap(m => m.divergence),
+                pushed: i.pushed,
+                message: i.message,
+              })),
+            }, null, 2),
+          }],
+        };
+      } catch (err) {
+        return {
+          content: [{ type: 'text' as const, text: `CRBRO sync error: ${err instanceof Error ? err.message : String(err)}` }],
           isError: true,
         };
       }

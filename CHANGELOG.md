@@ -2,6 +2,58 @@
 
 All notable changes to CRBRO.
 
+## [1.7.0] — 2026-08-21
+
+### Added — shared memory for a team
+
+Two people on the same project can now keep their assistants in step. A
+**space** is one or more projects shared through a private git repository the
+user owns: no server to run, no account to create, no bill. Three tools —
+`crbro_space`, `crbro_share`, `crbro_sync` — and after the one-time setup it
+runs at the start and end of every session without anyone asking.
+
+**Why it merges without conflicts.** Nobody shares a neuron. Each person
+appends notes to a log only they write to — "I added this fact", "I retracted
+that one" — and every machine rebuilds the project from all the logs it has.
+Two writers never touch the same bytes, so there is nothing to collide over,
+and rejoining after a week apart is the same operation as syncing after a
+minute. Fact ids are content hashes, so the same sentence written by two people
+is one fact, and merging is a set union: order does not matter, replaying
+changes nothing, and applying half now and half later ends up the same.
+
+Retraction is the one thing that always wins. Status only moves forward —
+active, then superseded, then retracted — so a fact somebody marked as untrue
+cannot be resurrected by a stale copy that still calls it current.
+
+**What never travels.** Every project not explicitly shared. Preferences, at
+any setting, because that is the field most likely to hold a key. And the
+cortex itself is never in the repository: reading a neuron bumps its access
+count, so a cortex under git would commit every time somebody asked a question
+— one neuron on the reference brain had been read 420 times.
+
+**Credentials block the share.** `crbro_share` always runs as a dry run first,
+reports exactly what would be sent, and refuses outright if it finds a
+credential, naming where it is. It does not redact and send the rest: quietly
+handing someone a mangled fact is worse than refusing.
+
+**Offline is a normal answer.** Local memory works either way, and pending
+notes go out on the next sync.
+
+Two Windows details that are not optional and are handled at space creation:
+git's line-ending conversion is disabled per repository (it was on at system
+level on the machine this was built against, and with union merging a rewritten
+line ending turns one line into two), and the first commit is pushed before
+anyone can clone (otherwise two people start unrelated histories and each keeps
+half the memory without noticing).
+
+### Fixed — wiring that could be forgotten
+
+The search indexer was wired only inside the MCP server, so the miner — which
+builds its own `Cortex` — never indexed anything, and 1.5.2 had to fix that
+after the fact. The sync layer would have had the same shape, so it ships as a
+single `attachSync(brain, cortex)` that every entry point calls. One place to
+get right.
+
 ## [1.6.1] — 2026-08-21
 
 Two holes in the credential filtering that shipped hours earlier in 1.6.0.

@@ -58,6 +58,20 @@ function sameNumbers(a: string, b: string): boolean {
 
 export type Indexer = (neuron: Neuron) => Promise<void> | void;
 
+/**
+ * Called after a write so shared neurons can append a note to the team log.
+ * A hook rather than a direct call, because the sync layer needs the Cortex
+ * and the Cortex would then need the sync layer.
+ */
+export type Emitter = (
+  neuronId: string,
+  change:
+    | { kind: 'fact'; text: string; fid: string; conf: number; at: string; src?: string }
+    | { kind: 'status'; fid: string; to: 'superseded' | 'retracted'; at: string; why?: string }
+    | { kind: 'decision'; text: string; why?: string; at: string }
+    | { kind: 'pattern'; text: string; at: string }
+) => Promise<void> | void;
+
 export class Cortex {
   /**
    * Optional hook invoked after every write. Wiring it here — rather than
@@ -66,6 +80,7 @@ export class Cortex {
    * 91% of the brain never reached the index.
    */
   private indexer: Indexer | null = null;
+  private emitter: Emitter | null = null;
 
   /** What this session has actually written, for an honest consolidate(). */
   private tally = { facts: 0, decisions: 0, topics: new Set<string>() };
@@ -87,6 +102,45 @@ export class Cortex {
 
   setIndexer(indexer: Indexer | null): void {
     this.indexer = indexer;
+  }
+
+  setEmitter(emitter: Emitter | null): void {
+    this.emitter = emitter;
+  }
+
+  private async emit(neuronId: string, change: Parameters<Emitter>[1]): Promise<void> {
+    if (!this.emitter) return;
+    try {
+      await this.emitter(neuronId, change);
+    } catch {
+      // Sharing must never break a local write. The note can be re-emitted
+      // later; a lost fact cannot be recovered.
+    }
+  }
+
+  /**
+   * Overwrite a neuron with the result of merging the team's notes.
+   * Only the sync layer calls this, and only with a neuron that already
+   * contains everything local plus whatever arrived.
+   */
+  async replaceFromSync(neuron: Neuron): Promise<Neuron> {
+    const saved = await updateJSON<Neuron>(this.brain.paths.neuron(neuron.id), current => {
+      // Local-only observations stay local: they describe this machine's use
+      // of the memory, not the knowledge itself.
+      if (current) {
+        neuron.heat = current.heat;
+        neuron.access_count = current.access_count;
+        neuron.last_accessed = current.last_accessed;
+        neuron.summary = current.summary || neuron.summary;
+        neuron.preferences = current.preferences;
+        neuron.connections = current.connections;
+        neuron.created = current.created;
+      }
+      return neuron;
+    });
+    const final = (saved || neuron) as Neuron;
+    await this.reindex(final);
+    return final;
   }
 
   private async reindex(neuron: Neuron): Promise<void> {
@@ -279,6 +333,7 @@ export class Cortex {
     }
 
     let superseded = 0;
+    let emitir: Parameters<Emitter>[1] | null = null;
 
     // From here on we work on a fresh read inside the lock. Mutating the copy
     // fetched a moment ago and saving it over the top is exactly how a
@@ -310,6 +365,8 @@ export class Cortex {
               n.facts.push(fact);
               this.tally.facts++;
               this.tally.topics.add(n.id);
+              emitir = { kind: 'fact' as const, text: content, fid: id,
+                         conf: fact.confidence, at: fact.added, src: fact.source };
             }
             break;
           }
@@ -322,10 +379,15 @@ export class Cortex {
             n.decisions.push(decision);
             this.tally.decisions++;
             this.tally.topics.add(n.id);
+            emitir = { kind: 'decision' as const, text: content,
+                       why: options?.rationale, at: decision.date };
             break;
           }
           case 'pattern': {
-            if (!n.patterns.includes(content)) n.patterns.push(content);
+            if (!n.patterns.includes(content)) {
+              n.patterns.push(content);
+              emitir = { kind: 'pattern' as const, text: content, at: now() };
+            }
             break;
           }
           case 'preference': {
@@ -347,6 +409,9 @@ export class Cortex {
 
     const final = (actualizada || neuron) as Neuron;
     await this.reindex(final);
+    // Preferences are never emitted: they are the field most likely to hold a
+    // key and the least likely to be worth sharing.
+    if (emitir) await this.emit(final.id, emitir);
     return { neuron: final, action, superseded, redacted: limpio.found };
   }
 
@@ -389,7 +454,17 @@ export class Cortex {
     if (revised > 0) {
       // Must reindex, or the correction is silently lost on next boot —
       // which is exactly the failure this feature exists to close.
-      await this.reindex((actualizada || neuron) as Neuron);
+      const n = (actualizada || neuron) as Neuron;
+      await this.reindex(n);
+      // 'active' is not a retirement, so it is never emitted as one.
+      const estado: 'superseded' | 'retracted' =
+        options?.status === 'retracted' ? 'retracted' : 'superseded';
+      for (const t of targets) {
+        const f = n.facts.find(x => (x.id || '') === t || x.text.trim().toLowerCase() === t.trim().toLowerCase());
+        if (f?.id) {
+          await this.emit(n.id, { kind: 'status', fid: f.id, to: estado, at: f.revised || now(), why: options?.note });
+        }
+      }
     }
 
     return { neuron: (actualizada || neuron) as Neuron, revised };
