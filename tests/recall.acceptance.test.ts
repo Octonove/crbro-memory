@@ -51,7 +51,7 @@ beforeAll(async () => {
       i === 97
         ? TARGET
         : `Nota ${i} sobre la suite de plugins. ${'contenido de relleno '.repeat(60)}`;
-    await cortex.learn('SimplificaconIA', 'fact', text);
+    await cortex.learn('Acme Platform', 'fact', text);
   }
 
   // 200 short neurons carrying single query words.
@@ -71,7 +71,7 @@ describe('recall: a big neuron beats short scraps', () => {
   it('ranks the neuron that actually holds the answer first', async () => {
     const results = await engine.search(QUERY);
     expect(results.length).toBeGreaterThan(0);
-    expect(results[0].neuron_id).toBe('project_simplificaconia');
+    expect(results[0].neuron_id).toBe('project_acme_platform');
   });
 
   it('returns the fact that matched, not the neuron summary', async () => {
@@ -81,32 +81,32 @@ describe('recall: a big neuron beats short scraps', () => {
     // The old implementation returned `summary || facts.slice(0,200)`, and on a
     // real brain 1,182 of 1,183 summaries were empty — so it always returned
     // the oldest fact, whatever the query was.
-    const neuron = await cortex.peek('project_simplificaconia');
+    const neuron = await cortex.peek('project_acme_platform');
     expect(results[0].matching_content).not.toBe(neuron!.summary);
     expect(results[0].matched_kind).toBe('fact');
     expect(results[0].matched_added).toBeTruthy();
   });
 
   it('still finds a neuron by its name', async () => {
-    const results = await engine.search('SimplificaconIA');
-    expect(results[0].neuron_id).toBe('project_simplificaconia');
+    const results = await engine.search('Acme Platform');
+    expect(results[0].neuron_id).toBe('project_acme_platform');
   });
 
   it('does not rank a neuron lower for holding more knowledge', async () => {
     for (let i = 0; i < 200; i++) {
-      await cortex.learn('SimplificaconIA', 'fact', `relleno adicional ${i} ${'x '.repeat(300)}`);
+      await cortex.learn('Acme Platform', 'fact', `extra padding ${i} ${'x '.repeat(300)}`);
     }
     await engine.rebuild();
 
     const results = await engine.search(QUERY);
-    expect(results[0].neuron_id).toBe('project_simplificaconia');
+    expect(results[0].neuron_id).toBe('project_acme_platform');
   }, 120_000);
 
   it('hides a fact once it has been superseded', async () => {
     const before = await engine.search(QUERY);
     expect(before[0].matching_content).toContain('ocultar_de_lista');
 
-    await cortex.revise('project_simplificaconia', [TARGET], {
+    await cortex.revise('project_acme_platform', [TARGET], {
       status: 'superseded',
       note: 'las fichas ya no usan ese flag',
     });

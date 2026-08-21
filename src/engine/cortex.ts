@@ -14,7 +14,7 @@ const NAME_MATCH_THRESHOLD = 0.85;
 
 /**
  * Dice coefficient over character bigrams. Cheap, order-insensitive enough
- * for "Coches Chinos" vs "coches_chinos", and — unlike substring containment —
+ * for "Widget Catalog" vs "widget_catalog", and — unlike substring containment —
  * it does not consider a 60-character walkthrough id a match for "SEO".
  */
 function similarity(a: string, b: string): number {
@@ -91,10 +91,10 @@ export class Cortex {
    * Find a neuron by name.
    *
    * Returns null rather than guessing. That is the point: the previous
-   * implementation fell back to substring containment in either direction,
-   * which routed "Coches Chinos" into
-   * `project_walkthrough_skill_articulo_coches_chinos_primera_publicacin`
-   * and "SEO" into `process_walkthrough_creacin_de_4_2_pendientes...`.
+   * implementation fell back to substring containment in either direction, so
+   * a two-word topic landed inside any long id that happened to contain it —
+   * a short name like "SEO" was swallowed by a sixty-character neuron whose
+   * title merely mentioned it.
    * Knowledge written into the wrong neuron is recalled attributed to the
    * wrong neuron, and no amount of index tuning repairs that. A wrong guess
    * is worse than a new neuron.
@@ -195,7 +195,7 @@ export class Cortex {
        * Create the neuron when the topic is unknown. Default true.
        * The miner passes false: an automated pass guessing at topic names is
        * how a brain ends up with a thousand neurons called things like
-       * `lang_juego_billar_8_ball`, each of them shorter -- and therefore
+       * `lang_pool_8_ball`, each of them shorter -- and therefore
        * easier to retrieve -- than the knowledge that matters.
        */
       createIfMissing?: boolean;

@@ -235,9 +235,9 @@ export class Miner {
     // The miner ENRICHES neurons; it does not invent them.
     //
     // It used to create one per detected topic, which on a real brain produced
-    // roughly a thousand junk neurons (`lang_juego_billar_8_ball`,
-    // `lang_current_goal`, a markdown heading turned into `project_findings`
-    // that then acted as a magnet for unrelated writes). They were all tiny, so
+    // roughly a thousand junk neurons: a passing mention of a board game became
+    // a "language", and a markdown heading like "Findings" became a neuron that
+    // then acted as a magnet for unrelated writes. They were all tiny, so
     // they outranked the real knowledge, and they poisoned name resolution.
     // A miss is now simply skipped: neurons are created by a human calling
     // crbro_learn, never by a background pass guessing at topic names.

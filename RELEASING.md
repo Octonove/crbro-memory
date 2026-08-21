@@ -10,7 +10,9 @@ está PUBLICADO en npm, no el local.
   ```bash
   npm login
   ```
-- [ ] Quitar `strict-ssl=false` de `C:\Users\Usuario\.npmrc` (mala práctica de seguridad).
+- [ ] Comprobar que `~/.npmrc` no lleva `strict-ssl=false` (mala práctica de seguridad)
+      y que la línea del token acaba en LF, no en CRLF: con `\r` pegado, npm envía
+      el retorno de carro dentro de la credencial y devuelve un 401 desconcertante.
 - [ ] Decidir si el repo pasa a público (`gh repo edit Octonove/crbro-memory --visibility public`).
   No es obligatorio para el registry, pero el `server.json` enlaza al repo y
   presentarlo como open source con un repo en 404 resta credibilidad.
