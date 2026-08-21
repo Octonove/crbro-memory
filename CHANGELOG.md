@@ -2,6 +2,67 @@
 
 All notable changes to CRBRO.
 
+## [1.5.2] — 2026-08-21
+
+Six defects found by auditing 1.5.1 against the reference brain. No format
+change; upgrading needs nothing.
+
+### Fixed — the index could fall behind for good
+
+`init()` rebuilt only when the index file was missing, its version had changed
+or its JSON was corrupt. Never because it had simply fallen behind. So a lost
+flush — or a second client writing neurons while this one held a stale index —
+left those facts invisible to `crbro_recall` indefinitely. Measured on the
+reference brain: the index was 5h37m behind the newest neuron, and searching a
+term saved that afternoon returned nothing. It now compares the index against
+the newest neuron and rebuilds when the cortex has moved on.
+
+### Fixed — the miner still did not reach the index
+
+`setIndexer` was called in exactly one place, the MCP server. `Miner` builds its
+own `Brain` and `Cortex` in its own process, so everything it learned stayed
+unsearchable until someone ran a full rebuild. It now wires its own indexer and
+flushes before exiting.
+
+### Fixed — `dry_run` was not dry
+
+`crbro_maintenance({dry_run: true})` called `heatEngine.recalculate()` before any
+guard, and that writes. A simulation rewrote all 1,183 neuron files plus
+`hot_topics.json`.
+
+### Fixed — heat recalculation rewrote every neuron, always
+
+`recalculate()` wrote each neuron whether or not its heat had changed. Between
+two consecutive runs, not one of 1,183 changes. Beyond the churn, every rewrite
+is a window in which a concurrent write from another client is lost. It now
+writes only when the value actually moved.
+
+### Fixed — `crbro_consolidate` reported a number that meant nothing
+
+`facts_saved` returned the total neuron count, so it answered the same figure
+whether the session had stored one fact or thirty — and it is the only number
+the assistant sees when closing a session. It now reports what was really
+written, and `topics_touched` in the session log is no longer hardcoded to
+empty, which is why 65 of 70 session logs had no topics attached.
+
+### Fixed — topics differing only by a number were merged
+
+The near-miss matching added in 1.5.1 used bigram similarity, which is blind to
+a single differing digit: `sprint_2` against `sprint_3` scores 0.857 and
+`old_topic_1` against `old_topic_11` scores 0.952, both above the threshold. So
+learning about "Sprint 3" filed the knowledge under "Sprint 2". A number in a
+topic name is usually the whole point of the name, so a candidate that disagrees
+on the numbers is no longer treated as a near-miss.
+
+### Fixed — accented topic names produced mangled ids
+
+`toSnakeCase` deleted accented letters instead of folding them, so "búsqueda"
+became `bsqueda` and "técnico" became `tcnico`. On the reference brain 82 of
+1,183 ids were mangled, and the tool description asks the model to pass
+`neuron_id` back — which nobody can guess. Accents are now folded to their base
+letter. Neurons already stored under a mangled name stay reachable: `findByName`
+tries the correct slug first and falls back to the old one.
+
 ## [1.5.1] — 2026-08-21
 
 Housekeeping only, no behaviour change. The 1.5.0 build carried a handful of
@@ -49,11 +110,14 @@ five characters or more that find nothing at all.
 
 ### Fixed — most of the brain was never indexed
 
-The miner wrote straight through to disk without notifying the search engine,
-and the index was only persisted during a full rebuild or consolidation. Result:
-106 of 1,183 neurons were searchable. Indexing is now wired into the cortex
-itself, so every write reaches the index whoever made it, with a debounced flush
-to disk.
+The index was only persisted during a full rebuild or consolidation, and the
+cortex never told it about a write. Result: 106 of 1,183 neurons were
+searchable. Indexing is now wired into the cortex itself, with a debounced
+flush to disk.
+
+(Corrected in 1.5.2: this section originally claimed every write reached the
+index "whoever made it". That was not true of the miner, which builds its own
+Cortex in its own process and was never given an indexer.)
 
 ### Fixed — writes landed in the wrong neuron
 

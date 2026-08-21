@@ -98,9 +98,16 @@ export class HeatEngine {
         maxConnections
       );
 
-      // Update neuron's heat
-      neuron.heat = heat;
-      await writeJSON(this.brain.paths.neuron(neuron.id), neuron);
+      // Only touch the file when the number actually moved. Rewriting all
+      // neurons on every pass was pure churn — between two consecutive runs
+      // not one of them changes — and each rewrite is a window in which a
+      // concurrent write from another client gets clobbered.
+      if (Math.abs((neuron.heat ?? 0) - heat) > 1e-9) {
+        neuron.heat = heat;
+        await writeJSON(this.brain.paths.neuron(neuron.id), neuron);
+      } else {
+        neuron.heat = heat;
+      }
 
       hotTopics.push({
         id: neuron.id,

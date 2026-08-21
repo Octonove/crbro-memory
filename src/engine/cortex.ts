@@ -2,7 +2,7 @@
 // Neuron CRUD — create, read, update, list neurons
 
 import { readJSON, writeJSON, listJSONFiles, now } from '../utils/fs.js';
-import { neuronId, inferNeuronType, toSnakeCase } from '../utils/ids.js';
+import { neuronId, inferNeuronType, toSnakeCase, legacySnakeCase } from '../utils/ids.js';
 import { factId } from '../utils/hash.js';
 import type { Brain } from './brain.js';
 import type { Neuron, NeuronType, Fact, Decision, FactStatus } from '../types/index.js';
@@ -40,6 +40,21 @@ function similarity(a: string, b: string): number {
   return (2 * shared) / (a.length - 1 + b.length - 1);
 }
 
+/**
+ * Do two slugs carry the same numbers, in the same order?
+ *
+ * Bigram similarity is blind to a single differing digit: "sprint_2" and
+ * "sprint_3" score 0.857, and "old_topic_1" against "old_topic_11" scores
+ * 0.952 — both above any sane threshold. Numbers in a topic name are almost
+ * always what distinguishes it, so a near-miss that disagrees on them is not
+ * a near-miss at all.
+ */
+function sameNumbers(a: string, b: string): boolean {
+  const na = a.match(/\d+/g) || [];
+  const nb = b.match(/\d+/g) || [];
+  return na.length === nb.length && na.every((v, i) => v === nb[i]);
+}
+
 export type Indexer = (neuron: Neuron) => Promise<void> | void;
 
 export class Cortex {
@@ -51,7 +66,23 @@ export class Cortex {
    */
   private indexer: Indexer | null = null;
 
+  /** What this session has actually written, for an honest consolidate(). */
+  private tally = { facts: 0, decisions: 0, topics: new Set<string>() };
+
   constructor(private brain: Brain) {}
+
+  /** Facts, decisions and neurons touched since the last consolidation. */
+  sessionTally(): { facts: number; decisions: number; topics: string[] } {
+    return {
+      facts: this.tally.facts,
+      decisions: this.tally.decisions,
+      topics: [...this.tally.topics],
+    };
+  }
+
+  resetSessionTally(): void {
+    this.tally = { facts: 0, decisions: 0, topics: new Set<string>() };
+  }
 
   setIndexer(indexer: Indexer | null): void {
     this.indexer = indexer;
@@ -104,10 +135,18 @@ export class Cortex {
     const slug = toSnakeCase(name);
     if (!slug) return null;
 
+    // Neurons created before accents were folded live under a mangled name
+    // ("bsqueda" for "búsqueda"). Try the correct slug first, then that one,
+    // so upgrading does not orphan them.
+    const legacy = legacySnakeCase(name);
+    const candidatos = legacy && legacy !== slug ? [slug, legacy] : [slug];
+
     // 1. Exact: the id itself, or the id minus its type prefix.
-    for (const id of ids) {
-      if (id === slug || id.replace(TYPE_PREFIX_RE, '') === slug) {
-        return this.peek(id);
+    for (const buscado of candidatos) {
+      for (const id of ids) {
+        if (id === buscado || id.replace(TYPE_PREFIX_RE, '') === buscado) {
+          return this.peek(id);
+        }
       }
     }
 
@@ -116,7 +155,9 @@ export class Cortex {
     for (const id of ids) {
       const bare = id.replace(TYPE_PREFIX_RE, '');
       const score = similarity(slug, bare);
-      if (score >= NAME_MATCH_THRESHOLD) candidates.push({ id, score });
+      if (score >= NAME_MATCH_THRESHOLD && sameNumbers(slug, bare)) {
+        candidates.push({ id, score });
+      }
     }
     if (candidates.length === 0) return null;
 
@@ -243,6 +284,8 @@ export class Cortex {
           };
           if (options?.supersedes?.length) fact.supersedes = options.supersedes;
           neuron.facts.push(fact);
+          this.tally.facts++;
+          this.tally.topics.add(neuron.id);
         }
         break;
       }
@@ -253,6 +296,8 @@ export class Cortex {
           rationale: options?.rationale || '',
         };
         neuron.decisions.push(decision);
+        this.tally.decisions++;
+        this.tally.topics.add(neuron.id);
         break;
       }
       case 'pattern': {

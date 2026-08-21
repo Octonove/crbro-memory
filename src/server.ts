@@ -16,7 +16,7 @@ import { Maintenance } from './engine/maintenance.js';
 export function createServer(): McpServer {
   const server = new McpServer({
     name: 'crbro-memory',
-    version: '1.5.1',
+    version: '1.5.2',
   });
 
   // ─── Initialize engines ──────────────────────────────────────

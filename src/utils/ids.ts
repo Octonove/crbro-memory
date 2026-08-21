@@ -19,12 +19,32 @@ const TYPE_PREFIXES: Record<NeuronType, string> = {
  */
 export function toSnakeCase(str: string): string {
   return str
+    .normalize('NFD')                 // Split accents off their letters...
+    .replace(/[\u0300-\u036f]/g, '')   // ...and drop the accents, keeping the letter
     .toLowerCase()
     .trim()
-    .replace(/[^a-z0-9\s_-]/g, '')   // Remove special chars
-    .replace(/[\s-]+/g, '_')          // Spaces/hyphens to underscores
-    .replace(/_+/g, '_')              // Collapse multiple underscores
-    .replace(/^_|_$/g, '');           // Trim leading/trailing underscores
+    .replace(/[^a-z0-9\s_-]/g, '')     // Remove what is left that we cannot use
+    .replace(/[\s-]+/g, '_')           // Spaces/hyphens to underscores
+    .replace(/_+/g, '_')               // Collapse multiple underscores
+    .replace(/^_|_$/g, '');            // Trim leading/trailing underscores
+}
+
+/**
+ * How ids were built before accents were folded: the accented letter was
+ * deleted whole, so "búsqueda" became "bsqueda" and "técnico" became "tcnico".
+ * On the reference brain that mangled 82 of 1,183 ids.
+ *
+ * Kept because those neurons exist on disk under the mangled name and must
+ * stay reachable. Lookups try the correct slug first and fall back to this.
+ */
+export function legacySnakeCase(str: string): string {
+  return str
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9\s_-]/g, '')
+    .replace(/[\s-]+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_|_$/g, '');
 }
 
 /**
