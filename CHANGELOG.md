@@ -2,6 +2,28 @@
 
 All notable changes to CRBRO.
 
+## [1.6.1] — 2026-08-21
+
+Two holes in the credential filtering that shipped hours earlier in 1.6.0.
+Both found by checking it against a real brain instead of trusting the tests.
+
+### Fixed — the WordPress pattern caught none of them
+
+It required a digit AND a letter inside every one of the six four-character
+groups, to keep ordinary prose from matching. Random groups satisfy that about
+half the time, so six in a row is roughly 1.6% — and it caught **0 of the 3**
+real application passwords sitting in the reference brain, because real ones
+contain all-letter and all-digit groups. Anchored to the label that always
+accompanies them instead: **3 of 3, and 0 false positives across 4,288 facts.**
+
+### Fixed — the audit only looked at facts
+
+`crbro_audit` scanned `facts` and nothing else, so a neuron could be reported
+clean while a key sat in `preferences[0]`. On the reference brain that hid
+**7 more findings** in decisions and patterns. It now scans facts, decisions,
+patterns and preferences, and reports the count per field. `crbro_forget`
+reaches all four as well — those entries had no way of being removed at all.
+
 ## [1.6.0] — 2026-08-21
 
 ### Fixed — two editors at once lost facts, silently

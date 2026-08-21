@@ -16,7 +16,7 @@ import { Maintenance } from './engine/maintenance.js';
 export function createServer(): McpServer {
   const server = new McpServer({
     name: 'crbro-memory',
-    version: '1.6.0',
+    version: '1.6.1',
   });
 
   // ─── Initialize engines ──────────────────────────────────────
@@ -760,7 +760,8 @@ export function createServer(): McpServer {
     async () => {
       try {
         const hallazgos = await cortex.auditSecrets();
-        const total = hallazgos.reduce((n, h) => n + h.facts, 0);
+        const total = hallazgos.reduce(
+          (n, h) => n + h.facts + h.decisions + h.patterns + h.preferences, 0);
 
         return {
           content: [{
@@ -797,8 +798,8 @@ export function createServer(): McpServer {
     'crbro_forget',
     'Permanently remove facts from a neuron. This is for things that must not exist at all — a credential, personal data, something stored by mistake. For knowledge that merely stopped being true, use crbro_revise instead, which keeps the history. The whole neuron is copied to .quarantine/ before anything is removed, so a mistake can be undone by hand. Always tell the user what you are about to remove and get their agreement first.',
     {
-      neuron: z.string().describe('Neuron ID or name holding the facts'),
-      facts: z.array(z.string()).describe('Which facts to remove: their ids, or their exact text'),
+      neuron: z.string().describe('Neuron ID or name holding the entries'),
+      facts: z.array(z.string()).describe('What to remove: fact ids, or the exact text of a fact, decision, pattern or preference'),
     },
     async (args) => {
       try {

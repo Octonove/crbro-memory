@@ -536,12 +536,30 @@ export class Cortex {
 
     const after = await updateJSON<Neuron>(this.brain.paths.neuron(found.id), current => {
       if (!current) return null;
-      const before = current.facts.length;
+      const antes =
+        current.facts.length + current.decisions.length +
+        current.patterns.length + current.preferences.length;
+
       current.facts = current.facts.filter(f => {
         const fid = (f.id || factId(f.text)).toLowerCase();
         return !(wanted.includes(fid) || wanted.includes(f.text.trim().toLowerCase()));
       });
-      removed = before - current.facts.length;
+      // Decisions, patterns and preferences too. A credential is no less
+      // exposed for sitting in one of those, and nothing else could remove it.
+      current.decisions = current.decisions.filter(
+        d => !wanted.includes((d.text || '').trim().toLowerCase())
+      );
+      current.patterns = current.patterns.filter(
+        p => !wanted.includes((p || '').trim().toLowerCase())
+      );
+      current.preferences = current.preferences.filter(
+        p => !wanted.includes((p || '').trim().toLowerCase())
+      );
+
+      removed = antes - (
+        current.facts.length + current.decisions.length +
+        current.patterns.length + current.preferences.length
+      );
       if (removed === 0) return null;
       current.last_accessed = now();
       return current;
@@ -555,22 +573,50 @@ export class Cortex {
    * Which neurons hold something that looks like a credential.
    * Reports the kind and where it is, never the value.
    */
-  async auditSecrets(): Promise<Array<{ neuron_id: string; name: string; kinds: string[]; facts: number }>> {
-    const out: Array<{ neuron_id: string; name: string; kinds: string[]; facts: number }> = [];
+  async auditSecrets(): Promise<Array<{
+    neuron_id: string;
+    name: string;
+    kinds: string[];
+    facts: number;
+    decisions: number;
+    patterns: number;
+    preferences: number;
+  }>> {
+    const out: Array<{
+      neuron_id: string; name: string; kinds: string[];
+      facts: number; decisions: number; patterns: number; preferences: number;
+    }> = [];
+
     for (const id of await listJSONFiles(this.brain.paths.cortex)) {
       const n = await readJSON<Neuron>(this.brain.paths.neuron(id));
       if (!n) continue;
+
       const kinds = new Set<string>();
-      let afectados = 0;
-      for (const f of n.facts || []) {
-        const k = secretKinds(f.text || '');
-        if (k.length) {
-          afectados++;
-          k.forEach(x => kinds.add(x));
+      const contar = (textos: Array<string | undefined>) => {
+        let c = 0;
+        for (const t of textos) {
+          const k = secretKinds(t || '');
+          if (k.length) {
+            c++;
+            k.forEach(x => kinds.add(x));
+          }
         }
-      }
-      if (afectados > 0) {
-        out.push({ neuron_id: n.id, name: n.name, kinds: [...kinds], facts: afectados });
+        return c;
+      };
+
+      // Every field, not just facts. A credential is just as exposed sitting in
+      // a decision or a preference, and those were invisible here — an audit
+      // could report a neuron clean while a key sat in preferences[0].
+      const facts = contar((n.facts || []).map(f => f.text));
+      const decisions = contar((n.decisions || []).map(d => d.text));
+      const patterns = contar(n.patterns || []);
+      const preferences = contar(n.preferences || []);
+
+      if (facts + decisions + patterns + preferences > 0) {
+        out.push({
+          neuron_id: n.id, name: n.name, kinds: [...kinds],
+          facts, decisions, patterns, preferences,
+        });
       }
     }
     return out;
