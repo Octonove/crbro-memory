@@ -2,12 +2,69 @@
 // Neuron CRUD — create, read, update, list neurons
 
 import { readJSON, writeJSON, listJSONFiles, now } from '../utils/fs.js';
-import { neuronId, inferNeuronType, toSnakeCase, isValidNeuronId } from '../utils/ids.js';
+import { neuronId, inferNeuronType, toSnakeCase } from '../utils/ids.js';
+import { factId } from '../utils/hash.js';
 import type { Brain } from './brain.js';
-import type { Neuron, NeuronType, Fact, Decision } from '../types/index.js';
+import type { Neuron, NeuronType, Fact, Decision, FactStatus } from '../types/index.js';
+
+const TYPE_PREFIX_RE = /^(project_|tech_|lang_|person_|domain_|process_|protocol_)/;
+
+/** Minimum similarity before we accept a near-miss as "the same topic". */
+const NAME_MATCH_THRESHOLD = 0.85;
+
+/**
+ * Dice coefficient over character bigrams. Cheap, order-insensitive enough
+ * for "Coches Chinos" vs "coches_chinos", and — unlike substring containment —
+ * it does not consider a 60-character walkthrough id a match for "SEO".
+ */
+function similarity(a: string, b: string): number {
+  if (a === b) return 1;
+  if (a.length < 2 || b.length < 2) return 0;
+
+  const bigrams = (s: string) => {
+    const out = new Map<string, number>();
+    for (let i = 0; i < s.length - 1; i++) {
+      const g = s.slice(i, i + 2);
+      out.set(g, (out.get(g) || 0) + 1);
+    }
+    return out;
+  };
+
+  const A = bigrams(a);
+  const B = bigrams(b);
+  let shared = 0;
+  for (const [g, countA] of A) {
+    const countB = B.get(g);
+    if (countB) shared += Math.min(countA, countB);
+  }
+  return (2 * shared) / (a.length - 1 + b.length - 1);
+}
+
+export type Indexer = (neuron: Neuron) => Promise<void> | void;
 
 export class Cortex {
+  /**
+   * Optional hook invoked after every write. Wiring it here — rather than
+   * calling the search engine from each caller — is what guarantees the miner
+   * path gets indexed too. Before this, the miner wrote straight to disk and
+   * 91% of the brain never reached the index.
+   */
+  private indexer: Indexer | null = null;
+
   constructor(private brain: Brain) {}
+
+  setIndexer(indexer: Indexer | null): void {
+    this.indexer = indexer;
+  }
+
+  private async reindex(neuron: Neuron): Promise<void> {
+    if (!this.indexer) return;
+    try {
+      await this.indexer(neuron);
+    } catch {
+      // Indexing must never break a write. The index is derived data.
+    }
+  }
 
   /**
    * Get a neuron by ID.
@@ -17,7 +74,7 @@ export class Cortex {
     if (neuron) {
       // Touch — update access time and count
       neuron.last_accessed = now();
-      neuron.access_count += 1;
+      neuron.access_count = (neuron.access_count || 0) + 1;
       await writeJSON(this.brain.paths.neuron(id), neuron);
     }
     return neuron;
@@ -31,35 +88,62 @@ export class Cortex {
   }
 
   /**
-   * Find a neuron by name (fuzzy match against existing neurons).
-   * Returns the best match or null.
+   * Find a neuron by name.
+   *
+   * Returns null rather than guessing. That is the point: the previous
+   * implementation fell back to substring containment in either direction,
+   * which routed "Coches Chinos" into
+   * `project_walkthrough_skill_articulo_coches_chinos_primera_publicacin`
+   * and "SEO" into `process_walkthrough_creacin_de_4_2_pendientes...`.
+   * Knowledge written into the wrong neuron is recalled attributed to the
+   * wrong neuron, and no amount of index tuning repairs that. A wrong guess
+   * is worse than a new neuron.
    */
   async findByName(name: string): Promise<Neuron | null> {
     const ids = await listJSONFiles(this.brain.paths.cortex);
     const slug = toSnakeCase(name);
+    if (!slug) return null;
 
-    // Exact match first
+    // 1. Exact: the id itself, or the id minus its type prefix.
     for (const id of ids) {
-      if (id.endsWith(`_${slug}`) || id === slug) {
+      if (id === slug || id.replace(TYPE_PREFIX_RE, '') === slug) {
         return this.peek(id);
       }
     }
 
-    // Partial match
+    // 2. Near-miss, but only a real one. Ties go to the most used neuron.
+    const candidates: Array<{ id: string; score: number }> = [];
     for (const id of ids) {
-      if (id.includes(slug) || slug.includes(id.replace(/^(project_|tech_|lang_|person_|domain_|process_)/, ''))) {
-        return this.peek(id);
-      }
+      const bare = id.replace(TYPE_PREFIX_RE, '');
+      const score = similarity(slug, bare);
+      if (score >= NAME_MATCH_THRESHOLD) candidates.push({ id, score });
     }
+    if (candidates.length === 0) return null;
 
-    return null;
+    candidates.sort((a, b) => b.score - a.score);
+    const top = candidates[0].score;
+    const tied = candidates.filter(c => c.score >= top - 0.001);
+    if (tied.length === 1) return this.peek(tied[0].id);
+
+    let best: Neuron | null = null;
+    for (const c of tied) {
+      const n = await this.peek(c.id);
+      if (!n) continue;
+      if (!best || (n.access_count || 0) > (best.access_count || 0)) best = n;
+    }
+    return best;
   }
 
   /**
    * Create a new neuron.
+   * Refuses to clobber: two different names can slugify to the same id, and
+   * the old code wrote straight over the existing file, losing every fact in it.
    */
   async create(name: string, type: NeuronType, domain: string, summary?: string): Promise<Neuron> {
     const id = neuronId(name, type);
+
+    const existing = await this.peek(id);
+    if (existing) return existing;
 
     const neuron: Neuron = {
       id,
@@ -81,7 +165,7 @@ export class Cortex {
 
     await writeJSON(this.brain.paths.neuron(id), neuron);
 
-    // Update manifest count
+    // Only count a neuron that was really created, or the manifest drifts.
     const manifest = await this.brain.getManifest();
     await this.brain.updateManifest({ total_neurons: manifest.total_neurons + 1 });
 
@@ -89,8 +173,8 @@ export class Cortex {
   }
 
   /**
-   * Learn — add a fact, decision, or pattern to a neuron.
-   * If the neuron doesn't exist, creates it first.
+   * Learn — add a fact, decision, pattern or preference to a neuron.
+   * Creates the neuron if it does not exist.
    */
   async learn(
     topic: string,
@@ -101,34 +185,63 @@ export class Cortex {
       domain?: string;
       rationale?: string;
       neuronType?: NeuronType;
+      /** Write to this exact neuron and skip name resolution entirely. */
+      neuronId?: string;
+      /** Who is writing: 'session' (default), 'miner', 'manual'. */
+      source?: string;
+      /** Ids or verbatim texts of facts this one replaces. */
+      supersedes?: string[];
+      /**
+       * Create the neuron when the topic is unknown. Default true.
+       * The miner passes false: an automated pass guessing at topic names is
+       * how a brain ends up with a thousand neurons called things like
+       * `lang_juego_billar_8_ball`, each of them shorter -- and therefore
+       * easier to retrieve -- than the knowledge that matters.
+       */
+      createIfMissing?: boolean;
     }
-  ): Promise<{ neuron: Neuron; action: 'created' | 'updated' }> {
-    // Try to find existing neuron
-    let neuron = await this.findByName(topic);
-    let action: 'created' | 'updated' = 'updated';
+  ): Promise<{ neuron: Neuron | null; action: 'created' | 'updated' | 'skipped'; superseded: number }> {
+    let neuron: Neuron | null = null;
+    let action: 'created' | 'updated' | 'skipped' = 'updated';
+
+    if (options?.neuronId) {
+      neuron = await this.peek(options.neuronId);
+    }
+    if (!neuron) {
+      neuron = await this.findByName(topic);
+    }
 
     if (!neuron) {
-      // Create new neuron
+      if (options?.createIfMissing === false) {
+        return { neuron: null, action: 'skipped', superseded: 0 };
+      }
       const nType = options?.neuronType || inferNeuronType(topic);
       const domain = options?.domain || 'general';
       neuron = await this.create(topic, nType, domain);
       action = 'created';
     }
 
-    // Add content based on type
+    let superseded = 0;
+
     switch (type) {
       case 'fact': {
-        // Check for duplicate
+        const id = factId(content);
         const isDuplicate = neuron.facts.some(
           f => f.text.toLowerCase() === content.toLowerCase()
         );
         if (!isDuplicate) {
+          if (options?.supersedes?.length) {
+            superseded = this.retire(neuron, options.supersedes, id, 'superseded');
+          }
           const fact: Fact = {
             text: content,
             confidence: options?.confidence ?? 1.0,
             added: now(),
-            source: 'session',
+            source: options?.source || 'session',
+            id,
+            status: 'active',
           };
+          if (options?.supersedes?.length) fact.supersedes = options.supersedes;
           neuron.facts.push(fact);
         }
         break;
@@ -156,17 +269,83 @@ export class Cortex {
       }
     }
 
-    // Update access
     neuron.last_accessed = now();
-    neuron.access_count += 1;
+    neuron.access_count = (neuron.access_count || 0) + 1;
 
-    // Update domain if provided and neuron was just using default
     if (options?.domain && neuron.domain === 'general') {
       neuron.domain = options.domain;
     }
 
     await writeJSON(this.brain.paths.neuron(neuron.id), neuron);
-    return { neuron, action };
+    await this.reindex(neuron);
+    return { neuron, action, superseded };
+  }
+
+  /**
+   * Mark facts as no longer current.
+   *
+   * `superseded` — a newer fact replaces it.
+   * `retracted`  — it was never true.
+   *
+   * Facts are matched by id, and failing that by verbatim text, because the
+   * caller usually has the text in front of it and not the hash.
+   */
+  async revise(
+    neuronRef: string,
+    targets: string[],
+    options?: { status?: FactStatus; note?: string; replacedBy?: string }
+  ): Promise<{ neuron: Neuron | null; revised: number }> {
+    const neuron =
+      (await this.peek(neuronRef)) || (await this.findByName(neuronRef));
+    if (!neuron) return { neuron: null, revised: 0 };
+
+    const revised = this.retire(
+      neuron,
+      targets,
+      options?.replacedBy,
+      options?.status || 'superseded',
+      options?.note
+    );
+
+    if (revised > 0) {
+      neuron.last_accessed = now();
+      await writeJSON(this.brain.paths.neuron(neuron.id), neuron);
+      // Must reindex, or the correction is silently lost on next boot —
+      // which is exactly the failure this feature exists to close.
+      await this.reindex(neuron);
+    }
+
+    return { neuron, revised };
+  }
+
+  /** Flip matching facts to a non-active status. Returns how many changed. */
+  private retire(
+    neuron: Neuron,
+    targets: string[],
+    replacedBy: string | undefined,
+    status: FactStatus,
+    note?: string
+  ): number {
+    let count = 0;
+    const wanted = targets.map(t => t.trim().toLowerCase());
+
+    for (const fact of neuron.facts) {
+      if (fact.status === 'superseded' || fact.status === 'retracted') continue;
+
+      const fid = fact.id || factId(fact.text);
+      const matches =
+        wanted.includes(fid.toLowerCase()) ||
+        wanted.includes(fact.text.trim().toLowerCase());
+      if (!matches) continue;
+
+      fact.id = fid;
+      fact.status = status;
+      fact.revised = now();
+      if (replacedBy) fact.superseded_by = replacedBy;
+      if (note) fact.revision_note = note;
+      count++;
+    }
+    return count;
   }
 
   /**
@@ -235,6 +414,7 @@ export class Cortex {
     neuron.summary = summary;
     neuron.last_accessed = now();
     await writeJSON(this.brain.paths.neuron(id), neuron);
+    await this.reindex(neuron);
     return neuron;
   }
 
@@ -251,6 +431,7 @@ export class Cortex {
       }
     }
     await writeJSON(this.brain.paths.neuron(id), neuron);
+    await this.reindex(neuron);
     return neuron;
   }
 

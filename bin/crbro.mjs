@@ -273,6 +273,111 @@ if (command === 'init') {
     console.log('');
   }).catch(console.error);
 
+} else if (command === 'reindex') {
+  // ─── Rebuild the search index from the cortex ──────────────────
+  Promise.all([
+    import('../dist/engine/brain.js'),
+    import('../dist/search/index.js'),
+  ]).then(async ([{ Brain }, { SearchEngine }]) => {
+    const brain = new Brain();
+    const engine = new SearchEngine(brain);
+
+    console.log('');
+    console.log('  🔁 Rebuilding the CRBRO search index...');
+    const started = Date.now();
+    const indexed = await engine.rebuild();
+    const seconds = ((Date.now() - started) / 1000).toFixed(1);
+
+    console.log('');
+    console.log(`  ✅ ${indexed} chunks indexed in ${seconds}s`);
+    console.log('     Every fact, decision and pattern is now searchable on its own,');
+    console.log('     so a big neuron is no longer buried by short ones.');
+    console.log('');
+  }).catch(console.error);
+
+} else if (command === 'eval') {
+  // ─── Measure retrieval quality against a query set ─────────────
+  //
+  // Without a number you cannot tell a fix from a feeling. The file is
+  // .crbro/.eval/queries.json — a list of { query, expect_neuron } and
+  // optionally expect_contains, the substring the matched fact should carry.
+  Promise.all([
+    import('../dist/engine/brain.js'),
+    import('../dist/search/index.js'),
+    import('fs/promises'),
+  ]).then(async ([{ Brain }, { SearchEngine }, fsp]) => {
+    const brain = new Brain();
+    const evalPath = join(brain.paths.root, '.eval', 'queries.json');
+
+    let queries;
+    try {
+      queries = JSON.parse(await fsp.readFile(evalPath, 'utf-8'));
+    } catch {
+      console.log('');
+      console.log(`  No query set found at ${evalPath}`);
+      console.log('  Create it as a JSON array, for example:');
+      console.log('');
+      console.log('  [');
+      console.log('    { "query": "how we deploy the api", "expect_neuron": "project_octochat",');
+      console.log('      "expect_contains": "Cloud Run" }');
+      console.log('  ]');
+      console.log('');
+      console.log('  Build it from facts you already saved: take six or eight words');
+      console.log('  out of a real fact and name the neuron that holds it.');
+      console.log('');
+      return;
+    }
+
+    const engine = new SearchEngine(brain);
+    await engine.init();
+
+    let atOne = 0, atThree = 0, reciprocal = 0, contentOk = 0;
+    const misses = [];
+
+    for (const q of queries) {
+      const results = await engine.search(q.query, { limit: 10 });
+      const rank = results.findIndex(r => r.neuron_id === q.expect_neuron);
+
+      if (rank === 0) atOne++;
+      if (rank >= 0 && rank < 3) atThree++;
+      if (rank >= 0) reciprocal += 1 / (rank + 1);
+
+      if (rank === 0 && q.expect_contains) {
+        if (results[0].matching_content.includes(q.expect_contains)) contentOk++;
+        else misses.push(`  ~ "${q.query}" — right neuron, wrong fact returned`);
+      }
+
+      if (rank !== 0) {
+        const got = results[0] ? results[0].neuron_id : '(nothing)';
+        misses.push(`  ✗ "${q.query}" — expected ${q.expect_neuron}, got ${got}` +
+                    (rank > 0 ? ` (it was #${rank + 1})` : ''));
+      }
+    }
+
+    const n = queries.length;
+    const pct = (x) => `${((x / n) * 100).toFixed(1)}%`;
+
+    console.log('');
+    console.log('  📊 CRBRO retrieval eval');
+    console.log('  ───────────────────────');
+    console.log(`  Queries:          ${n}`);
+    console.log(`  Right first hit:  ${atOne}/${n}  (${pct(atOne)})`);
+    console.log(`  In the top 3:     ${atThree}/${n}  (${pct(atThree)})`);
+    console.log(`  MRR:              ${(reciprocal / n).toFixed(3)}`);
+    if (queries.some(q => q.expect_contains)) {
+      const withContent = queries.filter(q => q.expect_contains).length;
+      console.log(`  Right fact shown: ${contentOk}/${withContent}`);
+    }
+
+    if (misses.length > 0) {
+      console.log('');
+      console.log('  Misses:');
+      for (const m of misses.slice(0, 25)) console.log(m);
+      if (misses.length > 25) console.log(`  ... and ${misses.length - 25} more`);
+    }
+    console.log('');
+  }).catch(console.error);
+
 } else if (command === '--help' || command === '-h') {
   // ─── Help ──────────────────────────────────────────────────────
   console.log('');
@@ -288,6 +393,10 @@ if (command === 'init') {
   console.log('    npx crbro-memory setup-miner      Install scheduled auto-miner');
   console.log('    npx crbro-memory miner-status     Check auto-miner status');
   console.log('    npx crbro-memory remove-miner     Remove auto-miner');
+  console.log('');
+  console.log('  Search:');
+  console.log('    npx crbro-memory reindex          Rebuild the search index');
+  console.log('    npx crbro-memory eval             Measure retrieval against .crbro/.eval/queries.json');
   console.log('');
   console.log('  Server:');
   console.log('    npx crbro-memory                  Start MCP server (stdio)');

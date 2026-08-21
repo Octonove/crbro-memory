@@ -8,15 +8,16 @@
 
 ![CRBRO demo](docs/demo.gif)
 
-Free and open source (MIT). All 15 tools included — no license, no account, no tiers.
+Free and open source (MIT). All 16 tools included — no license, no account, no tiers.
 
 > ⭐ **If CRBRO gives your AI a memory worth keeping, a star on GitHub is the best way to support it.**
 
 ## Features
 
 - **🧬 Biological Architecture** — Knowledge organized as neurons (cortex), connections (synapses), and session memory (hippocampus)
-- **🔍 Hybrid Search** — Powered by [Orama](https://orama.com/) for fast BM25 + fuzzy text search
+- **🔍 Fact-Level Search** — Powered by [Orama](https://orama.com/). Every fact is indexed on its own, so a topic with hundreds of facts stays as findable as one with three, and each result comes back with the exact fact that matched and the date it was recorded
 - **🔥 Heat Scores** — Automatic relevance tracking based on frequency, recency, and connectivity
+- **✏️ Correctable** — Knowledge can be superseded or retracted, not just piled up. A memory that only appends keeps serving yesterday's answer with today's confidence
 - **🗺️ Global Map** — Cluster detection and cross-domain bridge identification
 - **⛏️ Knowledge Miner** — Optionally scans your local `.md`/`.txt` notes and feeds them into the brain
 - **🔒 Fully Local** — Runs on Node.js alone: no Python, no Docker, no databases, no external services. Your memory never leaves your machine
@@ -70,7 +71,7 @@ claude mcp add --scope user crbro -- npx -y crbro-memory
 
 ### 3. Start using it
 
-Your AI will now have access to 15 memory tools. Start any session with `crbro_boot`.
+Your AI will now have access to 16 memory tools. Start any session with `crbro_boot`.
 
 ## Tools
 
@@ -81,7 +82,7 @@ Your AI will now have access to 15 memory tools. Start any session with `crbro_b
 | `crbro_learn` | Store a fact, decision, pattern, or preference |
 | `crbro_neuron` | Read a specific neuron (topic) with all its knowledge |
 | `crbro_neurons` | List neurons with optional filters (domain, type, heat) |
-| `crbro_recall` | Search the brain using hybrid text search |
+| `crbro_recall` | Search every stored fact, not just topic names — returns the fact that matched |
 | `crbro_connect` | Create or strengthen a connection between neurons |
 | `crbro_connections` | Get all connections for a neuron |
 | `crbro_session_log` | Log a session summary |
@@ -89,7 +90,8 @@ Your AI will now have access to 15 memory tools. Start any session with `crbro_b
 | `crbro_context` | Read/update active working context |
 | `crbro_hot_topics` | Get the most active topics by heat score |
 | `crbro_global_map` | View the neural network — clusters and cross-domain bridges |
-| `crbro_maintenance` | Full brain maintenance — archive, prune, rebuild |
+| `crbro_revise` | Mark facts as superseded or retracted when they stop being true |
+| `crbro_maintenance` | Brain maintenance — heat, pruning, integrity, index rebuild |
 | `crbro_consolidate` | End-of-session consolidation |
 
 ## Architecture
@@ -108,9 +110,9 @@ Your AI will now have access to 15 memory tools. Start any session with `crbro_b
 │   ├── active_context.json
 │   ├── hot_topics.json
 │   └── global_map.json
-├── archives/               ← Cold neurons
+├── archives/               ← Cold neurons (opt-in; nothing is archived unless you ask)
 └── .search/                ← Orama search index
-    └── orama.index.json
+    └── chunks.index.json   ← one document per fact
 ```
 
 ## Heat Score Algorithm
@@ -140,8 +142,28 @@ npx crbro-memory remove-miner     # Remove the scheduled task
 npx crbro-memory          # Start MCP server (stdio)
 npx crbro-memory init     # Initialize brain + detect IDEs
 npx crbro-memory status   # Show brain status
+npx crbro-memory reindex  # Rebuild the search index
+npx crbro-memory eval     # Measure retrieval quality against your own query set
 npx crbro-memory --help   # Help
 ```
+
+### Measuring retrieval
+
+`eval` is there so you can tell a fix from a feeling. Write
+`~/.crbro/.eval/queries.json` as a list of questions you would actually ask,
+each naming the neuron that should answer it:
+
+```json
+[
+  { "query": "how we deploy the api",
+    "expect_neuron": "project_octochat",
+    "expect_contains": "Cloud Run" }
+]
+```
+
+Then `npx crbro-memory eval` reports how often the right neuron comes back
+first, how often it makes the top three, and MRR — plus every miss, so you can
+see what it got wrong instead of guessing.
 
 ## License
 
