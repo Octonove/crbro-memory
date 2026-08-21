@@ -3,6 +3,7 @@
 
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
+import { withLock } from './lock.js';
 
 /**
  * Safely read and parse a JSON file. Returns null if file doesn't exist.
@@ -53,6 +54,31 @@ export async function fileExists(filePath: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+/**
+ * Read a JSON file, let the caller change it, and write it back — all while
+ * holding the file's lock, so a concurrent writer cannot slip in between the
+ * read and the write.
+ *
+ * This is the fix for silent data loss: every mutation used to read the whole
+ * neuron, edit it in memory and save it, so with two editors open the later
+ * save erased whatever the other one had added. Measured before the lock: 80
+ * facts requested across two processes, 42 survived, no errors reported.
+ *
+ * The mutator returns the value to write, or null to leave the file alone.
+ */
+export async function updateJSON<T>(
+  filePath: string,
+  mutate: (current: T | null) => Promise<T | null> | T | null
+): Promise<T | null> {
+  return withLock(filePath, async () => {
+    const current = await readJSON<T>(filePath);
+    const next = await mutate(current);
+    if (next === null) return current;
+    await writeJSON(filePath, next);
+    return next;
+  });
 }
 
 /**

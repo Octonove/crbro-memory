@@ -7,7 +7,14 @@ on:
 
 jobs:
   build-and-test:
-    runs-on: ubuntu-latest
+    # Los dos fallos mas caros del producto han sido especificos de Windows
+    # (rename con EPERM sobre fichero abierto, rutas con espacios), y es donde
+    # esta la mayoria de los usuarios de escritorio.
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7

@@ -1,7 +1,8 @@
 // ─── CRBRO Maintenance Engine ────────────────────────────────────
 // Pruning, archiving, integrity checks, and consolidation
 
-import { readJSON, writeJSON, listJSONFiles, moveFile, now, today } from '../utils/fs.js';
+import { readJSON, writeJSON, updateJSON, listJSONFiles, moveFile, deleteJSON, now, today } from '../utils/fs.js';
+import { sweepStaleLocks } from '../utils/lock.js';
 import type { Brain } from './brain.js';
 import type { Cortex } from './cortex.js';
 import type { Synapses } from './synapses.js';
@@ -13,6 +14,11 @@ import type { Neuron } from '../types/index.js';
 
 export interface MaintenanceReport {
   archived_neurons: number;
+  /** Contentless miner leftovers found, and removed if asked. */
+  boilerplate_facts: number;
+  boilerplate_removed: number;
+  /** Lock files left by a process that died mid-write. */
+  stale_locks_swept: number;
   /** How many neurons WOULD be archived. Reported even when nothing is archived. */
   archivable_neurons: number;
   pruned_synapses: number;
@@ -37,9 +43,15 @@ export class Maintenance {
   /**
    * Run full maintenance cycle.
    */
-  async run(dryRun: boolean = false, options?: { archive?: boolean }): Promise<MaintenanceReport> {
+  async run(
+    dryRun: boolean = false,
+    options?: { archive?: boolean; purgeBoilerplate?: boolean }
+  ): Promise<MaintenanceReport> {
     const report: MaintenanceReport = {
       archived_neurons: 0,
+      boilerplate_facts: 0,
+      boilerplate_removed: 0,
+      stale_locks_swept: 0,
       archivable_neurons: 0,
       pruned_synapses: 0,
       integrity_issues: [],
@@ -80,6 +92,31 @@ export class Maintenance {
         `${report.archivable_neurons} neurons are cold enough to archive. Nothing was archived: ` +
         'pass archive:true if you have reviewed the list and really want them out of the way.'
       );
+    }
+
+    // 2b. Miner leftovers.
+    //
+    // Early versions of the miner recorded "Referenced in: <file>" for every
+    // technology it spotted. That is not knowledge — it says a word appeared
+    // in a file — and on the reference brain it was 708 of 4,273 facts, with
+    // 48 neurons made of nothing else. Counting is free; removing is opt-in.
+    report.boilerplate_facts = await this.countBoilerplate();
+    if (options?.purgeBoilerplate && !dryRun) {
+      report.boilerplate_removed = await this.purgeBoilerplate();
+      report.notes.push(
+        `Removed ${report.boilerplate_removed} contentless miner fact(s). ` +
+        'Neurons left with nothing in them were not deleted; review them with crbro_neurons.'
+      );
+    } else if (report.boilerplate_facts > 0) {
+      report.notes.push(
+        `${report.boilerplate_facts} contentless miner fact(s) ("Referenced in: ...") are taking up ` +
+        'space and index slots. Pass purge_boilerplate:true to remove them.'
+      );
+    }
+
+    // 2c. Locks abandoned by a process that died mid-write.
+    if (!dryRun) {
+      report.stale_locks_swept = await sweepStaleLocks(this.brain.paths.cortex);
     }
 
     // 3. Decay and prune weak synapses
@@ -171,6 +208,38 @@ export class Maintenance {
   }
 
   // ─── Private Helpers ──────────────────────────────────────────
+
+  /** "Referenced in: x.md" and "Mined from x.md" carry no information. */
+  private isBoilerplate(text: string): boolean {
+    return /^(Referenced in|Mined from):?\s/i.test((text || '').trim());
+  }
+
+  private async countBoilerplate(): Promise<number> {
+    let n = 0;
+    for (const id of await this.cortex.allIds()) {
+      const neuron = await readJSON<Neuron>(this.brain.paths.neuron(id));
+      if (!neuron) continue;
+      n += (neuron.facts || []).filter(f => this.isBoilerplate(f.text)).length;
+    }
+    return n;
+  }
+
+  private async purgeBoilerplate(): Promise<number> {
+    let removed = 0;
+    for (const id of await this.cortex.allIds()) {
+      await updateJSON<Neuron>(this.brain.paths.neuron(id), current => {
+        if (!current) return null;
+        const antes = (current.facts || []).length;
+        current.facts = (current.facts || []).filter(f => !this.isBoilerplate(f.text));
+        const quitados = antes - current.facts.length;
+        if (quitados === 0) return null;
+        removed += quitados;
+        return current;
+      });
+    }
+    if (removed > 0) await this.searchEngine.rebuild();
+    return removed;
+  }
 
   private async archiveColdNeurons(): Promise<number> {
     const ids = await this.cortex.allIds();
