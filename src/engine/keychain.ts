@@ -84,9 +84,16 @@ export function detectBackend(): { backend: Backend | null; reason?: string } {
   }
 
   if (os === 'win32') {
-    const probe = run('powershell.exe', ['-NoProfile', '-Command', '$PSVersionTable.PSVersion.Major']);
-    if (probe.error || probe.status !== 0) {
-      return { backend: null, reason: 'PowerShell not available, so DPAPI cannot be reached.' };
+    // Starting PowerShell is not the same as being able to encrypt. On CI
+    // runners and locked-down corporate machines it answers happily and then
+    // fails at the first write, so the probe seals a byte for real.
+    const probe = run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', DPAPI_PROBE]);
+    if (probe.error || probe.status !== 0 || !probe.stdout.includes('ok')) {
+      return {
+        backend: null,
+        reason: 'DPAPI is not reachable from PowerShell here, which happens on CI runners and ' +
+          'locked-down machines. Credentials can still be passed as environment variables.',
+      };
     }
     return { backend: 'windows-dpapi' };
   }
@@ -138,8 +145,37 @@ function invalidateCache(): void {
   cached = null;
 }
 
+// ConvertTo-SecureString and its twin live in Microsoft.PowerShell.Security,
+// and there are Windows machines where that module does not load at all — CI
+// runners, constrained language mode, corporate policy. The cmdlets are only a
+// wrapper over ProtectedData, so the wrapper is skipped: same DPAPI, same
+// CurrentUser scope, no module to fail.
+const DPAPI_PREAMBLE =
+  "Add-Type -AssemblyName System.Security;" +
+  "$ErrorActionPreference='Stop';";
+
+const DPAPI_SEAL =
+  DPAPI_PREAMBLE +
+  "$j=[Console]::In.ReadToEnd();" +
+  "$b=[Text.Encoding]::UTF8.GetBytes($j);" +
+  "$p=[Security.Cryptography.ProtectedData]::Protect($b,$null,'CurrentUser');" +
+  "[Convert]::ToBase64String($p)";
+
+const DPAPI_OPEN =
+  DPAPI_PREAMBLE +
+  "$e=[Console]::In.ReadToEnd().Trim();" +
+  "$b=[Convert]::FromBase64String($e);" +
+  "$p=[Security.Cryptography.ProtectedData]::Unprotect($b,$null,'CurrentUser');" +
+  "[Text.Encoding]::UTF8.GetString($p)";
+
+/** Seals one byte and opens it again — the only honest test of "can I do this". */
+const DPAPI_PROBE =
+  DPAPI_PREAMBLE +
+  "$p=[Security.Cryptography.ProtectedData]::Protect([Text.Encoding]::UTF8.GetBytes('ok'),$null,'CurrentUser');" +
+  "[Text.Encoding]::UTF8.GetString([Security.Cryptography.ProtectedData]::Unprotect($p,$null,'CurrentUser'))";
+
 function psDpapi(script: string, input?: string) {
-  const r = run('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', script], input);
+  const r = run('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script], input);
   if (r.error || r.status !== 0) {
     throw new KeychainUnavailable(`DPAPI call failed: ${(r.stderr || '').trim() || 'unknown error'}`);
   }
@@ -156,13 +192,19 @@ function winRead(): WinStore {
   if (!sealed) return {};
   // ConvertTo-SecureString without -Key is DPAPI at CurrentUser scope: only
   // this Windows account, on this machine, can turn it back into text.
-  const json = psDpapi(
-    '$e = [Console]::In.ReadToEnd().Trim();' +
-    '$s = ConvertTo-SecureString $e;' +
-    '$b = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($s);' +
-    'try { [Runtime.InteropServices.Marshal]::PtrToStringAuto($b) }' +
-    'finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($b) }',
-    sealed);
+  // 1.8.0 and 1.8.1 sealed with ConvertFrom-SecureString, whose output is hex.
+  // Anything else is the ProtectedData format. Reading both means an existing
+  // store keeps working instead of looking corrupt after an update.
+  const legacy = /^[0-9a-f]+$/i.test(sealed);
+  const json = legacy
+    ? psDpapi(
+        '$e = [Console]::In.ReadToEnd().Trim();' +
+        '$s = ConvertTo-SecureString $e;' +
+        '$b = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($s);' +
+        'try { [Runtime.InteropServices.Marshal]::PtrToStringAuto($b) }' +
+        'finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($b) }',
+        sealed)
+    : psDpapi(DPAPI_OPEN, sealed);
   try {
     const store = JSON.parse(json) as WinStore;
     cached = { store, at: Date.now(), file };
@@ -175,10 +217,7 @@ function winRead(): WinStore {
 function winWrite(store: WinStore): void {
   const { dir, file } = winPaths();
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 });
-  const sealed = psDpapi(
-    '$j = [Console]::In.ReadToEnd();' +
-    'ConvertTo-SecureString $j -AsPlainText -Force | ConvertFrom-SecureString',
-    JSON.stringify(store)).trim();
+  const sealed = psDpapi(DPAPI_SEAL, JSON.stringify(store)).trim();
   // Atomic: a crash mid-write leaves the previous store intact rather than a
   // truncated file that would take every secret with it.
   const tmp = `${file}.tmp`;
