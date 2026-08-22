@@ -1,5 +1,5 @@
 // ─── CRBRO MCP Server ────────────────────────────────────────────
-// Main server with all 15 tools registered
+// Main server with all 22 tools registered
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
@@ -16,11 +16,14 @@ import {
   createSpace, joinSpace, listSpaces, readSpace, prepareShare, commitShare,
   syncSpaceNow, syncAll, getIdentity, attachSync,
 } from './sync/space.js';
+import {
+  detectBackend, setSecret, getSecret, listSecrets, removeSecret, KeychainUnavailable,
+} from './engine/keychain.js';
 
 export function createServer(): McpServer {
   const server = new McpServer({
     name: 'crbro-memory',
-    version: '1.7.0',
+    version: '1.8.0',
   });
 
   // ─── Initialize engines ──────────────────────────────────────
@@ -44,9 +47,9 @@ export function createServer(): McpServer {
   // two people working at once have nothing to collide over.
   attachSync(brain, cortex);
 
-  // v1.4.0: CRBRO is fully free — all 15 tools, no license, no network calls.
-  // The former license engine (Firestore-backed freemium) lives in git history
-  // before this version if it is ever needed again.
+  // v1.4.0: CRBRO is fully free — no license, no network calls. The former
+  // license engine (Firestore-backed freemium) lives in git history before
+  // that version if it is ever needed again.
 
   // ═══════════════════════════════════════════════════════════════
   // TOOL 1: crbro_boot — Boot sequence
@@ -208,7 +211,8 @@ export function createServer(): McpServer {
               redaction_note: result.redacted.length > 0
                 ? `Stored, but ${result.redacted.length} credential(s) were replaced with a marker: ` +
                   `${result.redacted.join(', ')}. The sentence around them was kept. ` +
-                  'Tell the user, and do not try to store the value again.'
+                  'Do not try to store the value again. Offer the user crbro_secret instead: ' +
+                  'it puts the credential in the OS keychain, and then you record only its name here.'
                 : undefined,
               total_facts: result.neuron.facts.length,
               total_decisions: result.neuron.decisions.length,
@@ -812,6 +816,97 @@ export function createServer(): McpServer {
           content: [{
             type: 'text' as const,
             text: `CRBRO audit error: ${err instanceof Error ? err.message : String(err)}`,
+          }],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  // ═══════════════════════════════════════════════════════════════
+  // TOOL 22: crbro_secret — Credentials, brokered to the OS keychain
+  // ═══════════════════════════════════════════════════════════════
+  server.tool(
+    'crbro_secret',
+    'Store and read credentials in the operating system own keychain — macOS Keychain, the Linux Secret Service, or DPAPI on Windows. CRBRO keeps no copy and invents no crypto: it brokers access to the store the machine already has, outside the brain, where no sync and no team space can reach it. Use it the moment the user hands you a credential: store it here, then record only the NAME with crbro_learn, never the value. Use get when a task needs one, and do not print the value back to the user unless they asked for that specific secret. Names are SCREAMING_SNAKE_CASE, e.g. WORDPRESS_APP_PASSWORD.',
+    {
+      action: z.enum(['get', 'set', 'list', 'remove', 'status'])
+        .describe('get = read one, set = store or update one, list = names only, remove = delete one, status = which keychain this machine offers'),
+      name: z.string().optional().describe('Secret name in SCREAMING_SNAKE_CASE'),
+      value: z.string().optional().describe('The credential itself. Only for set.'),
+      description: z.string().optional().describe('What it is for, e.g. "WordPress example.com - REST API"'),
+    },
+    async (args) => {
+      try {
+        let payload: Record<string, unknown>;
+
+        if (args.action === 'status') {
+          const { backend, reason } = detectBackend();
+          payload = {
+            backend,
+            available: backend !== null,
+            message: backend
+              ? `Credentials on this machine are stored in: ${backend}.`
+              : `No credential store available here. ${reason ?? ''} Credentials can still be passed as environment variables.`,
+          };
+
+        } else if (args.action === 'list') {
+          const entries = listSecrets();
+          payload = {
+            count: entries.length,
+            secrets: entries,
+            note: 'Names only. Values are never listed, by design.',
+          };
+
+        } else if (!args.name) {
+          throw new Error(`"name" is required for action "${args.action}".`);
+
+        } else if (args.action === 'set') {
+          if (!args.value) throw new Error('"value" is required for action "set".');
+          setSecret(args.name, args.value, args.description ?? '');
+          payload = {
+            stored: args.name,
+            message: `Stored in the OS keychain as ${args.name}. Now record the NAME in the brain with crbro_learn — never the value — so a later session knows where to look.`,
+          };
+
+        } else if (args.action === 'remove') {
+          const gone = removeSecret(args.name);
+          payload = {
+            removed: gone,
+            message: gone
+              ? `${args.name} deleted from the keychain.`
+              : `No secret named ${args.name} was found.`,
+          };
+
+        } else {
+          const value = getSecret(args.name);
+          payload = value === null
+            ? {
+                found: false,
+                message: `No secret named ${args.name}. Run action "list" to see what is stored, or ask the user for it and store it with action "set".`,
+              }
+            : {
+                found: true,
+                name: args.name,
+                value,
+                note: 'Use it for the task at hand. Do not repeat it back to the user and do not write it into any file.',
+              };
+        }
+
+        return {
+          content: [{
+            type: 'text' as const,
+            text: JSON.stringify(payload, null, 2),
+          }],
+        };
+
+      } catch (err) {
+        return {
+          content: [{
+            type: 'text' as const,
+            text: err instanceof KeychainUnavailable
+              ? `No credential store available: ${err.message}`
+              : `CRBRO secret error: ${err instanceof Error ? err.message : String(err)}`,
           }],
           isError: true,
         };

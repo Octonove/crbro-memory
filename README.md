@@ -8,7 +8,7 @@
 
 ![CRBRO demo](docs/demo.gif)
 
-Free and open source (MIT). All 21 tools included — no license, no account, no tiers.
+Free and open source (MIT). All 22 tools included — no license, no account, no tiers.
 
 > ⭐ **If CRBRO gives your AI a memory worth keeping, a star on GitHub is the best way to support it.**
 
@@ -18,7 +18,7 @@ Free and open source (MIT). All 21 tools included — no license, no account, no
 - **🔍 Fact-Level Search** — Powered by [Orama](https://orama.com/). Every fact is indexed on its own, so a topic with hundreds of facts stays as findable as one with three, and each result comes back with the exact fact that matched and the date it was recorded
 - **🔥 Heat Scores** — Automatic relevance tracking based on frequency, recency, and connectivity
 - **✏️ Correctable** — Knowledge can be superseded or retracted, not just piled up. A memory that only appends keeps serving yesterday's answer with today's confidence
-- **🔐 Credential-aware** — API keys, tokens and passwords are replaced with a marker before they touch the disk. The sentence around them survives; the secret does not
+- **🔐 Credential-aware** — API keys, tokens and passwords are replaced with a marker before they touch the disk. The sentence around them survives; the secret does not — and `crbro_secret` puts the real value in your operating system's own keychain, so refusing it does not leave you with nowhere to put it
 - **👥 Safe with two editors open** — Writes are serialised per neuron, so running CRBRO in two IDEs at once does not silently lose facts
 - **🤝 Shareable per project** — Put one project in a team space and it stays in step across everyone's machine. Everything else in your brain never leaves it
 - **🗺️ Global Map** — Cluster detection and cross-domain bridge identification
@@ -74,7 +74,7 @@ claude mcp add --scope user crbro -- npx -y crbro-memory
 
 ### 3. Start using it
 
-Your AI will now have access to 21 memory tools. Start any session with `crbro_boot`.
+Your AI will now have access to 22 memory tools. Start any session with `crbro_boot`.
 
 ## Tools
 
@@ -96,11 +96,42 @@ Your AI will now have access to 21 memory tools. Start any session with `crbro_b
 | `crbro_revise` | Mark facts as superseded or retracted when they stop being true |
 | `crbro_audit` | Find credentials stored in the brain — reports the kind, never the value |
 | `crbro_forget` | Remove facts for good, keeping a copy in `.quarantine/` first |
+| `crbro_secret` | Put a credential in the OS keychain and keep only its name in the brain |
 | `crbro_space` | Create or join a team space — a private git repo for shared projects |
 | `crbro_share` | Put one project into a space, after showing exactly what would be sent |
 | `crbro_sync` | Exchange notes with teammates now, instead of waiting for the next session |
 | `crbro_maintenance` | Brain maintenance — heat, pruning, integrity, index rebuild |
 | `crbro_consolidate` | End-of-session consolidation |
+
+## Credentials
+
+A memory should not hold your passwords, and CRBRO refuses to: anything shaped
+like a credential is replaced with a marker before it reaches the disk. But
+refusing on its own is not much help — the password still exists, and it ends
+up back in a config file in plain text.
+
+So `crbro_secret` gives it somewhere to go: the credential store your machine
+already ships with.
+
+| Platform | Where the value actually lives |
+|----------|--------------------------------|
+| macOS | Keychain, via `security` |
+| Linux | Secret Service, via `secret-tool` |
+| Windows | Sealed with DPAPI to your Windows account |
+
+CRBRO keeps no copy and writes no crypto of its own. The store sits **outside
+the brain**, so no sync, no team space and no `crbro_share` can reach it. What
+goes in the brain is the *name*:
+
+> "The WordPress password for example.com is in `WP_EXAMPLE_APP_PASSWORD`."
+
+Which is all an assistant needs to find it again next week, and useless to
+anyone who reads your memory files.
+
+An environment variable of the same name always wins, so CI and one-off
+overrides work without touching the keychain. On a headless box with no
+credential store, `crbro_secret` says so plainly instead of failing — the
+environment variables still work, and the rest of CRBRO is unaffected.
 
 ## Team memory
 
