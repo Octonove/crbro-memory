@@ -196,6 +196,24 @@ function winWrite(store: WinStore): void {
 // for no reason. So the names live in an item of their own: one extra write
 // per change, and a listing that tells the truth.
 
+// security(1) prints the whole value as hex pairs if a single byte of it is
+// not printable, and a UTF-8 accent is two bytes above 0x7F — so "contraseña"
+// comes back as "636f6e747261736ec3b161". Worse, it is ambiguous: the literal
+// secret "deadbeef" is returned exactly like the hex of the bytes DE AD BE EF,
+// and nothing in the output says which one it was.
+//
+// Base64 is printable ASCII from end to end, so the hex path is never taken
+// and any byte sequence survives the round trip unchanged.
+function macEncode(value: string): string {
+  return Buffer.from(value, 'utf8').toString('base64');
+}
+
+function macDecode(raw: string): string {
+  // -w always ends with a newline of its own (putchar), and only that one is
+  // removed: .trim() would eat spaces that belong to the secret.
+  return Buffer.from(raw.replace(/\n$/, ''), 'base64').toString('utf8');
+}
+
 const MAC_INDEX = '__crbro_index__';
 
 interface MacIndex {
@@ -206,9 +224,7 @@ function macReadIndex(): MacIndex {
   const r = run('security', ['find-generic-password', '-s', SERVICE, '-a', MAC_INDEX, '-w']);
   if (r.status !== 0) return {};
   try {
-    // -w always ends with a newline of its own (putchar), and only that one
-    // is removed.
-    return JSON.parse(r.stdout.replace(/\n$/, '')) as MacIndex;
+    return JSON.parse(macDecode(r.stdout)) as MacIndex;
   } catch {
     return {};
   }
@@ -216,7 +232,7 @@ function macReadIndex(): MacIndex {
 
 function macWriteIndex(index: MacIndex): void {
   run('security',
-    ['add-generic-password', '-U', '-s', SERVICE, '-a', MAC_INDEX, '-w', JSON.stringify(index), '-T', '/usr/bin/security']);
+    ['add-generic-password', '-U', '-s', SERVICE, '-a', MAC_INDEX, '-w', macEncode(JSON.stringify(index)), '-T', '/usr/bin/security']);
 }
 
 // ─── Public surface ──────────────────────────────────────────────
@@ -241,7 +257,7 @@ export function setSecret(name: string, value: string, description = ''): void {
     // security(1) offers no stdin form, so the exposure is unavoidable and
     // measured in milliseconds on the user's own machine.
     const r = run('security',
-      ['add-generic-password', '-U', '-s', SERVICE, '-a', name, '-w', value, '-j', description, '-T', '/usr/bin/security']);
+      ['add-generic-password', '-U', '-s', SERVICE, '-a', name, '-w', macEncode(value), '-j', description, '-T', '/usr/bin/security']);
     if (r.status !== 0) throw new KeychainUnavailable(`Keychain refused the write: ${(r.stderr || '').trim()}`);
     const index = macReadIndex();
     index[name] = { description, updated: new Date().toISOString().slice(0, 10) };
@@ -274,10 +290,17 @@ export function getSecret(name: string): string | null {
 
   if (backend === 'macos-keychain') {
     const r = run('security', ['find-generic-password', '-s', SERVICE, '-a', name, '-w']);
+    // security(1) returns the OSStatus itself, truncated to eight bits: 44 is
+    // errSecItemNotFound, 36 is errSecInteractionNotAllowed — a locked
+    // keychain, which is the normal state over SSH and in CI. Reporting that
+    // one as "no such secret" would send someone hunting for a typo.
+    if (r.status === 36) {
+      throw new KeychainUnavailable(
+        'The macOS keychain is locked, which is usual over SSH or in CI. Unlock it in a desktop session, ' +
+        'or pass the credential as an environment variable instead.');
+    }
     if (r.status !== 0) return null;
-    // security(1) appends a newline. Leaving it attached is how a credential
-    // ends up sending a stray \r\n and returning a baffling 401.
-    return r.stdout.replace(/\r?\n$/, '');
+    return macDecode(r.stdout);
   }
 
   // Unlike security(1), secret-tool adds no trailing newline when stdout

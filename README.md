@@ -119,6 +119,11 @@ already ships with.
 | Linux | Secret Service, via `secret-tool` |
 | Windows | Sealed with DPAPI to your Windows account |
 
+On a machine with no credential store — a headless server, a CI runner, a
+locked keychain over SSH — `crbro_secret` says so in plain words instead of
+failing. Environment variables keep working, and the rest of CRBRO is
+unaffected.
+
 CRBRO keeps no copy and writes no crypto of its own. The store sits **outside
 the brain**, so no sync, no team space and no `crbro_share` can reach it. What
 goes in the brain is the *name*:
