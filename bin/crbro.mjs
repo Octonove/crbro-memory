@@ -6,8 +6,21 @@
 //           remove-miner, and MCP server mode (default)
 
 import { platform, homedir } from 'os';
-import { join } from 'path';
-import { existsSync } from 'fs';
+import { join, dirname } from 'path';
+import { existsSync, readFileSync } from 'fs';
+import { fileURLToPath } from 'url';
+
+// The release that is running, read from the package itself. The manifest
+// version stamps the brain format and has not moved since 1.0.0, so showing
+// only that one told everyone they were on 1.0.0 forever.
+function pkgVersion() {
+  try {
+    const here = dirname(fileURLToPath(import.meta.url));
+    return JSON.parse(readFileSync(join(here, '..', 'package.json'), 'utf8')).version;
+  } catch {
+    return 'unknown';
+  }
+}
 
 const args = process.argv.slice(2);
 const command = args[0];
@@ -146,7 +159,8 @@ if (command === 'init') {
       console.log('');
       console.log('  🧠 CRBRO Brain Status');
       console.log('  ─────────────────────');
-      console.log(`  Version:         ${manifest.version}`);
+      console.log(`  CRBRO:           ${pkgVersion()}`);
+      console.log(`  Brain format:    ${manifest.version}`);
       console.log(`  Path:            ${manifest.brain_path}`);
       console.log(`  Neurons:         ${manifest.total_neurons}`);
       console.log(`  Synapses:        ${manifest.total_synapses}`);

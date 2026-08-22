@@ -8,6 +8,10 @@ import type { Manifest, BootResult, ActiveContext, HotTopics, Neuron, ProtocolDi
 
 const CRBRO_DIR = process.env['CRBRO_PATH'] || path.join(process.env['HOME'] || process.env['USERPROFILE'] || '.', '.crbro');
 const MANIFEST_FILE = 'manifest.json';
+// The brain FORMAT, not the release. It moves only when the on-disk layout
+// changes in a way that needs a migration, which is why it has stayed at 1.0.0
+// while the package went to 1.8. The running version is reported separately by
+// crbro_status.
 const CRBRO_VERSION = '1.0.0';
 
 // ─── Paths ───────────────────────────────────────────────────────

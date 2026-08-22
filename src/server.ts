@@ -3,6 +3,8 @@
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 import { Brain } from './engine/brain.js';
 import { Cortex } from './engine/cortex.js';
@@ -20,10 +22,25 @@ import {
   detectBackend, setSecret, getSecret, listSecrets, removeSecret, KeychainUnavailable,
 } from './engine/keychain.js';
 
+/**
+ * The version of CRBRO that is actually running. The manifest carries its own
+ * version, but that one stamps the brain FORMAT and has not moved since 1.0.0
+ * — reporting it as "the version" told every user the same thing regardless of
+ * what they had installed, which is no use to anyone deciding whether to
+ * update.
+ */
+function runningVersion(): string {
+  try {
+    return JSON.parse(readFileSync(join(__dirname, '..', 'package.json'), 'utf8')).version;
+  } catch {
+    return 'unknown';
+  }
+}
+
 export function createServer(): McpServer {
   const server = new McpServer({
     name: 'crbro-memory',
-    version: '1.8.0',
+    version: '1.8.1',
   });
 
   // ─── Initialize engines ──────────────────────────────────────
@@ -141,7 +158,8 @@ export function createServer(): McpServer {
           content: [{
             type: 'text' as const,
             text: JSON.stringify({
-              version: manifest.version,
+              crbro_version: runningVersion(),
+              brain_format: manifest.version,
               total_neurons: manifest.total_neurons,
               total_synapses: manifest.total_synapses,
               total_sessions: manifest.total_sessions,
