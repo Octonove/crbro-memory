@@ -11,7 +11,7 @@
 // Every backend is the platform's own store, so only the one this machine runs
 // is exercised; the rest are covered by keeping the surface identical.
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -24,6 +24,12 @@ import {
 // the round-trip tests on the platform turned an unavailable keychain into a
 // red build. detectBackend already answers the real question.
 const hasStore = detectBackend().backend !== null;
+
+// Every operation here starts a real process against the real credential
+// store — around a second each on this machine and slower on a CI runner, so
+// a handful of round trips walks past the 5s default. The work is genuinely
+// slow rather than stuck, and a timeout here would only ever be noise.
+vi.setConfig({ testTimeout: 60_000, hookTimeout: 30_000 });
 let keysDir: string;
 
 beforeEach(async () => {
