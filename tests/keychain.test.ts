@@ -19,7 +19,11 @@ import {
   detectBackend, setSecret, getSecret, listSecrets, removeSecret,
 } from '../src/engine/keychain.js';
 
-const onWindows = os.platform() === 'win32';
+// Whether this machine actually has a working store, not whether it ought to.
+// A CI runner reports Windows and then cannot reach DPAPI at all, so keying
+// the round-trip tests on the platform turned an unavailable keychain into a
+// red build. detectBackend already answers the real question.
+const hasStore = detectBackend().backend !== null;
 let keysDir: string;
 
 beforeEach(async () => {
@@ -54,13 +58,13 @@ describe('detectBackend', () => {
 });
 
 describe('name validation', () => {
-  it.runIf(onWindows)('rejects names that are not SCREAMING_SNAKE_CASE', () => {
+  it.runIf(hasStore)('rejects names that are not SCREAMING_SNAKE_CASE', () => {
     expect(() => setSecret('lowercase', 'x')).toThrow(/SCREAMING_SNAKE_CASE/);
     expect(() => setSecret('WITH-DASH', 'x')).toThrow();
     expect(() => setSecret('9_LEADING_DIGIT', 'x')).toThrow();
   });
 
-  it.runIf(onWindows)('refuses an empty value', () => {
+  it.runIf(hasStore)('refuses an empty value', () => {
     // Storing "" and reading it back as null is indistinguishable from a
     // missing secret, and that ambiguity is what makes it worth refusing.
     expect(() => setSecret('EMPTY_ONE', '')).toThrow(/empty/i);
@@ -68,12 +72,12 @@ describe('name validation', () => {
 });
 
 describe('round trip', () => {
-  it.runIf(onWindows)('returns the value exactly as it went in', () => {
+  it.runIf(hasStore)('returns the value exactly as it went in', () => {
     setSecret('SIMPLE_ONE', 'plain-value', 'a test');
     expect(getSecret('SIMPLE_ONE')).toBe('plain-value');
   });
 
-  it.runIf(onWindows)('survives the characters that actually break credentials', () => {
+  it.runIf(hasStore)('survives the characters that actually break credentials', () => {
     // A WordPress application password carries spaces; shell metacharacters
     // are what a naive implementation mangles; and a trailing newline is the
     // classic cause of a 401 nobody can explain.
@@ -90,20 +94,20 @@ describe('round trip', () => {
     }
   });
 
-  it.runIf(onWindows)('overwrites instead of duplicating', () => {
+  it.runIf(hasStore)('overwrites instead of duplicating', () => {
     setSecret('ROTATED', 'first');
     setSecret('ROTATED', 'second');
     expect(getSecret('ROTATED')).toBe('second');
     expect(listSecrets().filter(e => e.name === 'ROTATED')).toHaveLength(1);
   });
 
-  it.runIf(onWindows)('returns null for a secret that was never stored', () => {
+  it.runIf(hasStore)('returns null for a secret that was never stored', () => {
     expect(getSecret('NEVER_STORED_XYZ')).toBeNull();
   });
 });
 
 describe('environment variables win', () => {
-  it.runIf(onWindows)('prefers the environment over the store', () => {
+  it.runIf(hasStore)('prefers the environment over the store', () => {
     // This is what lets CI and one-off overrides work without anyone touching
     // the user's keychain.
     setSecret('TEST_ENV_WINS', 'from-keychain');
@@ -113,7 +117,7 @@ describe('environment variables win', () => {
 });
 
 describe('listing', () => {
-  it.runIf(onWindows)('reports names and descriptions but never values', () => {
+  it.runIf(hasStore)('reports names and descriptions but never values', () => {
     setSecret('ALPHA_KEY', 'secret-alpha', 'the alpha service');
     setSecret('BETA_KEY', 'secret-beta', 'the beta service');
     const entries = listSecrets();
@@ -124,7 +128,7 @@ describe('listing', () => {
     expect(JSON.stringify(entries)).not.toContain('secret-beta');
   });
 
-  it.runIf(onWindows)('comes back sorted, so the output is stable between runs', () => {
+  it.runIf(hasStore)('comes back sorted, so the output is stable between runs', () => {
     setSecret('ZULU_KEY', 'z');
     setSecret('ALPHA_KEY', 'a');
     const names = listSecrets().map(e => e.name);
@@ -133,7 +137,7 @@ describe('listing', () => {
 });
 
 describe('removal', () => {
-  it.runIf(onWindows)('deletes one and leaves the rest alone', () => {
+  it.runIf(hasStore)('deletes one and leaves the rest alone', () => {
     setSecret('KEEP_ME', 'kept');
     setSecret('DELETE_ME', 'gone');
     expect(removeSecret('DELETE_ME')).toBe(true);
@@ -141,24 +145,25 @@ describe('removal', () => {
     expect(getSecret('KEEP_ME')).toBe('kept');
   });
 
-  it.runIf(onWindows)('says false rather than throwing when there was nothing to delete', () => {
+  it.runIf(hasStore)('says false rather than throwing when there was nothing to delete', () => {
     expect(removeSecret('NEVER_EXISTED_XYZ')).toBe(false);
   });
 });
 
 describe('the store never touches the brain', () => {
-  it.runIf(onWindows)('writes only inside its own directory', async () => {
+  it.runIf(hasStore)('writes only inside its own directory', async () => {
     setSecret('SOME_KEY', 'some-value');
     const written = await fs.readdir(keysDir);
     expect(written).toContain('keys.dpapi');
   });
 
-  it.runIf(onWindows)('leaves nothing readable on disk', async () => {
+  it.runIf(hasStore)('leaves nothing readable on disk', async () => {
     setSecret('PLAINTEXT_CHECK', 'do-not-find-me-in-the-file');
     const raw = await fs.readFile(path.join(keysDir, 'keys.dpapi'), 'utf8');
     expect(raw).not.toContain('do-not-find-me-in-the-file');
     expect(raw).not.toContain('PLAINTEXT_CHECK');
-    // A DPAPI blob is hex, and starts with the provider header.
-    expect(raw.trim()).toMatch(/^01000000d08c9ddf/i);
+    // A DPAPI blob starts with the provider header 01 00 00 00 d0 8c 9d df,
+    // which in base64 is AQAAANCM.
+    expect(raw.trim()).toMatch(/^AQAAANCM/);
   });
 });

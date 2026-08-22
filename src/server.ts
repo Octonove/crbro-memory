@@ -40,7 +40,7 @@ function runningVersion(): string {
 export function createServer(): McpServer {
   const server = new McpServer({
     name: 'crbro-memory',
-    version: '1.8.1',
+    version: '1.8.2',
   });
 
   // ─── Initialize engines ──────────────────────────────────────
