@@ -101,6 +101,15 @@ export function variants(term: string): string[] {
     if (/[bcdfglmnprstz]$/.test(term)) out.add(term + 'es');    // papel -> papeles
   }
 
+  // Two more folds were tried against the blind retrieval benchmark
+  // (24-08-2026) and neither ships. A participle gender fold (-adas ->
+  // -ado) left every metric exactly unchanged (56/69/0.634), and a verb
+  // person fold (-o <-> -a/-an) made them WORSE (54/67/0.614) — the extra
+  // variants pulled noise above real hits. The remaining recall misses are
+  // true synonym gaps (hosting/alojamiento, seguridad/protección), which no
+  // mechanical rule closes; that is the documented price of not shipping a
+  // semantic model.
+
   // Nothing shorter than three letters: "es", "os" and friends are noise.
   return [...out].filter(v => v.length >= 3);
 }

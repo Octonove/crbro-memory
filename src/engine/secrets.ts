@@ -34,6 +34,24 @@ const PATTERNS: Pattern[] = [
   { kind: 'Slack token', re: /\bxox[abprs]-[A-Za-z0-9-]{10,}\b/g },
   { kind: 'Stripe key', re: /\b[sr]k_(?:live|test)_[A-Za-z0-9]{20,}\b/g },
   { kind: 'AWS access key', re: /\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g },
+  // AWS secret key stated in prose ("the secret access key is X"). The value
+  // format is rigid — exactly 40 base64 chars — and the mixed-case + digit
+  // requirement is what keeps paths and prose out, so the label is spelled
+  // with char classes instead of /i (an /i flag would erase the case
+  // distinction the value check depends on).
+  {
+    kind: 'AWS secret key',
+    re: /\b(?:[Aa][Ww][Ss][ _-]?)?[Ss]ecret[ _-]?(?:[Aa]ccess[ _-]?)?[Kk]ey\b[^\n]{0,15}?(?<![A-Za-z0-9/+])((?=[A-Za-z0-9/+]*[A-Z])(?=[A-Za-z0-9/+]*[a-z])(?=[A-Za-z0-9/+]*[0-9])[A-Za-z0-9/+]{40})(?![A-Za-z0-9/+])/g,
+  },
+  // Twilio: account SID is AC + 32 hex (uppercase AC always — no /i, or any
+  // 34-char lowercase hex run starting "ac" would trip it), and the auth
+  // token is a bare 32-hex value that only counts when the words "auth token"
+  // announce it.
+  { kind: 'Twilio account SID', re: /\bAC[0-9a-fA-F]{32,34}\b/g },
+  {
+    kind: 'auth token (hex)',
+    re: /\bauth[ _-]?token\b[^\S\n]{0,3}(?:[:=]|es|is)?[^\S\n]{0,3}["'`]?([0-9a-fA-F]{30,34})\b/gi,
+  },
   { kind: 'private key block', re: /-----BEGIN [A-Z ]*PRIVATE KEY-----/g },
   { kind: 'JSON Web Token', re: /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g },
 
@@ -63,9 +81,19 @@ const PATTERNS: Pattern[] = [
     // The value must mix a letter AND a digit — that is what separates a
     // password from emphatic prose. It used to accept !/@/* as "the digit
     // class", so "la clave es importante!" redacted a sentence. Only a real
-    // digit qualifies now.
+    // digit qualifies now. The optional (de|del|of|for) X covers the natural
+    // phrasing "la contraseña de WP-Admin es X" / "the password for staging
+    // is X" — one qualifier word between label and copula.
     kind: 'password (prose)',
-    re: /\b(?:password|passwd|contrase[nñ]a|clave)\b\s+(?:es|is)\s+["'`]?((?=[^\s"'`,;]*[A-Za-z])(?=[^\s"'`,;]*[0-9])[^\s"'`,;]{8,})/gi,
+    re: /\b(?:password|passwd|contrase[nñ]a|clave)\b(?:\s+(?:de|del|of|for)\s+[^\s]{1,30})?\s+(?:es|is)\s+["'`]?((?=[^\s"'`,;]*[A-Za-z])(?=[^\s"'`,;]*[0-9])[^\s"'`,;]{8,})/gi,
+  },
+  {
+    // A credential dictated in two pieces to slip past filters: "the token
+    // starts with ghp_ and continues with <body>". Needs a credential noun,
+    // the starts-with phrasing, AND a long letter+digit tail — prose about
+    // where a route or a name "begins" has no 16+-char token at the end.
+    kind: 'split credential',
+    re: /\b(?:token|key|clave|password|contrase[nñ]a|secret|secreto)\b[^.?!\n]{0,40}?\b(?:empieza|comienza|starts?)\s+(?:por|con|with)\s+(\S{2,15}[^.?!\n]{0,30}?\b(?:sigue con|contin[uú]a con|y luego|followed by|then|continues with)\s+["'`]?(?=[A-Za-z0-9_\-+/=]*[A-Za-z])(?=[A-Za-z0-9_\-+/=]*[0-9])[A-Za-z0-9_\-+/=]{16,})/gi,
   },
 
   // Connection strings that carry the credentials inline. The scheme + "://" +

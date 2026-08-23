@@ -21,11 +21,26 @@ Free and open source (MIT). All 22 tools included — no license, no account, no
 - **🔐 Credential-aware** — API keys, tokens and passwords are replaced with a marker before they touch the disk. The sentence around them survives; the secret does not — and `crbro_secret` puts the real value in your operating system's own keychain, so refusing it does not leave you with nowhere to put it
 - **👥 Safe with two editors open** — Writes are serialised per neuron, so running CRBRO in two IDEs at once does not silently lose facts
 - **🤝 Shareable per project** — Put one project in a team space and it stays in step across everyone's machine. Everything else in your brain never leaves it
-- **🗺️ Global Map** — Cluster detection and cross-domain bridge identification
+- **🗺️ Living Maps** — Each topic can carry one always-current map of how its system works (`crbro_map`), replaced whole on every change — plus a global map of clusters and cross-domain bridges
+- **📓 Error Ledger** — `type: "error"` stores each real mistake WITH its correction, on the topic where it happened, so the same error is not made twice
+- **⚖️ Debt Ledger** — `type: "debt"` records what you deliberately did NOT build — ceiling and revisit-trigger included — so dead ideas stop being re-proposed *(v1.11+)*
+- **🛡️ Subagents Covered** — `npx crbro-memory install-hooks` wires a Claude Code hook that hands your behavioral protocols to every spawned subagent, which otherwise run without them
 - **⛏️ Knowledge Miner** — Optionally scans your local `.md`/`.txt` notes and feeds them into the brain
 - **🔒 Fully Local** — Runs on Node.js alone: no Python, no Docker, no databases, no external services. Your memory never leaves your machine
 - **💾 File-Based** — All data stored as readable JSON files in `~/.crbro/` — inspectable, diffable, and versionable with git
 - **🔌 MCP Native** — Works with Claude Desktop, Claude Code, Cursor, Windsurf, and any MCP-compatible client
+
+## Measured, not promised
+
+Every number below comes from a deterministic benchmark in [`benchmarks/`](benchmarks/) that runs in CI — no API calls, reproducible on your machine with `node benchmarks/<name>/run.mjs`. The unflattering ones are published on purpose.
+
+| What | Result | The honest part |
+|------|--------|-----------------|
+| **Retrieval** (48 blind paraphrased queries, written by someone who never saw the stored text) | recall@1 **56%** · recall@3 **69%** · MRR 0.63 | A naive substring search scores 38%/58% on the same set. The gap to 100% is the documented price of shipping no semantic model (the 472 MB download was rejected) — the misses are true synonym gaps, listed in the benchmark output |
+| **Secret redaction** (20 credentials in adversarial disguises, 19 near-miss innocents) | **100%** caught · **0%** false positives | 100% on *this frozen set* — a floor, not a security proof. The set grows as new evasion shapes appear; four of its entries were misses in the first run and were fixed, not hidden |
+| **Cost** (what CRBRO adds to a session) | ~**753 tokens** at boot · **<1 ms** local recall over 300 facts | The context block is the product's whole token footprint; there is no per-message overhead |
+
+What these benchmarks deliberately do **not** claim — human productivity, "it knows you", comparisons against other memory systems — is written down in [`benchmarks/LIMITS.md`](benchmarks/LIMITS.md).
 
 ## Quick Start
 
@@ -74,7 +89,15 @@ claude mcp add --scope user crbro -- npx -y crbro-memory
 
 ### 3. Start using it
 
-Your AI will now have access to 22 memory tools. Start any session with `crbro_boot`.
+Your AI will now have access to 23 memory tools. Start any session with `crbro_boot`.
+
+### 4. (Claude Code) Cover your subagents too
+
+```bash
+npx crbro-memory install-hooks
+```
+
+Session context never reaches Task-spawned subagents, so without this they run without the behavioral protocols your session booted with. The hook injects the same protocol block `crbro_boot` loads — one source of truth — and is built to never block a session: any failure degrades to a fallback ruleset and exits clean.
 
 ## Tools
 
@@ -92,6 +115,7 @@ Your AI will now have access to 22 memory tools. Start any session with `crbro_b
 | `crbro_sessions` | List recent sessions |
 | `crbro_context` | Read/update active working context |
 | `crbro_hot_topics` | Get the most active topics by heat score |
+| `crbro_map` | Keep one living map of how a topic's system works — replaced whole, never patched |
 | `crbro_global_map` | View the neural network — clusters and cross-domain bridges |
 | `crbro_revise` | Mark facts as superseded or retracted when they stop being true |
 | `crbro_audit` | Find credentials stored in the brain — reports the kind, never the value |
