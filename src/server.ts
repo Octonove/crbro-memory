@@ -186,10 +186,10 @@ export function createServer(): McpServer {
   // ═══════════════════════════════════════════════════════════════
   server.tool(
     'crbro_learn',
-    'Teach the brain a fact, decision, pattern, or preference about a topic. If the neuron (topic) does not exist, it will be created automatically. Use this to store knowledge that should persist across sessions. If this replaces something you stored before, pass `supersedes` - otherwise the old version stays exactly as valid as the new one and both keep coming back on recall.',
+    'Teach the brain a fact, decision, pattern, preference or error about a topic. If the neuron (topic) does not exist, it will be created automatically. Use this to store knowledge that should persist across sessions. Type `error` is for a mistake you made and how it was corrected - store both halves in one entry, and check for them with crbro_recall before repeating a task where you have slipped before. If this replaces something you stored before, pass `supersedes` - otherwise the old version stays exactly as valid as the new one and both keep coming back on recall.',
     {
       topic: z.string().describe('The topic name (e.g., "OctoChat", "Firebase", "SEO Strategy")'),
-      type: z.enum(['fact', 'decision', 'pattern', 'preference']).describe('Type of knowledge to store'),
+      type: z.enum(['fact', 'decision', 'pattern', 'preference', 'error']).describe('Type of knowledge to store. `error` = a mistake plus its correction, kept as a ledger you can check before repeating the task.'),
       content: z.string().describe('The knowledge content to remember'),
       confidence: z.number().min(0).max(1).optional().describe('Confidence level 0.0-1.0 (default 1.0)'),
       domain: z.string().optional().describe('Domain category (e.g., "proyectos-web", "infraestructura")'),
@@ -225,6 +225,14 @@ export function createServer(): McpServer {
               neuron_id: result.neuron.id,
               action: result.action,
               superseded_facts: result.superseded,
+              supersedes_unmatched: result.supersedes_unmatched.length > 0
+                ? result.supersedes_unmatched
+                : undefined,
+              supersedes_warning: result.supersedes_unmatched.length > 0
+                ? 'These supersedes targets matched NO active fact — the old version is ' +
+                  'still live and will keep appearing on recall. Find its id with ' +
+                  'crbro_recall and retire it with crbro_revise.'
+                : undefined,
               redacted: result.redacted.length > 0 ? result.redacted : undefined,
               redaction_note: result.redacted.length > 0
                 ? `Stored, but ${result.redacted.length} credential(s) were replaced with a marker: ` +
@@ -375,7 +383,7 @@ export function createServer(): McpServer {
   // ═══════════════════════════════════════════════════════════════
   server.tool(
     'crbro_recall',
-    'Search the brain for knowledge saved in earlier sessions. Searches the full text of every fact, decision and pattern, not just topic names, and each result carries the exact fact that matched plus the date it was recorded. Call this before asking the user something they may already have told you, and before assuming a past decision. If a result looks right, pass its neuron_id back to crbro_learn so new knowledge lands in the same place.',
+    'Search the brain for knowledge saved in earlier sessions. Searches the full text of every fact, decision, pattern, error and system map, not just topic names, and each result carries the exact chunk that matched plus the date it was recorded. Call this before asking the user something they may already have told you, and before assuming a past decision. A result with has_map: true belongs to a neuron that keeps a system map - read it with crbro_map before touching that system. If a result looks right, pass its neuron_id back to crbro_learn so new knowledge lands in the same place.',
     {
       query: z.string().describe('What to search for (e.g., "Firebase authentication setup")'),
       domain: z.string().optional().describe('Filter by domain'),
@@ -396,7 +404,7 @@ export function createServer(): McpServer {
               results,
               hint: results.length === 0
                 ? 'Nothing matched. Try fewer, more distinctive words - names, ids, filenames - rather than a full sentence.'
-                : 'matching_content is the fact that matched; matched_added is when it was recorded. Prefer recent facts when two disagree.',
+                : 'matching_content is the chunk that matched; matched_added is when it was recorded. Prefer recent facts when two disagree. Results with has_map: true belong to neurons holding a system map - read it with crbro_map before working on that system.',
             }, null, 2),
           }],
         };
@@ -748,6 +756,94 @@ export function createServer(): McpServer {
   );
 
   // ═══════════════════════════════════════════════════════════════
+  // TOOL: crbro_map — The living map of a system
+  // ═══════════════════════════════════════════════════════════════
+  server.tool(
+    'crbro_map',
+    'Read or replace the system map of a neuron. A map is ONE living document answering: where does this system live, what serves what, which pieces talk to each other, and what are the traps that cost hours. Read it BEFORE working on a system you have touched in past sessions - it is the difference between continuing and re-discovering. After building or changing a system, rewrite the whole map so it stays true: pass `content` and it replaces the previous version entirely (append-only maps rot). Without `content` it returns the current map.',
+    {
+      neuron: z.string().describe('Neuron ID or name (e.g. "project_octochat" or "OctoChat")'),
+      content: z.string().optional().describe('The new map, replacing the old one whole. Omit to read. Write it as the reference you will need next time: paths, ids, what-serves-what, gotchas.'),
+      domain: z.string().optional().describe('Domain for the neuron if it has to be created (e.g. "proyectos-web")'),
+    },
+    async (args) => {
+      try {
+        if (args.content === undefined) {
+          const neuron =
+            (await cortex.peek(args.neuron)) || (await cortex.findByName(args.neuron));
+          if (!neuron) {
+            return {
+              content: [{
+                type: 'text' as const,
+                text: `Neuron not found: "${args.neuron}". Use crbro_recall to find the right neuron_id first.`,
+              }],
+            };
+          }
+          if (!neuron.map || !neuron.map.text) {
+            return {
+              content: [{
+                type: 'text' as const,
+                text: JSON.stringify({
+                  neuron_id: neuron.id,
+                  map: null,
+                  message: `"${neuron.name}" has no system map yet. After working on this system, write one with crbro_map + content: where it lives, what serves what, the traps.`,
+                }, null, 2),
+              }],
+            };
+          }
+          return {
+            content: [{
+              type: 'text' as const,
+              text: JSON.stringify({
+                neuron_id: neuron.id,
+                updated: neuron.map.updated,
+                by: neuron.map.by,
+                map: neuron.map.text,
+                hint: 'If anything here proved wrong or the system changed, rewrite the map before closing the task.',
+              }, null, 2),
+            }],
+          };
+        }
+
+        const result = await cortex.setMap(args.neuron, args.content, {
+          domain: args.domain,
+        });
+        if (!result.neuron) {
+          return {
+            content: [{
+              type: 'text' as const,
+              text: `Could not store the map for "${args.neuron}".`,
+            }],
+          };
+        }
+        return {
+          content: [{
+            type: 'text' as const,
+            text: JSON.stringify({
+              neuron_id: result.neuron.id,
+              action: result.action,
+              updated: result.neuron.map?.updated,
+              length: args.content.length,
+              redacted: result.redacted.length > 0 ? result.redacted : undefined,
+              message: args.content.trim() === ''
+                ? `System map of "${result.neuron.name}" cleared.`
+                : `System map of "${result.neuron.name}" replaced. The previous version is gone - this one is now the reference.`,
+            }, null, 2),
+          }],
+        };
+      } catch (err) {
+        return {
+          content: [{
+            type: 'text' as const,
+            text: `CRBRO map error: ${err instanceof Error ? err.message : String(err)}`,
+          }],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  // ═══════════════════════════════════════════════════════════════
   // TOOL 16: crbro_revise — Retire knowledge that stopped being true
   // ═══════════════════════════════════════════════════════════════
   server.tool(
@@ -782,8 +878,12 @@ export function createServer(): McpServer {
               neuron_id: result.neuron.id,
               revised: result.revised,
               status: args.status || 'superseded',
+              unmatched: result.unmatched.length > 0 ? result.unmatched : undefined,
               message: result.revised > 0
-                ? `${result.revised} fact(s) retired in "${result.neuron.name}". They no longer appear in recall.`
+                ? `${result.revised} fact(s) retired in "${result.neuron.name}". They no longer appear in recall.` +
+                  (result.unmatched.length > 0
+                    ? ` WARNING: ${result.unmatched.length} target(s) matched nothing and are still live.`
+                    : '')
                 : 'Nothing matched. Pass the fact id from crbro_recall, or its exact text.',
             }, null, 2),
           }],
@@ -937,7 +1037,7 @@ export function createServer(): McpServer {
   // ═══════════════════════════════════════════════════════════════
   server.tool(
     'crbro_forget',
-    'Permanently remove facts from a neuron. This is for things that must not exist at all — a credential, personal data, something stored by mistake. For knowledge that merely stopped being true, use crbro_revise instead, which keeps the history. The whole neuron is copied to .quarantine/ before anything is removed, so a mistake can be undone by hand. Always tell the user what you are about to remove and get their agreement first.',
+    'Permanently remove entries from a neuron. This is for things that must not exist at all — a credential, personal data, something stored by mistake. It removes facts, decisions, patterns, preferences and errors matched by id or exact text, and the system map when given its exact full text (or clear the map with crbro_map and empty content). For knowledge that merely stopped being true, use crbro_revise instead, which keeps the history. The whole neuron is copied to .quarantine/ before anything is removed, so a mistake can be undone by hand. On shared neurons the removal travels: facts retract, errors are purged, a cleared map stays cleared. Always tell the user what you are about to remove and get their agreement first.',
     {
       neuron: z.string().describe('Neuron ID or name holding the entries'),
       facts: z.array(z.string()).describe('What to remove: fact ids, or the exact text of a fact, decision, pattern or preference'),

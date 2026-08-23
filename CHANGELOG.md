@@ -2,6 +2,121 @@
 
 All notable changes to CRBRO.
 
+## [1.9.0] — 2026-08-23
+
+### Fixed — a correction now actually corrects
+
+Found live, on a real brain: `crbro_revise` marked a fact as superseded,
+answered "they no longer appear in recall" — and the retired fact came back
+as the FIRST recall result, outscoring the very fact that corrected it. The
+wrong version of anything tends to be longer than its correction, so it
+matches more terms and wins.
+
+The root cause was worse than the symptom. Removing a neuron's chunks from
+the search index relied on an Orama `where` filter over a plain string field
+with an empty term: a query that matches nothing and throws nothing. So
+"re-index this neuron" removed zero chunks, re-inserted under the same ids
+(duplicates silently swallowed), and reported success. Every revision and —
+far worse — every `crbro_forget` of sensitive text left the old content
+fully searchable.
+
+Three layers now close it for good:
+
+- The engine keeps its own ledger of which chunk ids belong to which neuron
+  (it inserted them; it remembers them), and removal walks that ledger
+  instead of trusting a filter that never worked. The ledger is rebuilt from
+  the stored index on boot, so removal keeps working after a load-from-disk.
+- A hydration guard: before recall returns a fact, it checks the neuron on
+  disk still holds it as active. If not, the result is dropped and the
+  neuron is quietly re-indexed — so even an index poisoned by an older
+  version cannot serve retired knowledge, and heals itself as it is used.
+- `INDEX_VERSION` 2 → 3: every existing index rebuilds once on next boot,
+  which purges whatever the old removal left behind.
+
+Also fixed in the same sweep:
+
+- **Domain-filtered recall returned nothing at all.** The same Orama `where`
+  clause, the same silent no-match — `crbro_recall` with a `domain` filter
+  has been returning zero results since chunk search shipped. Filtering now
+  happens on our side of the query.
+- **`supersedes` failed silently.** Passing free text that matched no fact
+  returned `superseded: 0` with no complaint, and the writer walked away
+  believing the old version was retired. `crbro_learn` now returns
+  `supersedes_unmatched` plus a warning telling you exactly how to finish
+  the job, and `crbro_revise` warns when some of its targets matched nothing.
+
+### Added — the error ledger and the living map
+
+Born from a real complaint after a full day's work on one system: the brain
+held the *chronicle* (what happened, what was fixed, in what order) but not
+the *map* (which template serves what, which plugin does what, which trap
+costs an hour) — so the next session re-discovered everything. And the
+mistakes made along the way were prose, impossible to check before
+repeating the same task.
+
+- **`crbro_learn` accepts `type: "error"`** — a mistake plus how it was
+  corrected, in one entry. Errors are a separate ledger from patterns so
+  "check my known errors before doing this again" is a question the brain
+  can answer. They merge across a team like patterns: plain set union.
+- **`crbro_map`** — ONE living document per neuron: where the system lives,
+  what serves what, the traps. Reading takes just the neuron name; writing
+  replaces the map whole, because append-only maps rot the same way facts
+  did. Recall results now carry `has_map: true` when their neuron keeps a
+  map, so the next session knows to read it before touching the system.
+- Maps and errors travel through shared spaces. Errors union like patterns.
+  A map is a whole-document replacement, so the newest write wins, with a
+  deterministic tie-break on the content hash — two machines replaying the
+  same logs always land on the same map, and a stale copy can never
+  resurrect an older version. Older clients simply skip the new note kinds:
+  a degradation, not a corruption.
+- `crbro_forget` sweeps errors and the map too — deleted means deleted,
+  from the neuron and from the index. And on shared neurons the deletion
+  now travels: forgotten facts retract, forgotten errors carry a purge
+  note that always wins, and a cleared map emits the empty-map tombstone —
+  so the next sync can no longer resurrect what the user asked to destroy.
+
+### Hardened — an adversarial review before shipping
+
+Twenty-three reviewer and verifier agents went over the diff, each claim
+proven or refuted by an executed test. What they caught, fixed here:
+
+- A log line with a missing timestamp beat every real date in the map's
+  last-writer-wins (`String(undefined)` sorts after any ISO date) — one
+  malformed note could freeze a team's map forever. Timestamps are
+  normalised and compared ordinally, so convergence no longer depends on
+  each machine's locale.
+- `crbro_map` resolved names in the opposite order to every other tool, so
+  writing by exact neuron id could land the map on a near-miss neuron while
+  every reader resolved the real one. Same order everywhere now.
+- A neuron whose best-scoring chunk had been retired vanished from that
+  recall entirely, even when it still held live knowledge that matched.
+  Results now fall back to the neuron's next valid chunk, and every kind —
+  not just facts — is verified against the neuron before being served.
+- `crbro_share` never scanned the map or the error ledger for credentials,
+  and the first share of a neuron did not carry them at all. Both fixed;
+  `crbro_audit` covers the new fields too.
+- Two processes writing the same file shared one fixed temp name, so
+  concurrent writers could rename a torn JSON into place. Each writer now
+  renames only bytes it wrote entirely.
+
+## [1.8.0 – 1.8.2] — 2026-08-22
+
+### Added
+
+- **`crbro_secret`** — credentials brokered to the OS keychain (Windows
+  DPAPI / macOS Keychain / libsecret). The brain stores only the pointer;
+  the value never touches a neuron file.
+
+### Fixed
+
+- macOS `security` returns hex for any non-printable byte — values are now
+  stored base64 (1.8.1).
+- `crbro_status` reported `1.0.0` on every install: it was echoing the brain
+  FORMAT version, frozen since 1.0.0, instead of the running package
+  version (1.8.2).
+- DPAPI is called through the .NET API, with a probe that actually encrypts
+  instead of assuming it can (1.8.2).
+
 ## [1.7.0] — 2026-08-21
 
 ### Added — shared memory for a team

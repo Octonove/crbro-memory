@@ -58,6 +58,24 @@ export interface Neuron {
   preferences: string[];
   connections: string[];     // IDs of connected neurons
   tags: string[];
+  /**
+   * Mistakes made working on this topic, each with how it was corrected.
+   * A separate ledger from patterns so "check my known errors before doing
+   * this again" is a real question the brain can answer.
+   */
+  errors?: string[];
+  /**
+   * The living map of the system: where it lives, what serves what, which
+   * pieces talk to each other, the traps. One document, replaced whole on
+   * every update — never appended — so it cannot drift into versions.
+   */
+  map?: NeuronMap;
+}
+
+export interface NeuronMap {
+  text: string;
+  updated: string;           // ISO date of the last replacement
+  by?: string;               // team author, when it arrived through a space
 }
 
 // ─── Synapses (Connections) ──────────────────────────────────────
@@ -194,9 +212,11 @@ export interface SearchResult {
   relevance_score: number;
   /** The chunk that actually matched — not the neuron summary. */
   matching_content: string;
-  /** What kind of chunk matched: header | fact | decision | pattern | preference. */
+  /** What kind of chunk matched: header | fact | decision | pattern | preference | error | map. */
   matched_kind?: string;
   /** When that chunk was recorded, so callers can prefer recent knowledge. */
   matched_added?: string;
   heat: number;
+  /** The neuron keeps a system map — read it with crbro_map before working on this system. */
+  has_map?: boolean;
 }

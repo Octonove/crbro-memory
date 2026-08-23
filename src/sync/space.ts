@@ -191,6 +191,13 @@ function neuronOps(neuron: Neuron, id: Identity): Op[] {
   for (const t of neuron.tags || []) {
     if (t) ops.push({ v: OPS_VERSION, op: 'tag', nid: neuron.id, by: id.author, at, text: t });
   }
+  for (const e of neuron.errors || []) {
+    if (e) ops.push({ v: OPS_VERSION, op: 'error', nid: neuron.id, by: id.author, at, text: e });
+  }
+  if (neuron.map && neuron.map.text) {
+    ops.push({ v: OPS_VERSION, op: 'map', nid: neuron.id, by: id.author,
+      at: neuron.map.updated || at, text: neuron.map.text });
+  }
 
   // Preferences are deliberately absent and there is no op for them. They are
   // the smallest field in a real brain and the likeliest to hold a key — on
@@ -223,6 +230,8 @@ export async function prepareShare(
   (neuron.facts || []).forEach((f, i) => revisar(`facts[${i}]`, f.text));
   (neuron.decisions || []).forEach((d, i) => revisar(`decisions[${i}]`, d.text));
   (neuron.patterns || []).forEach((p, i) => revisar(`patterns[${i}]`, p));
+  (neuron.errors || []).forEach((e, i) => revisar(`errors[${i}]`, e));
+  if (neuron.map?.text) revisar('map', neuron.map.text);
 
   const ops = neuronOps(neuron, await getIdentity(brain));
 
@@ -376,7 +385,8 @@ export async function syncSpaceNow(
     const { neuron, report } = applyOps(local, ops, { id: nid });
 
     const cambio = report.facts_added + report.facts_retracted + report.facts_superseded +
-      report.decisions_added + report.patterns_added + report.tags_added;
+      report.decisions_added + report.patterns_added + report.tags_added +
+      report.errors_added + (report.map_updated ? 1 : 0);
     if (cambio > 0 || !local) {
       await cortex.replaceFromSync(neuron);
       base.neurons_touched.push(nid);
@@ -432,6 +442,15 @@ export function attachSync(brain: Brain, cortex: Cortex): void {
       if (change.kind === 'decision') {
         return [{ ...comun, op: 'decision', did: entryId(change.text),
                   text: change.text, why: change.why } as Op];
+      }
+      if (change.kind === 'error') {
+        return [{ ...comun, op: 'error', text: change.text } as Op];
+      }
+      if (change.kind === 'map') {
+        return [{ ...comun, op: 'map', text: change.text } as Op];
+      }
+      if (change.kind === 'error_purge') {
+        return [{ ...comun, op: 'purge', pkind: 'error', key: change.key } as Op];
       }
       return [{ ...comun, op: 'pattern', text: change.text } as Op];
     });

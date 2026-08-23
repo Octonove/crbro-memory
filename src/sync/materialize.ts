@@ -14,8 +14,8 @@
 
 import { now } from '../utils/fs.js';
 import type { Neuron, Fact, Decision, FactStatus } from '../types/index.js';
-import type { Op, FactOp, StatusOp, DecisionOp } from './ops.js';
-import { normalizeText } from './ops.js';
+import type { Op, FactOp, StatusOp, DecisionOp, MapOp, PurgeOp } from './ops.js';
+import { normalizeText, entryId } from './ops.js';
 
 /** Fields that disagreed and were left alone, so a human can look. */
 export interface Divergence {
@@ -31,6 +31,8 @@ export interface MergeReport {
   facts_superseded: number;
   decisions_added: number;
   patterns_added: number;
+  errors_added: number;
+  map_updated: boolean;
   tags_added: number;
   authors: string[];
   divergence: Divergence[];
@@ -66,6 +68,8 @@ export function applyOps(
     facts_superseded: 0,
     decisions_added: 0,
     patterns_added: 0,
+    errors_added: 0,
+    map_updated: false,
     tags_added: 0,
     authors: [],
     divergence: [],
@@ -79,7 +83,7 @@ export function applyOps(
   // reported rather than resolved. Overwriting someone's local name because a
   // teammate spelled it differently is not a merge, it is a stomp.
   const neuron: Neuron = base
-    ? { ...base, facts: [...base.facts], decisions: [...base.decisions], patterns: [...base.patterns], preferences: [...base.preferences], tags: [...base.tags], connections: [...base.connections] }
+    ? { ...base, facts: [...base.facts], decisions: [...base.decisions], patterns: [...base.patterns], preferences: [...base.preferences], tags: [...base.tags], connections: [...base.connections], errors: [...(base.errors || [])], map: base.map ? { ...base.map } : undefined }
     : {
         id,
         name: neuronOp && neuronOp.op === 'neuron' ? neuronOp.name : id,
@@ -96,6 +100,7 @@ export function applyOps(
         preferences: [],
         connections: [],
         tags: [],
+        errors: [],
       };
 
   if (base && neuronOp && neuronOp.op === 'neuron') {
@@ -200,6 +205,68 @@ export function applyOps(
         neuron.tags.push(op.text);
         report.tags_added++;
       }
+    } else if (op.op === 'error') {
+      if (!neuron.errors) neuron.errors = [];
+      if (!neuron.errors.some(e => normalizeText(e) === normalizeText(op.text))) {
+        neuron.errors.push(op.text);
+        report.errors_added++;
+      }
+    }
+  }
+
+  // ─── Purges: a deliberate removal always wins ────────────────
+  // Applied after the unions so order cannot matter: an error purged by
+  // anyone stays gone even if another log re-adds it in the same replay.
+  const purgados = new Set<string>();
+  for (const op of ops) {
+    if (op.op === 'purge' && (op as PurgeOp).pkind === 'error') {
+      purgados.add((op as PurgeOp).key);
+    }
+  }
+  if (purgados.size > 0 && neuron.errors && neuron.errors.length > 0) {
+    neuron.errors = neuron.errors.filter(e => !purgados.has(entryId(e)));
+  }
+
+  // ─── The map: last writer wins, deterministically ────────────
+  // A map is a whole-document replacement, so union makes no sense. The
+  // newest `at` wins; a timestamp tie breaks on the content hash, so every
+  // machine replaying the same logs lands on the same winner.
+  // A missing or non-string timestamp is worth nothing: it loses against any
+  // real date. Without this, String(undefined) = "undefined" outranked every
+  // ISO date and a single malformed log line froze the team's map forever.
+  // Ordinal comparison on purpose — ISO dates order correctly byte by byte,
+  // and localeCompare depends on each machine's ICU, which would break the
+  // byte-identical convergence this file promises.
+  const ts = (v: unknown): string => (typeof v === 'string' ? v : '');
+  const antesDe = (a: string, b: string): boolean => a < b;
+
+  let ganador: MapOp | null = null;
+  for (const op of ops) {
+    if (op.op !== 'map') continue;
+    const mo = op as MapOp;
+    if (!ganador) { ganador = mo; continue; }
+    const a = ts(mo.at), b = ts(ganador.at);
+    if (antesDe(b, a) || (a === b && entryId(mo.text) > entryId(ganador.text))) ganador = mo;
+  }
+  if (ganador) {
+    const local = neuron.map;
+    const ganAt = ts(ganador.at);
+    const localAt = local ? ts(local.updated) : '';
+    const gana = !local
+      || antesDe(localAt, ganAt)
+      || (ganAt === localAt && entryId(ganador.text) > entryId(local.text));
+    if (gana) {
+      if (normalizeText(ganador.text) === '') {
+        // An empty map op is the tombstone: whoever cleared the map last
+        // clears it everywhere, and a stale copy cannot resurrect it.
+        if (local) {
+          delete neuron.map;
+          report.map_updated = true;
+        }
+      } else if (!local || normalizeText(local.text) !== normalizeText(ganador.text)) {
+        neuron.map = { text: ganador.text, updated: ganAt, by: ganador.by };
+        report.map_updated = true;
+      }
     }
   }
 
@@ -212,6 +279,7 @@ export function applyOps(
   neuron.decisions.sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')));
   neuron.patterns.sort();
   neuron.tags.sort();
+  if (neuron.errors) neuron.errors.sort();
 
   report.authors = [...new Set(ops.map(o => o.by).filter(Boolean))].sort();
 

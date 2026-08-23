@@ -15,7 +15,7 @@ import { contentHash } from '../utils/hash.js';
 /** Bumped only if the shape changes in a way older clients cannot read. */
 export const OPS_VERSION = 1;
 
-export type OpKind = 'neuron' | 'fact' | 'status' | 'decision' | 'pattern' | 'tag';
+export type OpKind = 'neuron' | 'fact' | 'status' | 'decision' | 'pattern' | 'tag' | 'error' | 'map' | 'purge';
 
 interface OpBase {
   v: number;
@@ -72,7 +72,37 @@ export interface TagOp extends OpBase {
   text: string;
 }
 
-export type Op = NeuronOp | FactOp | StatusOp | DecisionOp | PatternOp | TagOp;
+/** A mistake plus its correction. Merged like patterns: plain set union. */
+export interface ErrorOp extends OpBase {
+  op: 'error';
+  text: string;
+}
+
+/**
+ * A full replacement of the neuron's system map. The newest `at` wins;
+ * ties break on the content hash so every machine picks the same winner.
+ * Older clients do not know this kind and skip it — the map simply does not
+ * travel to them, which is a degradation, not a corruption.
+ */
+export interface MapOp extends OpBase {
+  op: 'map';
+  text: string;
+}
+
+/**
+ * An entry was deliberately removed and must not come back from anyone's log.
+ * Like retraction, a purge always wins, whatever the replay order. Today only
+ * errors need it (facts already have StatusOp; the map clears through an
+ * empty-text MapOp winning the LWW).
+ */
+export interface PurgeOp extends OpBase {
+  op: 'purge';
+  pkind: 'error';
+  /** entryId() of the removed text. The text itself does not travel again. */
+  key: string;
+}
+
+export type Op = NeuronOp | FactOp | StatusOp | DecisionOp | PatternOp | TagOp | ErrorOp | MapOp | PurgeOp;
 
 /**
  * Same wording, same id, on every machine.
