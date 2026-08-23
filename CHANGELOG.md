@@ -2,6 +2,33 @@
 
 All notable changes to CRBRO.
 
+## [1.10.0] — 2026-08-23
+
+### Added — the memory diet
+
+A memory gains weight the same way a codebase does: not from what is
+needed, but from what nobody paused to not write. Measured on the
+reference brain: 3,621 active facts with a healthy 93-character median,
+but a heavy tail — 10% over 1,500 characters, and the heaviest neuron
+holding 293 facts with 1,407 near-duplicate pairs. Session summaries
+retelling the same thing with variations, every version as loud as the
+others on recall.
+
+- **`crbro_learn` now warns about near-duplicates.** A new fact that
+  closely resembles an active one (Dice ≥ 0.8) is stored anyway — the
+  brain never refuses knowledge — but the response names the older fact,
+  its id and the fix: retire it with `supersedes` or `crbro_revise`.
+  Warn-only by design: blind similarity is how "sprint_2" and "sprint_3"
+  become one thing, so nothing is ever merged or refused automatically,
+  and nothing already stored is compressed — durable memory is not
+  ephemeral prose; a fact that loses its "why" is worse than a long one.
+  A fact properly superseded in the same call does not re-trigger the
+  warning, so idempotent retries stay quiet.
+- **The save ladder, in the tool description and the card**: does it
+  already exist → does it update something (`supersedes`) → is it
+  structure (`crbro_map`) → is it derivable from the repo → would it
+  survive losing half its words. The first "yes" decides.
+
 ## [1.9.1] — 2026-08-23
 
 ### Fixed
