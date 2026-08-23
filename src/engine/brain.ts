@@ -3,7 +3,7 @@
 
 import path from 'node:path';
 import { promises as fs } from 'node:fs';
-import { readJSON, writeJSON, fileExists, now } from '../utils/fs.js';
+import { readJSON, writeJSON, fileExists, listJSONFiles, now } from '../utils/fs.js';
 import type { Manifest, BootResult, ActiveContext, HotTopics, Neuron, ProtocolDirective } from '../types/index.js';
 
 const CRBRO_DIR = process.env['CRBRO_PATH'] || path.join(process.env['HOME'] || process.env['USERPROFILE'] || '.', '.crbro');
@@ -94,9 +94,25 @@ export class Brain {
 
   /**
    * Initialize the brain directory structure.
-   * Creates all directories and a fresh manifest.
+   *
+   * Idempotent on purpose. This method is public API — scripts against the
+   * dist call it before using the Cortex — and it used to overwrite the
+   * manifest and the prefrontal files unconditionally, zeroing the counters
+   * of a live brain with 1,186 neurons (nothing was lost, but boot reported
+   * an empty brain until the manifest was rebuilt by hand). Now an existing
+   * brain is left exactly as found; only what is missing gets created.
    */
   async initialize(): Promise<Manifest> {
+    if (await fileExists(this.paths.manifest())) {
+      const existente = await readJSON<Manifest>(this.paths.manifest());
+      if (existente) {
+        this.manifest = existente;
+        return existente;
+      }
+      // Unreadable manifest: fall through and rebuild it, but never touch
+      // prefrontal files that are still there.
+    }
+
     // Create directories
     const dirs = [
       this.paths.cortex,
@@ -137,13 +153,17 @@ export class Brain {
       pending_tasks: [],
       last_updated: now(),
     };
-    await writeJSON(this.paths.activeContext(), emptyContext);
+    if (!(await fileExists(this.paths.activeContext()))) {
+      await writeJSON(this.paths.activeContext(), emptyContext);
+    }
 
     const emptyHotTopics: HotTopics = {
       topics: [],
       last_recalculated: now(),
     };
-    await writeJSON(this.paths.hotTopics(), emptyHotTopics);
+    if (!(await fileExists(this.paths.hotTopics()))) {
+      await writeJSON(this.paths.hotTopics(), emptyHotTopics);
+    }
 
     return manifest;
   }
@@ -193,6 +213,23 @@ export class Brain {
         : t
     );
     const recentlyClosed = activeContext?.recently_closed || [];
+
+    // Self-heal the counters. The manifest is derived data: the cortex on
+    // disk is the truth, and a manifest that says 0 while a thousand neuron
+    // files sit right there (a reset, a crash, an older bug) makes boot lie
+    // about the whole brain. Three readdirs per boot buy an honest answer.
+    const enDisco = {
+      total_neurons: (await listJSONFiles(this.paths.cortex)).length,
+      total_synapses: (await listJSONFiles(this.paths.synapses)).length,
+      total_sessions: (await listJSONFiles(this.paths.hippocampus)).length,
+    };
+    if (this.manifest.total_neurons !== enDisco.total_neurons ||
+        this.manifest.total_synapses !== enDisco.total_synapses ||
+        this.manifest.total_sessions !== enDisco.total_sessions) {
+      this.manifest.total_neurons = enDisco.total_neurons;
+      this.manifest.total_synapses = enDisco.total_synapses;
+      this.manifest.total_sessions = enDisco.total_sessions;
+    }
 
     // Update boot timestamp
     this.manifest.last_boot = now();
