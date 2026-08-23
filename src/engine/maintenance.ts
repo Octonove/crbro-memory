@@ -26,6 +26,9 @@ export interface MaintenanceReport {
   clusters_detected: number;
   index_rebuilt: boolean;
   heat_recalculated: boolean;
+  /** Deliberate deferrals recorded with type:'debt', and how many never named a revisit condition. */
+  debts_total: number;
+  debts_without_trigger: number;
   notes: string[];
 }
 
@@ -55,6 +58,8 @@ export class Maintenance {
       archivable_neurons: 0,
       pruned_synapses: 0,
       integrity_issues: [],
+      debts_total: 0,
+      debts_without_trigger: 0,
       clusters_detected: 0,
       index_rebuilt: false,
       heat_recalculated: false,
@@ -126,6 +131,25 @@ export class Maintenance {
 
     // 4. Integrity check
     report.integrity_issues = await this.checkIntegrity();
+
+    // The debt ledger: a deferral that never named its revisit condition is
+    // on its way to becoming permanent by accident. Count them and say so —
+    // "later" without a trigger means "never".
+    const sinDisparador: string[] = [];
+    for (const id of await listJSONFiles(this.brain.paths.cortex)) {
+      const n = await readJSON<Neuron>(this.brain.paths.neuron(id));
+      if (!n || !n.debts || n.debts.length === 0) continue;
+      report.debts_total += n.debts.length;
+      const sin = n.debts.filter(d => !/REVISAR CUANDO|REVISIT WHEN|TRIGGER:|DISPARADOR/i.test(d));
+      if (sin.length > 0) sinDisparador.push(`${n.name || id} (${sin.length})`);
+      report.debts_without_trigger += sin.length;
+    }
+    if (report.debts_without_trigger > 0) {
+      report.notes.push(
+        `${report.debts_without_trigger} debt(s) never named a revisit condition — a deferral ` +
+        `without a trigger quietly becomes permanent. Neurons: ${sinDisparador.join(', ')}. ` +
+        `Rewrite them with a "REVISAR CUANDO:" clause.`);
+    }
 
     // 5. Rebuild global map
     const globalMap = await this.prefrontal.buildGlobalMap();

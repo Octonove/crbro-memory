@@ -352,6 +352,8 @@ export class SearchEngine {
         return (neuron.facts || []).some(f => !isRetired(f) && f.text === chunk.text);
       case 'error':
         return (neuron.errors || []).includes(chunk.text);
+      case 'debt':
+        return (neuron.debts || []).includes(chunk.text);
       case 'map':
         return neuron.map?.text === chunk.text;
       case 'pattern':
@@ -499,6 +501,17 @@ export class SearchEngine {
         id: chunkId(neuron.id, `error:${err}`),
         text: err,
         kind: 'error',
+        added: '',
+      });
+    }
+
+    for (const debt of neuron.debts || []) {
+      if (!debt) continue;
+      await this.put({
+        ...base,
+        id: chunkId(neuron.id, `debt:${debt}`),
+        text: debt,
+        kind: 'debt',
         added: '',
       });
     }

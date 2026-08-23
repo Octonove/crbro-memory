@@ -194,6 +194,9 @@ function neuronOps(neuron: Neuron, id: Identity): Op[] {
   for (const e of neuron.errors || []) {
     if (e) ops.push({ v: OPS_VERSION, op: 'error', nid: neuron.id, by: id.author, at, text: e });
   }
+  for (const d of neuron.debts || []) {
+    if (d) ops.push({ v: OPS_VERSION, op: 'debt', nid: neuron.id, by: id.author, at, text: d });
+  }
   if (neuron.map && neuron.map.text) {
     ops.push({ v: OPS_VERSION, op: 'map', nid: neuron.id, by: id.author,
       at: neuron.map.updated || at, text: neuron.map.text });
@@ -231,6 +234,7 @@ export async function prepareShare(
   (neuron.decisions || []).forEach((d, i) => revisar(`decisions[${i}]`, d.text));
   (neuron.patterns || []).forEach((p, i) => revisar(`patterns[${i}]`, p));
   (neuron.errors || []).forEach((e, i) => revisar(`errors[${i}]`, e));
+  (neuron.debts || []).forEach((d, i) => revisar(`debts[${i}]`, d));
   if (neuron.map?.text) revisar('map', neuron.map.text);
 
   const ops = neuronOps(neuron, await getIdentity(brain));
@@ -386,7 +390,8 @@ export async function syncSpaceNow(
 
     const cambio = report.facts_added + report.facts_retracted + report.facts_superseded +
       report.decisions_added + report.patterns_added + report.tags_added +
-      report.errors_added + (report.map_updated ? 1 : 0);
+      report.errors_added + report.debts_added + report.entries_removed +
+      (report.map_updated ? 1 : 0);
     if (cambio > 0 || !local) {
       await cortex.replaceFromSync(neuron);
       base.neurons_touched.push(nid);
@@ -451,6 +456,12 @@ export function attachSync(brain: Brain, cortex: Cortex): void {
       }
       if (change.kind === 'error_purge') {
         return [{ ...comun, op: 'purge', pkind: 'error', key: change.key } as Op];
+      }
+      if (change.kind === 'debt') {
+        return [{ ...comun, op: 'debt', text: change.text } as Op];
+      }
+      if (change.kind === 'debt_purge') {
+        return [{ ...comun, op: 'purge', pkind: 'debt', key: change.key } as Op];
       }
       return [{ ...comun, op: 'pattern', text: change.text } as Op];
     });

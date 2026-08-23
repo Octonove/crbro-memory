@@ -1,0 +1,268 @@
+{
+  "neurons": [
+    {
+      "name": "cliente-reformaplus",
+      "domain": "proyectos",
+      "facts": [
+        {
+          "text": "La web de Reformaplus corre WordPress 6.5 con tema hijo de GeneratePress en /wp-content/themes/reformaplus-child; el functions.php aloja los shortcodes de presupuestos.",
+          "label": "qué plantilla y ficheros usa la página del negocio de obras"
+        },
+        {
+          "text": "Reformaplus abona 350 EUR al mes por mantenimiento, renovado en enero; incluye 2 horas de retoques y parcheo de plugins.",
+          "label": "tarifa periódica acordada con el cliente de obras"
+        },
+        {
+          "text": "El formulario de Reformaplus es WPForms con ID 217 y despacha por SMTP de Brevo desde la dirección info@; el captcha es Turnstile.",
+          "label": "mecanismo de recepción de consultas del sitio de obras"
+        },
+        {
+          "text": "En Reformaplus quedó pendiente pasar las 34 páginas de localidades al nuevo maquetador antes de octubre; llevan en borrador desde julio.",
+          "label": "asunto inacabado sobre las landings geográficas del cliente"
+        }
+      ]
+    },
+    {
+      "name": "infraestructura-hosting",
+      "domain": "infraestructura",
+      "facts": [
+        {
+          "text": "El VPS principal es un CX32 de Hetzner en Falkenstein, IP 65.108.24.117, con Ubuntu 22.04 y RunCloud de panel.",
+          "label": "dónde está alojado el servidor y con qué gestor"
+        },
+        {
+          "text": "Los sitios pequeños viven en un compartido de SiteGround plan GrowBig, que caduca el 14 de marzo y sale por 240 EUR/año.",
+          "label": "coste y vencimiento del alojamiento de las webs menores"
+        },
+        {
+          "text": "Cloudflare gestiona el DNS de todo el portfolio; se usa el plan free salvo en octonove.com, que lleva el Pro de 20 USD/mes por el WAF.",
+          "label": "quién administra la resolución de nombres y qué nivel paga cada web"
+        },
+        {
+          "text": "PHP está fijado en 8.2 con memory_limit de 512M en todas las instancias; OPcache activo y Redis para los WooCommerce.",
+          "label": "versión del lenguaje y aceleración configurada en las máquinas"
+        }
+      ]
+    },
+    {
+      "name": "seo-octonove",
+      "domain": "seo",
+      "facts": [
+        {
+          "text": "octonove.com pasó de 480 a 1.900 clics/mes en Search Console tras el clúster de contenidos sobre automatización publicado entre abril y junio.",
+          "label": "evolución del tráfico orgánico de la web de la agencia"
+        },
+        {
+          "text": "La keyword principal de la agencia es «agencia de automatización con IA»: posición media 6,3 y objetivo de top 3 antes de fin de año.",
+          "label": "término de búsqueda prioritario y su ranking actual"
+        },
+        {
+          "text": "Rank Math va en todos los WordPress con schema de Organization; el sitemap se reenvía a Google tras cada publicación vía Indexing API.",
+          "label": "plugin de posicionamiento y aviso al buscador"
+        },
+        {
+          "text": "Los artículos del blog salen programados cada 3 días; cada pieza lleva 1.200-1.800 palabras, imagen WebP y dos enlaces internos como mínimo.",
+          "label": "cadencia y requisitos de lo que se publica en el blog"
+        }
+      ]
+    },
+    {
+      "name": "automatizaciones-n8n",
+      "domain": "automatizacion",
+      "facts": [
+        {
+          "text": "n8n corre en Docker bajo flows.octonove.com; hay 14 workflows activos y el webhook de leads dispara el nodo de Notion.",
+          "label": "plataforma de orquestación autoalojada y sus procesos"
+        },
+        {
+          "text": "El workflow de facturas lee el buzón de Gmail cada 15 minutos, extrae el PDF adjunto y lo archiva en Drive bajo /Contabilidad/2026/.",
+          "label": "automatización que ordena los recibos entrantes"
+        },
+        {
+          "text": "La API key de OpenAI para los agentes está en la variable OPENAI_KEY_N8N del .env del contenedor; límite de gasto fijado en 50 USD/mes.",
+          "label": "dónde vive la credencial de IA y su tope de consumo"
+        },
+        {
+          "text": "El scraper de precios de la competencia falla si cambian el HTML: se cayó el 12 de agosto y hubo que reescribir los selectores CSS.",
+          "label": "incidencia del robot que vigila tarifas ajenas"
+        }
+      ]
+    },
+    {
+      "name": "facturacion-negocio",
+      "domain": "negocio",
+      "facts": [
+        {
+          "text": "La facturación se lleva con Holded; las facturas salen el día 1 con vencimiento a 30 días y el IVA trimestral lo presenta la gestoría Aselec.",
+          "label": "herramienta de contabilidad y ciclo de cobro"
+        },
+        {
+          "text": "La tarifa por hora subió de 45 a 60 EUR en enero para clientes nuevos; los antiguos mantienen 50 EUR hasta la renovación del contrato.",
+          "label": "precios del trabajo cobrado por tiempo"
+        },
+        {
+          "text": "El cliente Dentalia dejó de pagar en mayo con 1.240 EUR pendientes; se le cortó el hosting el 1 de julio y el caso pasó a reclamación.",
+          "label": "morosidad de una cuenta y qué se hizo al respecto"
+        },
+        {
+          "text": "El objetivo de MRR para 2026 es 6.000 EUR; en agosto va por 4.350 EUR repartidos entre 11 mantenimientos y 2 igualas de SEO.",
+          "label": "meta de ingresos recurrentes y avance actual"
+        }
+      ]
+    },
+    {
+      "name": "tienda-cocheschinos",
+      "domain": "ecommerce",
+      "facts": [
+        {
+          "text": "La tienda de CochesChinos usa WooCommerce 8.9 con 1.400 productos importados vía WP All Import; el cron de sincronización corre a las 04:00.",
+          "label": "cómo se renueva el catálogo del ecommerce del cliente"
+        },
+        {
+          "text": "La pasarela es Redsys con la clave SHA-256 del Sabadell; el modo pruebas se activa con la constante REDSYS_TEST en wp-config.",
+          "label": "sistema de cobros de la tienda y cómo ensayarlo"
+        },
+        {
+          "text": "Los pedidos fallidos por timeout subieron a 23 en julio; se amplió max_execution_time a 300 y el checkout pasó a plantilla ligera.",
+          "label": "problema con compras que no terminaban y su arreglo"
+        },
+        {
+          "text": "El feed de Google Merchant se regenera cada noche con Product Feed PRO; excluye las 60 referencias sin stock y las de menos de 5 EUR.",
+          "label": "exportación del listado de artículos al comparador"
+        }
+      ]
+    },
+    {
+      "name": "herramientas-licencias",
+      "domain": "herramientas",
+      "facts": [
+        {
+          "text": "La licencia de Elementor Pro es la agency de 50 sitios, renovada en noviembre por 399 USD; la clave figura en la bóveda como ELEMENTOR_KEY.",
+          "label": "suscripción del maquetador y dónde consultarla"
+        },
+        {
+          "text": "Figma se quedó en plan gratuito tras cancelar los 12 EUR/mes de Professional; los diseños antiguos se exportaron a /Disenos/archivo.",
+          "label": "recorte en la herramienta de prototipado y respaldo del material"
+        },
+        {
+          "text": "Para grabar tutoriales se usa OBS con la escena «Pantalla+Cam» y el micro Rode NT-USB; los brutos van al disco externo T7 de 2 TB.",
+          "label": "equipo y programa para producir vídeos formativos"
+        },
+        {
+          "text": "ChatGPT Team se comparte con el colaborador Marcos (2 plazas a 25 USD/asiento); Claude Code va aparte con la cuenta de la agencia.",
+          "label": "reparto de las suscripciones de inteligencia artificial"
+        }
+      ]
+    },
+    {
+      "name": "backups-seguridad",
+      "domain": "seguridad",
+      "facts": [
+        {
+          "text": "Las copias nocturnas van con UpdraftPlus a un bucket de Backblaze B2 llamado on-backups-eu; retención de 21 días y prueba de restauración mensual.",
+          "label": "política de salvaguarda de datos de las webs"
+        },
+        {
+          "text": "Wordfence premium solo está en las 3 webs grandes; el resto usa el free con el firewall en learning mode las primeras 2 semanas.",
+          "label": "qué grado de protección tiene cada sitio"
+        },
+        {
+          "text": "Tras el hackeo de la web de Fisiomar en junio (inyección en wp_options), se rotaron todas las salts y se bloqueó xmlrpc.php por .htaccess.",
+          "label": "respuesta al ataque sufrido por un cliente"
+        },
+        {
+          "text": "El acceso SSH a los servidores es solo por clave ed25519; el puerto se movió al 2299 y fail2ban banea tras 3 intentos fallidos.",
+          "label": "cómo está asegurada la entrada remota a las máquinas"
+        }
+      ]
+    },
+    {
+      "name": "email-marketing",
+      "domain": "email",
+      "facts": [
+        {
+          "text": "La newsletter de la agencia sale los martes con Brevo, lista «suscriptores-blog» de 830 contactos; open rate medio del 41 %.",
+          "label": "boletín periódico: plataforma, audiencia y resultados"
+        },
+        {
+          "text": "El dominio de envío mail.octonove.com lleva SPF, DKIM y DMARC en p=quarantine desde marzo; la reputación en Google Postmaster está en verde.",
+          "label": "autenticación del correo saliente y su estado"
+        },
+        {
+          "text": "La secuencia de bienvenida tiene 5 correos en 14 días; el tercero, con el caso de éxito de Reformaplus, convierte al 8 % en llamadas.",
+          "label": "serie automática para captados nuevos y su rendimiento"
+        },
+        {
+          "text": "Se abandonó Mailchimp en febrero por el precio (78 USD/mes con 2.000 contactos); la migración a la nueva herramienta se hizo en una tarde con CSV.",
+          "label": "cambio de proveedor de mailing y su motivo"
+        }
+      ]
+    },
+    {
+      "name": "migracion-8mejor",
+      "domain": "migraciones",
+      "facts": [
+        {
+          "text": "La migración de 8mejor.top de SiteGround al VPS se ejecutó el 19 de julio con All-in-One WP Migration; el archivo pesó 4,2 GB y hubo 40 min de caída.",
+          "label": "traslado de una web entre alojamientos y sus incidencias"
+        },
+        {
+          "text": "Tras el cambio de servidor, las URLs con tildes daban 404; se arregló con un mapeo de redirecciones 301 en el .htaccess con 62 reglas.",
+          "label": "fallo de enlaces rotos al mover el sitio y su solución"
+        },
+        {
+          "text": "El TTL de los DNS se bajó a 300 la víspera para propagar rápido; se restauró a 3600 dos días después del traspaso.",
+          "label": "ajuste temporal en la caducidad de los registros de nombres"
+        },
+        {
+          "text": "Quedó documentado el checklist de migraciones en Notion, página «Runbook traslados web», con 22 pasos y captura de cada verificación.",
+          "label": "dónde se apuntó el procedimiento para futuros movimientos de sitios"
+        }
+      ]
+    },
+    {
+      "name": "decisiones-desarrollo",
+      "domain": "desarrollo",
+      "facts": [
+        {
+          "text": "Se decidió abandonar los page builders en proyectos nuevos: desde septiembre todo va con bloques nativos de Gutenberg y theme.json.",
+          "label": "rumbo técnico elegido para construir las próximas webs"
+        },
+        {
+          "text": "El repositorio de snippets propios está en GitHub como octonove/wp-toolkit, privado; el plugin base se instala con Composer desde ahí.",
+          "label": "dónde vive el código reutilizable de la casa"
+        },
+        {
+          "text": "Los entornos locales van con LocalWP en el portátil; DevKinsta quedó descartado por consumo de RAM y el staging real se monta en subdominios dev.*",
+          "label": "cómo se prueban los cambios antes de publicarlos"
+        },
+        {
+          "text": "El criterio para aceptar proyectos a medida: mínimo 3.000 EUR, con el 40 % por adelantado y contrato firmado antes de tocar código.",
+          "label": "condiciones para admitir encargos personalizados"
+        }
+      ]
+    },
+    {
+      "name": "publicidad-ads",
+      "domain": "publicidad",
+      "facts": [
+        {
+          "text": "La campaña de Google Ads de Reformas Cartagena gasta 18 EUR/día con CPC medio de 1,35 EUR; la de búsqueda supera a Performance Max en leads.",
+          "label": "inversión publicitaria de un cliente y qué formato rinde"
+        },
+        {
+          "text": "El píxel de conversión se dispara en la página /gracias con GTM, evento «solicitud_presupuesto»; se validó con Tag Assistant el 3 de agosto.",
+          "label": "seguimiento de los objetivos cumplidos en anuncios"
+        },
+        {
+          "text": "Las palabras negativas se revisan cada viernes; el mes pasado se excluyeron 47 términos, sobre todo «gratis» y búsquedas de empleo.",
+          "label": "limpieza semanal de consultas irrelevantes en las campañas"
+        },
+        {
+          "text": "El informe mensual para clientes de ads se genera con Looker Studio, plantilla «ADS-2026», y se envía en PDF el primer lunes de cada mes.",
+          "label": "reporte periódico de resultados publicitarios y su calendario"
+        }
+      ]
+    }
+  ]
+}

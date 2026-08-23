@@ -52,11 +52,47 @@ const PATTERNS: Pattern[] = [
   },
 
   // A password stated as such. Needs the label, so "the password policy is
-  // strict" does not trip it.
+  // strict" does not trip it. Two forms: label + separator (:/=), and label +
+  // copula ("la contraseña es X", "the password is X") with no separator,
+  // requiring the value to mix classes so plain words do not match.
   {
     kind: 'password',
     re: /\b(?:password|passwd|contrase[nñ]a|clave)\s*(?:es|is)?\s*[:=]\s*["'`]?([^\s"'`,;]{8,})/gi,
   },
+  {
+    // The value must mix a letter AND a digit — that is what separates a
+    // password from emphatic prose. It used to accept !/@/* as "the digit
+    // class", so "la clave es importante!" redacted a sentence. Only a real
+    // digit qualifies now.
+    kind: 'password (prose)',
+    re: /\b(?:password|passwd|contrase[nñ]a|clave)\b\s+(?:es|is)\s+["'`]?((?=[^\s"'`,;]*[A-Za-z])(?=[^\s"'`,;]*[0-9])[^\s"'`,;]{8,})/gi,
+  },
+
+  // Connection strings that carry the credentials inline. The scheme + "://" +
+  // "user:pass@host" shape is unambiguous — no prose produces it.
+  {
+    kind: 'connection string credentials',
+    re: /\b[a-z][a-z0-9+.\-]*:\/\/[^\s:@/]+:[^\s:@/]+@[^\s/]+/gi,
+  },
+
+  // Generic KEY/TOKEN/SECRET = long opaque value. Anchored to the assignment
+  // label; the value must be long and token-shaped, which ordinary config
+  // values (paths, numbers, words) are not.
+  {
+    // The value must be long AND mix a letter with a digit — a real token,
+    // not a filesystem path or a prose placeholder. It used to include "/" in
+    // the value class, so `secret: /etc/ssl/private/servers/keystore` (a path
+    // to where a key lives, not a key) was redacted. No leading slash, and the
+    // letter+digit requirement drops all-alpha placeholders too.
+    kind: 'generic API key/secret',
+    re: /\b(?:api[_-]?key|access[_-]?key|secret[_-]?key|auth[_-]?token|secret|token)\s*[:=]\s*["'`]?(?!\/)((?=[A-Za-z0-9_\-+]*[A-Za-z])(?=[A-Za-z0-9_\-+]*[0-9])[A-Za-z0-9_\-+]{24,})/gi,
+  },
+
+  // SendGrid: SG. + two base64 chunks.
+  { kind: 'SendGrid key', re: /\bSG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}\b/g },
+
+  // GitHub fine-grained PAT: github_pat_ + long body.
+  { kind: 'GitHub fine-grained token', re: /\bgithub_pat_[A-Za-z0-9_]{60,}\b/g },
 ];
 
 /** Find credentials in a piece of text. Never returns the values themselves. */
@@ -86,14 +122,23 @@ export function redact(text: string): { text: string; found: string[] } {
   const hits = findSecrets(text);
   if (hits.length === 0) return { text, found: [] };
 
-  // Right to left, so earlier offsets stay valid.
-  let out = text;
+  // Left to right with a cursor over ORIGINAL offsets, skipping any hit that
+  // overlaps a span already redacted. Two patterns can match the same span —
+  // "generic API key/secret" and a vendor pattern both fire on "la clave es
+  // AIza...". The old right-to-left pass then applied the second hit's stale
+  // index/length to an already-shortened string and swallowed the legitimate
+  // prose after it. On a tie of index, the longer span wins.
+  hits.sort((a, b) => a.index - b.index || b.length - a.length);
+  let out = '';
+  let cursor = 0;
   const found: string[] = [];
-  for (let i = hits.length - 1; i >= 0; i--) {
-    const h = hits[i];
-    out = out.slice(0, h.index) + `[REDACTED: ${h.kind}]` + out.slice(h.index + h.length);
-    found.unshift(h.kind);
+  for (const h of hits) {
+    if (h.index < cursor) continue;   // overlaps a span already redacted
+    out += text.slice(cursor, h.index) + `[REDACTED: ${h.kind}]`;
+    found.push(h.kind);
+    cursor = h.index + h.length;
   }
+  out += text.slice(cursor);
   return { text: out, found };
 }
 

@@ -1,0 +1,110 @@
+[
+ {
+  "name": "cliente-reformaplus",
+  "labels": [
+   "qué plantilla y ficheros usa la página del negocio de obras",
+   "tarifa periódica acordada con el cliente de obras",
+   "mecanismo de recepción de consultas del sitio de obras",
+   "asunto inacabado sobre las landings geográficas del cliente"
+  ]
+ },
+ {
+  "name": "infraestructura-hosting",
+  "labels": [
+   "dónde está alojado el servidor y con qué gestor",
+   "coste y vencimiento del alojamiento de las webs menores",
+   "quién administra la resolución de nombres y qué nivel paga cada web",
+   "versión del lenguaje y aceleración configurada en las máquinas"
+  ]
+ },
+ {
+  "name": "seo-octonove",
+  "labels": [
+   "evolución del tráfico orgánico de la web de la agencia",
+   "término de búsqueda prioritario y su ranking actual",
+   "plugin de posicionamiento y aviso al buscador",
+   "cadencia y requisitos de lo que se publica en el blog"
+  ]
+ },
+ {
+  "name": "automatizaciones-n8n",
+  "labels": [
+   "plataforma de orquestación autoalojada y sus procesos",
+   "automatización que ordena los recibos entrantes",
+   "dónde vive la credencial de IA y su tope de consumo",
+   "incidencia del robot que vigila tarifas ajenas"
+  ]
+ },
+ {
+  "name": "facturacion-negocio",
+  "labels": [
+   "herramienta de contabilidad y ciclo de cobro",
+   "precios del trabajo cobrado por tiempo",
+   "morosidad de una cuenta y qué se hizo al respecto",
+   "meta de ingresos recurrentes y avance actual"
+  ]
+ },
+ {
+  "name": "tienda-cocheschinos",
+  "labels": [
+   "cómo se renueva el catálogo del ecommerce del cliente",
+   "sistema de cobros de la tienda y cómo ensayarlo",
+   "problema con compras que no terminaban y su arreglo",
+   "exportación del listado de artículos al comparador"
+  ]
+ },
+ {
+  "name": "herramientas-licencias",
+  "labels": [
+   "suscripción del maquetador y dónde consultarla",
+   "recorte en la herramienta de prototipado y respaldo del material",
+   "equipo y programa para producir vídeos formativos",
+   "reparto de las suscripciones de inteligencia artificial"
+  ]
+ },
+ {
+  "name": "backups-seguridad",
+  "labels": [
+   "política de salvaguarda de datos de las webs",
+   "qué grado de protección tiene cada sitio",
+   "respuesta al ataque sufrido por un cliente",
+   "cómo está asegurada la entrada remota a las máquinas"
+  ]
+ },
+ {
+  "name": "email-marketing",
+  "labels": [
+   "boletín periódico: plataforma, audiencia y resultados",
+   "autenticación del correo saliente y su estado",
+   "serie automática para captados nuevos y su rendimiento",
+   "cambio de proveedor de mailing y su motivo"
+  ]
+ },
+ {
+  "name": "migracion-8mejor",
+  "labels": [
+   "traslado de una web entre alojamientos y sus incidencias",
+   "fallo de enlaces rotos al mover el sitio y su solución",
+   "ajuste temporal en la caducidad de los registros de nombres",
+   "dónde se apuntó el procedimiento para futuros movimientos de sitios"
+  ]
+ },
+ {
+  "name": "decisiones-desarrollo",
+  "labels": [
+   "rumbo técnico elegido para construir las próximas webs",
+   "dónde vive el código reutilizable de la casa",
+   "cómo se prueban los cambios antes de publicarlos",
+   "condiciones para admitir encargos personalizados"
+  ]
+ },
+ {
+  "name": "publicidad-ads",
+  "labels": [
+   "inversión publicitaria de un cliente y qué formato rinde",
+   "seguimiento de los objetivos cumplidos en anuncios",
+   "limpieza semanal de consultas irrelevantes en las campañas",
+   "reporte periódico de resultados publicitarios y su calendario"
+  ]
+ }
+]

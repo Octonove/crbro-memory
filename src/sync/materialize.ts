@@ -32,6 +32,9 @@ export interface MergeReport {
   decisions_added: number;
   patterns_added: number;
   errors_added: number;
+  debts_added: number;
+  /** Errors/debts removed by a purge op. Feeds the sync change-gate so a lone purge persists. */
+  entries_removed: number;
   map_updated: boolean;
   tags_added: number;
   authors: string[];
@@ -69,6 +72,8 @@ export function applyOps(
     decisions_added: 0,
     patterns_added: 0,
     errors_added: 0,
+    debts_added: 0,
+    entries_removed: 0,
     map_updated: false,
     tags_added: 0,
     authors: [],
@@ -83,7 +88,7 @@ export function applyOps(
   // reported rather than resolved. Overwriting someone's local name because a
   // teammate spelled it differently is not a merge, it is a stomp.
   const neuron: Neuron = base
-    ? { ...base, facts: [...base.facts], decisions: [...base.decisions], patterns: [...base.patterns], preferences: [...base.preferences], tags: [...base.tags], connections: [...base.connections], errors: [...(base.errors || [])], map: base.map ? { ...base.map } : undefined }
+    ? { ...base, facts: [...base.facts], decisions: [...base.decisions], patterns: [...base.patterns], preferences: [...base.preferences], tags: [...base.tags], connections: [...base.connections], errors: [...(base.errors || [])], debts: [...(base.debts || [])], map: base.map ? { ...base.map } : undefined }
     : {
         id,
         name: neuronOp && neuronOp.op === 'neuron' ? neuronOp.name : id,
@@ -101,6 +106,7 @@ export function applyOps(
         connections: [],
         tags: [],
         errors: [],
+        debts: [],
       };
 
   if (base && neuronOp && neuronOp.op === 'neuron') {
@@ -211,20 +217,34 @@ export function applyOps(
         neuron.errors.push(op.text);
         report.errors_added++;
       }
+    } else if (op.op === 'debt') {
+      if (!neuron.debts) neuron.debts = [];
+      if (!neuron.debts.some(d => normalizeText(d) === normalizeText(op.text))) {
+        neuron.debts.push(op.text);
+        report.debts_added++;
+      }
     }
   }
 
   // ─── Purges: a deliberate removal always wins ────────────────
   // Applied after the unions so order cannot matter: an error purged by
   // anyone stays gone even if another log re-adds it in the same replay.
-  const purgados = new Set<string>();
+  const purgados = { error: new Set<string>(), debt: new Set<string>() };
   for (const op of ops) {
-    if (op.op === 'purge' && (op as PurgeOp).pkind === 'error') {
-      purgados.add((op as PurgeOp).key);
+    if (op.op === 'purge') {
+      const po = op as PurgeOp;
+      if (po.pkind === 'error' || po.pkind === 'debt') purgados[po.pkind].add(po.key);
     }
   }
-  if (purgados.size > 0 && neuron.errors && neuron.errors.length > 0) {
-    neuron.errors = neuron.errors.filter(e => !purgados.has(entryId(e)));
+  if (purgados.error.size > 0 && neuron.errors && neuron.errors.length > 0) {
+    const antes = neuron.errors.length;
+    neuron.errors = neuron.errors.filter(e => !purgados.error.has(entryId(e)));
+    report.entries_removed += antes - neuron.errors.length;
+  }
+  if (purgados.debt.size > 0 && neuron.debts && neuron.debts.length > 0) {
+    const antes = neuron.debts.length;
+    neuron.debts = neuron.debts.filter(d => !purgados.debt.has(entryId(d)));
+    report.entries_removed += antes - neuron.debts.length;
   }
 
   // ─── The map: last writer wins, deterministically ────────────
@@ -280,6 +300,7 @@ export function applyOps(
   neuron.patterns.sort();
   neuron.tags.sort();
   if (neuron.errors) neuron.errors.sort();
+  if (neuron.debts) neuron.debts.sort();
 
   report.authors = [...new Set(ops.map(o => o.by).filter(Boolean))].sort();
 

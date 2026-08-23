@@ -87,3 +87,22 @@ describe('boot self-heals the counters', () => {
     expect(sanado!.total_neurons).toBe(2);
   });
 });
+
+describe('loadProtocols honours fact status', () => {
+  it('a superseded protocol wording is not injected alongside its correction', async () => {
+    const brain = new Brain(root);
+    await brain.initialize();
+    const cortex = new Cortex(brain);
+    const r = await cortex.learn('zero protocol', 'fact',
+      '12 non-negotiable protocols organized in pillars.', { neuronType: 'protocol' });
+    const id = r.neuron!.facts[0].id!;
+    await cortex.learn('zero protocol', 'fact',
+      '13 non-negotiable protocols organized in pillars.', { supersedes: [id] });
+
+    const protocols = await brain.loadProtocols();
+    const zero = protocols.find(p => p.id.includes('zero'));
+    expect(zero).toBeTruthy();
+    expect(zero!.instructions).toContain('13 non-negotiable');
+    expect(zero!.instructions).not.toContain('12 non-negotiable');
+  });
+});

@@ -392,6 +392,67 @@ if (command === 'init') {
     console.log('');
   }).catch(console.error);
 
+} else if (command === 'install-hooks') {
+  // ─── Wire the SubagentStart hook into Claude Code ──────────────
+  //
+  // SessionStart context never reaches Task-spawned subagents, so without
+  // this every subagent runs without the behavioral protocols the session
+  // was booted with. This registers hooks/crbro-subagent.mjs, which reads
+  // the same protocol neurons crbro_boot reads — one source of truth.
+  //
+  // Merges into ~/.claude/settings.json without touching anything else.
+  // Idempotent: running it twice changes nothing the second time.
+  import('fs').then(async fs => {
+    const settingsPath = join(homedir(), '.claude', 'settings.json');
+    const here = dirname(fileURLToPath(import.meta.url));
+    const source = join(here, '..', 'hooks', 'crbro-subagent.mjs');
+
+    // Copy the hook to a stable location. When CRBRO runs from the npx
+    // cache, `here` changes with every release and the stale path would
+    // break the hook silently on the next update.
+    const hookDir = join(homedir(), '.claude', 'crbro-hooks');
+    const hookScript = join(hookDir, 'crbro-subagent.mjs');
+    fs.mkdirSync(hookDir, { recursive: true });
+    fs.copyFileSync(source, hookScript);
+    const hookCmd = `node "${hookScript.split('\\').join('/')}"`;
+
+    let settings = {};
+    try {
+      settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8').replace(/^﻿/, ''));
+    } catch (e) {
+      if (fs.existsSync(settingsPath)) {
+        console.error(`  ❌ ${settingsPath} exists but could not be parsed — not touching it.`);
+        console.error(`     ${e.message}`);
+        process.exit(1);
+      }
+    }
+
+    settings.hooks = settings.hooks || {};
+    const list = settings.hooks.SubagentStart = settings.hooks.SubagentStart || [];
+    const yaEsta = JSON.stringify(list).includes('crbro-subagent');
+    if (yaEsta) {
+      console.log('  ✅ SubagentStart hook already installed. Nothing to do.');
+      return;
+    }
+    list.push({
+      hooks: [{
+        type: 'command',
+        command: hookCmd,
+        timeout: 5,
+        statusMessage: 'Inyectando protocolos CRBRO en el subagente...',
+      }],
+    });
+
+    const tmp = settingsPath + '.' + process.pid + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(settings, null, 2), 'utf8');
+    fs.renameSync(tmp, settingsPath);
+    console.log('  ✅ SubagentStart hook installed.');
+    console.log(`     ${settingsPath}`);
+    console.log('     Every Task-spawned subagent now receives the same behavioral');
+    console.log('     protocols the session boots with. Scope it with the');
+    console.log('     CRBRO_SUBAGENT_MATCHER env var (regex on agent_type) if needed.');
+  }).catch(console.error);
+
 } else if (command === '--help' || command === '-h') {
   // ─── Help ──────────────────────────────────────────────────────
   console.log('');

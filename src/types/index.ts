@@ -65,6 +65,14 @@ export interface Neuron {
    */
   errors?: string[];
   /**
+   * Deliberate deferrals: what was NOT done on purpose, its ceiling, and
+   * the condition under which to revisit. The twin of errors — an error is
+   * "did X wrong, fixed it so"; a debt is "skipped X on purpose, revisit
+   * when Y". The graveyard of the unbuilt: when someone re-proposes a dead
+   * idea, recall serves the decision with its date and its trigger.
+   */
+  debts?: string[];
+  /**
    * The living map of the system: where it lives, what serves what, which
    * pieces talk to each other, the traps. One document, replaced whole on
    * every update — never appended — so it cannot drift into versions.
