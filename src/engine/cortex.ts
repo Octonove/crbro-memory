@@ -4,6 +4,7 @@
 import { readJSON, writeJSON, updateJSON, listJSONFiles, now } from '../utils/fs.js';
 import { neuronId, inferNeuronType, toSnakeCase, legacySnakeCase } from '../utils/ids.js';
 import { factId } from '../utils/hash.js';
+import { entryId } from '../sync/ops.js';
 import { redact, secretKinds } from './secrets.js';
 import type { Brain } from './brain.js';
 import type { Neuron, NeuronType, Fact, Decision, FactStatus } from '../types/index.js';
@@ -70,6 +71,9 @@ export type Emitter = (
     | { kind: 'status'; fid: string; to: 'superseded' | 'retracted'; at: string; why?: string }
     | { kind: 'decision'; text: string; why?: string; at: string }
     | { kind: 'pattern'; text: string; at: string }
+    | { kind: 'error'; text: string; at: string }
+    | { kind: 'map'; text: string; at: string }
+    | { kind: 'error_purge'; key: string; at: string }
 ) => Promise<void> | void;
 
 export class Cortex {
@@ -260,6 +264,7 @@ export class Cortex {
         preferences: [],
         connections: [],
         tags: [],
+        errors: [],
       };
     });
 
@@ -278,7 +283,7 @@ export class Cortex {
    */
   async learn(
     topic: string,
-    type: 'fact' | 'decision' | 'pattern' | 'preference',
+    type: 'fact' | 'decision' | 'pattern' | 'preference' | 'error',
     content: string,
     options?: {
       confidence?: number;
@@ -304,6 +309,8 @@ export class Cortex {
     neuron: Neuron | null;
     action: 'created' | 'updated' | 'skipped';
     superseded: number;
+    /** Supersedes targets that matched no active fact — a silent miss no more. */
+    supersedes_unmatched: string[];
     redacted: string[];
   }> {
     // Credentials never make it to disk. The sentence around them survives, so
@@ -324,7 +331,7 @@ export class Cortex {
 
     if (!neuron) {
       if (options?.createIfMissing === false) {
-        return { neuron: null, action: 'skipped', superseded: 0, redacted: limpio.found };
+        return { neuron: null, action: 'skipped', superseded: 0, supersedes_unmatched: options?.supersedes || [], redacted: limpio.found };
       }
       const nType = options?.neuronType || inferNeuronType(topic);
       const domain = options?.domain || 'general';
@@ -333,6 +340,10 @@ export class Cortex {
     }
 
     let superseded = 0;
+    // Stays empty unless retire() actually runs: a duplicate fact skips the
+    // whole block, and warning "still live" about targets nobody touched is
+    // a false alarm on every idempotent retry.
+    let supersedesUnmatched: string[] = [];
     let emitir: Parameters<Emitter>[1] | null = null;
 
     // From here on we work on a fresh read inside the lock. Mutating the copy
@@ -351,7 +362,9 @@ export class Cortex {
             );
             if (!isDuplicate) {
               if (options?.supersedes?.length) {
-                superseded = this.retire(n, options.supersedes, id, 'superseded');
+                const retirado = this.retire(n, options.supersedes, id, 'superseded');
+                superseded = retirado.count;
+                supersedesUnmatched = retirado.unmatched;
               }
               const fact: Fact = {
                 text: content,
@@ -394,6 +407,15 @@ export class Cortex {
             if (!n.preferences.includes(content)) n.preferences.push(content);
             break;
           }
+          case 'error': {
+            if (!n.errors) n.errors = [];
+            if (!n.errors.includes(content)) {
+              n.errors.push(content);
+              this.tally.topics.add(n.id);
+              emitir = { kind: 'error' as const, text: content, at: now() };
+            }
+            break;
+          }
         }
 
         n.last_accessed = now();
@@ -412,7 +434,7 @@ export class Cortex {
     // Preferences are never emitted: they are the field most likely to hold a
     // key and the least likely to be worth sharing.
     if (emitir) await this.emit(final.id, emitir);
-    return { neuron: final, action, superseded, redacted: limpio.found };
+    return { neuron: final, action, superseded, supersedes_unmatched: supersedesUnmatched, redacted: limpio.found };
   }
 
   /**
@@ -428,23 +450,26 @@ export class Cortex {
     neuronRef: string,
     targets: string[],
     options?: { status?: FactStatus; note?: string; replacedBy?: string }
-  ): Promise<{ neuron: Neuron | null; revised: number }> {
+  ): Promise<{ neuron: Neuron | null; revised: number; unmatched: string[] }> {
     const neuron =
       (await this.peek(neuronRef)) || (await this.findByName(neuronRef));
-    if (!neuron) return { neuron: null, revised: 0 };
+    if (!neuron) return { neuron: null, revised: 0, unmatched: targets.slice() };
 
     let revised = 0;
+    let unmatched: string[] = targets.slice();
     const actualizada = await updateJSON<Neuron>(
       this.brain.paths.neuron(neuron.id),
       current => {
         const n = current || neuron;
-        revised = this.retire(
+        const retirado = this.retire(
           n,
           targets,
           options?.replacedBy,
           options?.status || 'superseded',
           options?.note
         );
+        revised = retirado.count;
+        unmatched = retirado.unmatched;
         if (revised === 0) return null;
         n.last_accessed = now();
         return n;
@@ -467,28 +492,37 @@ export class Cortex {
       }
     }
 
-    return { neuron: (actualizada || neuron) as Neuron, revised };
+    return { neuron: (actualizada || neuron) as Neuron, revised, unmatched };
   }
 
-  /** Flip matching facts to a non-active status. Returns how many changed. */
+  /**
+   * Flip matching facts to a non-active status.
+   *
+   * Also reports which targets matched nothing. Callers pass free text, and
+   * a miss used to be indistinguishable from a hit: `supersedes` returned 0
+   * without a word, the writer walked away believing the old version was
+   * retired, and both versions kept surfacing on recall as equals.
+   */
   private retire(
     neuron: Neuron,
     targets: string[],
     replacedBy: string | undefined,
     status: FactStatus,
     note?: string
-  ): number {
+  ): { count: number; unmatched: string[] } {
     let count = 0;
     const wanted = targets.map(t => t.trim().toLowerCase());
+    const hit = new Set<number>();
 
     for (const fact of neuron.facts) {
       if (fact.status === 'superseded' || fact.status === 'retracted') continue;
 
       const fid = fact.id || factId(fact.text);
-      const matches =
-        wanted.includes(fid.toLowerCase()) ||
-        wanted.includes(fact.text.trim().toLowerCase());
-      if (!matches) continue;
+      const idPos = wanted.indexOf(fid.toLowerCase());
+      const textPos = wanted.indexOf(fact.text.trim().toLowerCase());
+      if (idPos === -1 && textPos === -1) continue;
+      if (idPos !== -1) hit.add(idPos);
+      if (textPos !== -1) hit.add(textPos);
 
       fact.id = fid;
       fact.status = status;
@@ -497,7 +531,60 @@ export class Cortex {
       if (note) fact.revision_note = note;
       count++;
     }
-    return count;
+
+    return { count, unmatched: targets.filter((_, i) => !hit.has(i)) };
+  }
+
+  /**
+   * Replace the neuron's system map.
+   *
+   * Whole-document semantics on purpose: a map that can only be appended to
+   * rots the same way facts did — old directions never die. The writer reads
+   * the current map, rewrites it, and stores the new truth. Credentials are
+   * redacted exactly as in learn.
+   */
+  async setMap(
+    neuronRef: string,
+    content: string,
+    options?: { domain?: string; neuronType?: NeuronType }
+  ): Promise<{ neuron: Neuron | null; action: 'created' | 'updated'; redacted: string[] }> {
+    const limpio = redact(content);
+    content = limpio.text;
+
+    // peek first, findByName second — the same order as revise and forget.
+    // The other way round, an exact neuron id could land on a near-miss whose
+    // prefix-stripped id matches first, and the map would be written to one
+    // neuron while every reader resolves the other.
+    let neuron = (await this.peek(neuronRef)) || (await this.findByName(neuronRef));
+    let action: 'created' | 'updated' = 'updated';
+    if (!neuron) {
+      const nType = options?.neuronType || inferNeuronType(neuronRef);
+      neuron = await this.create(neuronRef, nType, options?.domain || 'general');
+      action = 'created';
+    }
+
+    const cuando = now();
+    const vaciar = content.trim() === '';
+    const actualizada = await updateJSON<Neuron>(
+      this.brain.paths.neuron(neuron.id),
+      current => {
+        const n = current || neuron!;
+        // An empty map is not a map: writing '' clears it outright, so the
+        // reader never meets a document that exists but says nothing.
+        if (vaciar) delete n.map;
+        else n.map = { text: content, updated: cuando };
+        n.last_accessed = cuando;
+        n.access_count = (n.access_count || 0) + 1;
+        return n;
+      }
+    );
+
+    const final = (actualizada || neuron) as Neuron;
+    await this.reindex(final);
+    // Clearing emits too: an empty map op is the tombstone that wins the LWW
+    // on every machine, so a stale copy cannot resurrect the cleared map.
+    await this.emit(final.id, { kind: 'map', text: vaciar ? '' : content, at: cuando });
+    return { neuron: final, action, redacted: limpio.found };
   }
 
   /**
@@ -630,17 +717,50 @@ export class Cortex {
       current.preferences = current.preferences.filter(
         p => !wanted.includes((p || '').trim().toLowerCase())
       );
+      const erroresAntes = (current.errors || []).length;
+      if (current.errors) {
+        current.errors = current.errors.filter(
+          e => !wanted.includes((e || '').trim().toLowerCase())
+        );
+      }
+      let mapaBorrado = 0;
+      if (current.map && wanted.includes(current.map.text.trim().toLowerCase())) {
+        delete current.map;
+        mapaBorrado = 1;
+      }
 
       removed = antes - (
         current.facts.length + current.decisions.length +
         current.patterns.length + current.preferences.length
-      );
+      ) + (erroresAntes - (current.errors || []).length) + mapaBorrado;
       if (removed === 0) return null;
       current.last_accessed = now();
       return current;
     });
 
-    if (removed > 0 && after) await this.reindex(after);
+    if (removed > 0 && after) {
+      await this.reindex(after);
+      // The removal must travel, or the next sync resurrects from the team
+      // log exactly what the user asked to destroy. Facts retract (status
+      // only moves forward, so a stale copy cannot revive them); errors get
+      // a purge op keyed by content hash; a cleared map emits the empty-map
+      // tombstone that wins the LWW. The emitter no-ops on unshared neurons.
+      const cuando = now();
+      for (const f of found.facts || []) {
+        const fid = (f.id || factId(f.text)).toLowerCase();
+        if (wanted.includes(fid) || wanted.includes(f.text.trim().toLowerCase())) {
+          await this.emit(found.id, { kind: 'status', fid: f.id || factId(f.text), to: 'retracted', at: cuando, why: 'forgotten' });
+        }
+      }
+      for (const e of found.errors || []) {
+        if (wanted.includes((e || '').trim().toLowerCase())) {
+          await this.emit(found.id, { kind: 'error_purge', key: entryId(e), at: cuando });
+        }
+      }
+      if (found.map && wanted.includes(found.map.text.trim().toLowerCase())) {
+        await this.emit(found.id, { kind: 'map', text: '', at: cuando });
+      }
+    }
     return { neuron_id: found.id, removed, backup: removed > 0 ? backup : null };
   }
 
@@ -656,10 +776,13 @@ export class Cortex {
     decisions: number;
     patterns: number;
     preferences: number;
+    errors: number;
+    map: number;
   }>> {
     const out: Array<{
       neuron_id: string; name: string; kinds: string[];
       facts: number; decisions: number; patterns: number; preferences: number;
+      errors: number; map: number;
     }> = [];
 
     for (const id of await listJSONFiles(this.brain.paths.cortex)) {
@@ -686,11 +809,14 @@ export class Cortex {
       const decisions = contar((n.decisions || []).map(d => d.text));
       const patterns = contar(n.patterns || []);
       const preferences = contar(n.preferences || []);
+      const errors = contar(n.errors || []);
+      const mapa = contar(n.map?.text ? [n.map.text] : []);
 
-      if (facts + decisions + patterns + preferences > 0) {
+      if (facts + decisions + patterns + preferences + errors + mapa > 0) {
         out.push({
           neuron_id: n.id, name: n.name, kinds: [...kinds],
           facts, decisions, patterns, preferences,
+          errors, map: mapa,
         });
       }
     }

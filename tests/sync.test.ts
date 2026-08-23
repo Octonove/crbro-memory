@@ -308,4 +308,99 @@ describe.skipIf(!hayGit)('two brains, one repository', () => {
     );
     expect(logs).not.toContain('La API key de ejemplo vive aqui');
   }, 120_000);
+
+  it('the share backfill carries errors and map written BEFORE sharing', async () => {
+    // Lo aprendido antes de compartir viaja en el backfill de neuronOps.
+    // Sin esto, el primer share de una neurona con historia dejaba fuera
+    // su mapa y su registro de errores para siempre.
+    await ana.cortex.learn('Proyecto Equipo', 'fact', 'Punto de partida.');
+    await ana.cortex.setMap('project_proyecto_equipo', 'MAPA: vive en /srv y lo sirve systemd.');
+    await ana.cortex.learn('Proyecto Equipo', 'error', 'ERROR: A. CORRECCION: B.');
+
+    await createSpace(ana.brain, 'equipo', remoto, 'ana');
+    const prep = await prepareShare(ana.brain, ana.cortex, 'project_proyecto_equipo', 'equipo');
+    if ('error' in prep) throw new Error(prep.error);
+    await commitShare(ana.brain, ana.cortex, 'project_proyecto_equipo', 'equipo', prep.confirm_token!);
+    await syncSpaceNow(ana.brain, ana.cortex, 'equipo');
+
+    await joinSpace(bruno.brain, 'equipo', remoto, 'bruno');
+    await syncSpaceNow(bruno.brain, bruno.cortex, 'equipo');
+
+    const suyo = await bruno.cortex.peek('project_proyecto_equipo');
+    expect(suyo!.map?.text).toContain('/srv');
+    expect(suyo!.errors || []).toHaveLength(1);
+  }, 120_000);
+
+  it('a credential hiding in the map blocks the share', async () => {
+    await ana.cortex.learn('Proyecto Equipo', 'fact', 'Punto de partida.');
+    await createSpace(ana.brain, 'equipo', remoto, 'ana');
+    // Directo al fichero, como haria un cliente antiguo o una edicion a mano:
+    // el escaner del share tiene que pillarlo aunque la redaccion no corriera.
+    const n = (await ana.cortex.peek('project_proyecto_equipo'))!;
+    n.map = { text: 'MAPA: el CI usa la clave AIzaSyC3xK9mP2qR7tV4wX1yZ8aB5cD6eF7gH8i para deploy.',
+              updated: new Date().toISOString() };
+    await fs.writeFile(ana.brain.paths.neuron(n.id), JSON.stringify(n), 'utf-8');
+
+    const prep = await prepareShare(ana.brain, ana.cortex, n.id, 'equipo');
+    if ('error' in prep) throw new Error(prep.error);
+    expect(prep.blocked.some(b => b.where === 'map')).toBe(true);
+    expect(prep.confirm_token).toBeUndefined();
+  }, 120_000);
+
+  it('a forgotten error stays forgotten after the next sync', async () => {
+    const err = 'ERROR: use la clave en claro. CORRECCION: a la boveda.';
+    await ana.cortex.learn('Proyecto Equipo', 'fact', 'Punto de partida.');
+    await createSpace(ana.brain, 'equipo', remoto, 'ana');
+    const prep = await prepareShare(ana.brain, ana.cortex, 'project_proyecto_equipo', 'equipo');
+    if ('error' in prep) throw new Error(prep.error);
+    await commitShare(ana.brain, ana.cortex, 'project_proyecto_equipo', 'equipo', prep.confirm_token!);
+    await ana.cortex.learn('Proyecto Equipo', 'error', err);   // emitido al log
+    await syncSpaceNow(ana.brain, ana.cortex, 'equipo');
+
+    // Ana lo olvida; la purga viaja; el siguiente sync NO lo resucita.
+    await ana.cortex.forget('project_proyecto_equipo', [err]);
+    await syncSpaceNow(ana.brain, ana.cortex, 'equipo');
+    const tras = await ana.cortex.peek('project_proyecto_equipo');
+    expect(tras!.errors || []).toHaveLength(0);
+
+    // Y Bruno, que ve el log completo, tampoco lo materializa.
+    await joinSpace(bruno.brain, 'equipo', remoto, 'bruno');
+    await syncSpaceNow(bruno.brain, bruno.cortex, 'equipo');
+    const suyo = await bruno.cortex.peek('project_proyecto_equipo');
+    expect(suyo!.errors || []).toHaveLength(0);
+  }, 120_000);
+
+  it('carries the system map and the error ledger, and the newest map wins', async () => {
+    await ana.cortex.learn('Proyecto Equipo', 'fact', 'Punto de partida.');
+    await createSpace(ana.brain, 'equipo', remoto, 'ana');
+    const prep = await prepareShare(ana.brain, ana.cortex, 'project_proyecto_equipo', 'equipo');
+    if ('error' in prep) throw new Error(prep.error);
+    await commitShare(ana.brain, ana.cortex, 'project_proyecto_equipo', 'equipo', prep.confirm_token!);
+
+    // Ana writes the map and an error AFTER sharing, so they emit as ops.
+    await ana.cortex.setMap('project_proyecto_equipo',
+      'MAPA: la API vive en /srv/api y la sirve systemd; el deploy es git pull + restart.');
+    await ana.cortex.learn('Proyecto Equipo', 'error',
+      'ERROR: reinicie el servicio sin drenar. CORRECCION: systemctl reload, nunca restart en horario.');
+    await syncSpaceNow(ana.brain, ana.cortex, 'equipo');
+
+    await joinSpace(bruno.brain, 'equipo', remoto, 'bruno');
+    await syncSpaceNow(bruno.brain, bruno.cortex, 'equipo');
+
+    const suyo = await bruno.cortex.peek('project_proyecto_equipo');
+    expect(suyo).not.toBeNull();
+    expect(suyo!.map?.text).toContain('/srv/api');
+    expect(suyo!.errors || []).toHaveLength(1);
+    expect((suyo!.errors || [])[0]).toContain('drenar');
+
+    // Bruno rewrites the map; after a round-trip Ana holds Bruno's version.
+    await bruno.cortex.setMap('project_proyecto_equipo',
+      'MAPA: la API vive en /srv/api, systemd, y desde agosto el deploy va por CI.');
+    await syncSpaceNow(bruno.brain, bruno.cortex, 'equipo');
+    await syncSpaceNow(ana.brain, ana.cortex, 'equipo');
+
+    const deAna = await ana.cortex.peek('project_proyecto_equipo');
+    expect(deAna!.map?.text).toContain('desde agosto el deploy va por CI');
+    expect(deAna!.map?.by).toBe('bruno');
+  }, 120_000);
 });

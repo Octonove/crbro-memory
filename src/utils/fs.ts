@@ -33,7 +33,12 @@ export async function writeJSON<T>(
   const dir = path.dirname(filePath);
   await fs.mkdir(dir, { recursive: true });
 
-  const tempPath = `${filePath}.tmp`;
+  // The temp name carries the pid plus a nonce: with a fixed name, two
+  // processes writing the same file (three MCP servers share one brain on
+  // the reference machine) could interleave writeFile calls on one temp
+  // file and rename a torn JSON into place. Each writer now renames only
+  // bytes it wrote entirely; last-writer-wins stays, corruption goes.
+  const tempPath = `${filePath}.${process.pid}.${Math.random().toString(36).slice(2, 8)}.tmp`;
   // Pretty by default: these files are meant to be read and diffed by humans.
   // The search index opts out — it reaches tens of MB and nobody reads it.
   const content = options?.pretty === false
@@ -41,7 +46,14 @@ export async function writeJSON<T>(
     : JSON.stringify(data, null, 2);
 
   await fs.writeFile(tempPath, content, 'utf-8');
-  await fs.rename(tempPath, filePath);
+  try {
+    await fs.rename(tempPath, filePath);
+  } catch (err) {
+    // Windows can refuse the rename while another process holds the target
+    // open. Leaving the temp file behind would litter the brain forever.
+    await fs.unlink(tempPath).catch(() => {});
+    throw err;
+  }
 }
 
 /**

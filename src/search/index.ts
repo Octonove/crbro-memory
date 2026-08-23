@@ -22,8 +22,14 @@ import { queryTerms, variants } from './tokenize.js';
 import type { Brain } from '../engine/brain.js';
 import type { Neuron, SearchResult, Fact } from '../types/index.js';
 
-/** Bump when the schema changes so old on-disk indexes are rebuilt, not loaded. */
-export const INDEX_VERSION = 2;
+/**
+ * Bump when the schema changes so old on-disk indexes are rebuilt, not loaded.
+ * v3: chunk removal used to rely on an Orama `where` filter that silently
+ * matched nothing, so every index built before it carries chunks for facts
+ * that were later revised or forgotten. The bump forces those poisoned
+ * indexes to rebuild once, which heals them.
+ */
+export const INDEX_VERSION = 3;
 
 /** Weight given to a neuron for each *additional* chunk that matches. */
 const BREADTH_BONUS = 0.05;
@@ -69,6 +75,16 @@ export class SearchEngine {
   private dirty = false;
   private persistTimer: NodeJS.Timeout | null = null;
 
+  /**
+   * Which chunk ids belong to which neuron. Removal used to ask Orama for
+   * them with a `where` filter on a plain string field — a query that
+   * returns nothing, silently, so "re-index this neuron" never removed a
+   * thing and revised facts kept surfacing in recall (observed live: the
+   * retired version of a fact outranking its own correction). We are the
+   * ones inserting every chunk, so we simply remember what we inserted.
+   */
+  private chunksByNeuron = new Map<string, Set<string>>();
+
   constructor(private brain: Brain) {}
 
   // ─── Lifecycle ─────────────────────────────────────────────────
@@ -92,7 +108,9 @@ export class SearchEngine {
           this.db = create({ schema: SCHEMA });
           load(this.db, stored.data);
           this.docCount = this.countDocs(stored.data);
-          return;
+          if (this.recoverChunkMap(stored.data)) return;
+          // Could not tell which chunk belongs to which neuron — without
+          // that, removal is blind, so a rebuild is the only safe answer.
         }
       } catch {
         // Corrupted — fall through to rebuild.
@@ -130,6 +148,7 @@ export class SearchEngine {
   async rebuild(): Promise<number> {
     this.db = create({ schema: SCHEMA });
     this.docCount = 0;
+    this.chunksByNeuron.clear();
 
     const ids = await listJSONFiles(this.brain.paths.cortex);
 
@@ -236,40 +255,118 @@ export class SearchEngine {
 
     if (perChunk.size === 0) return [];
 
-    // Coverage weighting, then collapse chunks into their neurons.
-    const byNeuron = new Map<string, { best: ChunkHit; extra: number }>();
+    // Coverage weighting, then group chunks by neuron, best first.
+    const byNeuron = new Map<string, ChunkHit[]>();
 
     for (const chunk of perChunk.values()) {
       const coverage = chunk.matched / terms.length;
       chunk.score = chunk.score * Math.pow(coverage, COVERAGE_EXPONENT);
-
-      const current = byNeuron.get(chunk.neuron);
-      if (!current) {
-        byNeuron.set(chunk.neuron, { best: chunk, extra: 0 });
-      } else if (chunk.score > current.best.score) {
-        byNeuron.set(chunk.neuron, { best: chunk, extra: current.extra + 1 });
-      } else {
-        current.extra += 1;
-      }
+      const list = byNeuron.get(chunk.neuron);
+      if (list) list.push(chunk);
+      else byNeuron.set(chunk.neuron, [chunk]);
     }
+    for (const list of byNeuron.values()) list.sort((a, b) => b.score - a.score);
 
-    const results: SearchResult[] = [];
-    for (const { best, extra } of byNeuron.values()) {
-      const breadth = Math.min(extra * BREADTH_BONUS, BREADTH_CAP);
-      results.push({
-        neuron_id: best.neuron,
-        name: best.name,
-        domain: best.domain,
-        relevance_score: Math.round((best.score + breadth) * 1000) / 1000,
-        matching_content: best.text,
-        matched_kind: best.kind,
-        matched_added: best.added || '',
-        heat: best.heat,
+    return this.materializeResults([...byNeuron.values()], limit);
+  }
+
+  /**
+   * Turn per-neuron chunk lists into results, validating each chunk against
+   * the neuron on disk before serving it.
+   *
+   * Two failures end here. An index can carry chunks for knowledge that was
+   * revised, forgotten or rewritten (pre-v3 indexes; a second writer; a lost
+   * flush) — and serving a retired fact is the one failure a memory system
+   * must not have, since the wrong version tends to outrank its own
+   * correction. And a neuron whose BEST chunk went stale must not vanish
+   * from the answer while it still holds live knowledge that matched: we
+   * fall back to its next valid chunk instead. Stale neurons are quietly
+   * re-indexed; chunks of deleted neurons are removed on the spot.
+   */
+  private async materializeResults(
+    porNeurona: ChunkHit[][],
+    limit: number
+  ): Promise<SearchResult[]> {
+    // Only the plausible head pays the neuron reads: nothing below it could
+    // reach the answer even if everything above dropped out.
+    porNeurona.sort((a, b) => b[0].score - a[0].score);
+    const candidatos = porNeurona.slice(0, Math.max(limit * 3, limit + 8));
+
+    const resultados: SearchResult[] = [];
+
+    for (const chunks of candidatos) {
+      const neuronId = chunks[0].neuron;
+      let neuron: Neuron | null = null;
+      let legible = true;
+      try {
+        neuron = await readJSON<Neuron>(this.brain.paths.neuron(neuronId));
+      } catch {
+        legible = false;   // exists but unreadable — never censor on that
+      }
+
+      if (legible && neuron === null) {
+        // The neuron is gone; its chunks are litter. Sweep and move on.
+        await this.removeNeuronChunks(neuronId);
+        this.markDirty();
+        continue;
+      }
+
+      let elegido: ChunkHit | null = null;
+      let huboRancio = false;
+      for (const chunk of chunks) {
+        if (!legible || neuron === null || this.chunkVive(chunk, neuron)) {
+          elegido = chunk;
+          break;
+        }
+        huboRancio = true;
+      }
+
+      if (huboRancio && neuron) {
+        // Heal in the background, never block recall.
+        void this.indexNeuron(neuron).catch(() => { /* best effort */ });
+      }
+      if (!elegido) continue;
+
+      const breadth = Math.min((chunks.length - 1) * BREADTH_BONUS, BREADTH_CAP);
+      resultados.push({
+        neuron_id: elegido.neuron,
+        name: elegido.name,
+        domain: elegido.domain,
+        relevance_score: Math.round((elegido.score + breadth) * 1000) / 1000,
+        matching_content: elegido.text,
+        matched_kind: elegido.kind,
+        matched_added: elegido.added || '',
+        heat: elegido.heat,
+        ...(neuron?.map?.text ? { has_map: true } : {}),
       });
     }
 
-    results.sort((a, b) => b.relevance_score - a.relevance_score);
-    return results.slice(0, limit);
+    resultados.sort((a, b) => b.relevance_score - a.relevance_score);
+    return resultados.slice(0, limit);
+  }
+
+  /** Does the chunk still describe something the neuron holds as current? */
+  private chunkVive(chunk: ChunkHit, neuron: Neuron): boolean {
+    switch (chunk.kind) {
+      case 'fact':
+        return (neuron.facts || []).some(f => !isRetired(f) && f.text === chunk.text);
+      case 'error':
+        return (neuron.errors || []).includes(chunk.text);
+      case 'map':
+        return neuron.map?.text === chunk.text;
+      case 'pattern':
+        return (neuron.patterns || []).includes(chunk.text);
+      case 'preference':
+        return (neuron.preferences || []).includes(chunk.text);
+      case 'decision':
+        return (neuron.decisions || []).some(d => {
+          const texto = d.rationale ? `${d.text} — ${d.rationale}` : d.text;
+          return texto === chunk.text;
+        });
+      default:
+        // Headers describe the neuron itself; identity, not content.
+        return true;
+    }
   }
 
   // ─── Internals ─────────────────────────────────────────────────
@@ -289,9 +386,12 @@ export class SearchEngine {
         limit: Math.max(this.docCount, 10),
         tolerance,
       };
-      if (domain) params.where = { domain: { eq: domain } };
       const res = await search(this.db as AnyOrama, params);
-      return res.hits as any[];
+      const hits = res.hits as any[];
+      // Filtered here, not with an Orama `where` clause: a `where` on a
+      // plain string field matches nothing at all, so the old code turned
+      // every domain-scoped recall into zero results (measured).
+      return domain ? hits.filter(h => (h.document as any).domain === domain) : hits;
     };
 
     let hits = await run(0);
@@ -391,6 +491,27 @@ export class SearchEngine {
         added: '',
       });
     }
+
+    for (const err of neuron.errors || []) {
+      if (!err) continue;
+      await this.put({
+        ...base,
+        id: chunkId(neuron.id, `error:${err}`),
+        text: err,
+        kind: 'error',
+        added: '',
+      });
+    }
+
+    if (neuron.map && neuron.map.text) {
+      await this.put({
+        ...base,
+        id: chunkId(neuron.id, `map:${neuron.map.text}`),
+        text: neuron.map.text,
+        kind: 'map',
+        added: neuron.map.updated || '',
+      });
+    }
   }
 
   private async put(doc: Record<string, unknown>): Promise<void> {
@@ -400,27 +521,65 @@ export class SearchEngine {
     } catch {
       // Duplicate id (identical text twice in one neuron) — nothing to add.
     }
+    // Registered even on duplicate: the id is in the index either way, and
+    // an unregistered chunk is one that removal can never reach again.
+    const neuron = String(doc.neuron || '');
+    if (!neuron) return;
+    let ids = this.chunksByNeuron.get(neuron);
+    if (!ids) {
+      ids = new Set<string>();
+      this.chunksByNeuron.set(neuron, ids);
+    }
+    ids.add(String(doc.id));
   }
 
-  /** Drop every chunk belonging to a neuron. */
+  /**
+   * Drop every chunk belonging to a neuron.
+   *
+   * From our own ledger, chunk by chunk — never from an Orama `where`
+   * filter. The old filter (string field, empty term) matched nothing and
+   * threw nothing, so removal reported success while removing zero chunks,
+   * and everything ever revised or forgotten stayed searchable.
+   */
   private async removeNeuronChunks(neuronId: string): Promise<void> {
     if (!this.db) return;
-    try {
-      const res = await search(this.db, {
-        term: '',
-        where: { neuron: { eq: neuronId } } as any,
-        limit: 10000,
-      } as any);
-      for (const hit of res.hits as any[]) {
-        try {
-          await remove(this.db, hit.document.id);
-          this.docCount = Math.max(0, this.docCount - 1);
-        } catch {
-          // Already gone.
-        }
+    const ids = this.chunksByNeuron.get(neuronId);
+    if (!ids) return;
+    for (const id of ids) {
+      try {
+        // remove() returns false (it does not throw) for an absent id, so
+        // the count only moves when a document really left the index.
+        const fuera = await remove(this.db, id);
+        if (fuera) this.docCount = Math.max(0, this.docCount - 1);
+      } catch {
+        // Already gone.
       }
+    }
+    this.chunksByNeuron.delete(neuronId);
+  }
+
+  /**
+   * Rebuild the chunk-ownership ledger from a stored index, so removal keeps
+   * working after a load-from-disk. Returns false when the stored shape is
+   * not what we expect — the caller then falls back to a full rebuild.
+   */
+  private recoverChunkMap(data: RawData): boolean {
+    try {
+      const docs = (data as any)?.docs?.docs;
+      if (!docs || typeof docs !== 'object') return false;
+      this.chunksByNeuron.clear();
+      for (const doc of Object.values(docs) as any[]) {
+        if (!doc || !doc.id || !doc.neuron) continue;
+        let ids = this.chunksByNeuron.get(doc.neuron);
+        if (!ids) {
+          ids = new Set<string>();
+          this.chunksByNeuron.set(doc.neuron, ids);
+        }
+        ids.add(String(doc.id));
+      }
+      return this.chunksByNeuron.size > 0 || this.docCount === 0;
     } catch {
-      // `where` on a non-filterable field, or empty index — ignore.
+      return false;
     }
   }
 
