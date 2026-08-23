@@ -2,6 +2,22 @@
 
 All notable changes to CRBRO.
 
+## [1.9.1] — 2026-08-23
+
+### Fixed
+
+- **`Brain.initialize()` zeroed a living brain.** It overwrote the manifest
+  and the prefrontal files unconditionally — and it is public API, the
+  documented first call for any script using the engine directly. Two
+  maintenance scripts did exactly that on the reference brain and its next
+  boot reported 0 neurons while 1,186 sat intact on disk. `initialize()` is
+  now idempotent: an existing brain is returned as found, and only missing
+  pieces are created.
+- **Boot self-heals the counters.** The manifest is derived data; the cortex
+  on disk is the truth. Boot now recounts neurons, synapses and sessions
+  from the directory listings and corrects the manifest when they disagree,
+  so this whole class of damage fixes itself on the next start.
+
 ## [1.9.0] — 2026-08-23
 
 ### Fixed — a correction now actually corrects
