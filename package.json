@@ -1,6 +1,6 @@
 {
   "name": "crbro-memory",
-  "version": "1.9.1",
+  "version": "1.10.0",
   "mcpName": "io.github.Octonove/crbro-memory",
   "description": "CRBRO — Persistent neural memory for AI. A biological file-based MCP server that gives your AI long-term memory across sessions.",
   "main": "dist/index.js",

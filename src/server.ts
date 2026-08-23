@@ -186,7 +186,7 @@ export function createServer(): McpServer {
   // ═══════════════════════════════════════════════════════════════
   server.tool(
     'crbro_learn',
-    'Teach the brain a fact, decision, pattern, preference or error about a topic. If the neuron (topic) does not exist, it will be created automatically. Use this to store knowledge that should persist across sessions. Type `error` is for a mistake you made and how it was corrected - store both halves in one entry, and check for them with crbro_recall before repeating a task where you have slipped before. If this replaces something you stored before, pass `supersedes` - otherwise the old version stays exactly as valid as the new one and both keep coming back on recall.',
+    'Teach the brain a fact, decision, pattern, preference or error about a topic. If the neuron (topic) does not exist, it will be created automatically. Use this to store knowledge that should persist across sessions. BEFORE saving, walk the ladder: does this already exist (crbro_recall first)? does it update something (pass `supersedes`, do not add a sibling)? is it structure rather than an event (crbro_map, not a fact)? is it derivable from the repo or git history (then do not store it)? and would it survive losing half its words (then cut them - every word should carry weight)? Type `error` is for a mistake you made and how it was corrected - store both halves in one entry, and check for them with crbro_recall before repeating a task where you have slipped before. If the new fact closely resembles an active one, the response warns with `near_duplicates` - it is stored anyway, but retire the old telling or two versions keep coming back on recall as equals.',
     {
       topic: z.string().describe('The topic name (e.g., "OctoChat", "Firebase", "SEO Strategy")'),
       type: z.enum(['fact', 'decision', 'pattern', 'preference', 'error']).describe('Type of knowledge to store. `error` = a mistake plus its correction, kept as a ledger you can check before repeating the task.'),
@@ -225,6 +225,15 @@ export function createServer(): McpServer {
               neuron_id: result.neuron.id,
               action: result.action,
               superseded_facts: result.superseded,
+              near_duplicates: result.near_duplicates.length > 0
+                ? result.near_duplicates
+                : undefined,
+              near_duplicates_warning: result.near_duplicates.length > 0
+                ? 'Stored, but this closely resembles the fact(s) listed above. If this is ' +
+                  'a newer telling of the same thing, retire the old one: pass its id in ' +
+                  '`supersedes` next time, or crbro_revise it now. Two versions of one fact ' +
+                  'keep competing on recall as equals.'
+                : undefined,
               supersedes_unmatched: result.supersedes_unmatched.length > 0
                 ? result.supersedes_unmatched
                 : undefined,

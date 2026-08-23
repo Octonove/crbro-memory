@@ -11,6 +11,15 @@ import type { Neuron, NeuronType, Fact, Decision, FactStatus } from '../types/in
 
 const TYPE_PREFIX_RE = /^(project_|tech_|lang_|person_|domain_|process_|protocol_)/;
 
+/**
+ * Similarity above which a new fact is flagged as a near-duplicate of one
+ * already in the neuron. Warn-only, never merge: blind similarity is how
+ * "sprint_2" and "sprint_3" become one thing. Below 60 characters the
+ * bigram signal is noise, so short facts are left to the exact-dup check.
+ */
+const NEAR_DUP_THRESHOLD = 0.8;
+const NEAR_DUP_MIN_LENGTH = 60;
+
 /** Minimum similarity before we accept a near-miss as "the same topic". */
 const NAME_MATCH_THRESHOLD = 0.85;
 
@@ -311,6 +320,13 @@ export class Cortex {
     superseded: number;
     /** Supersedes targets that matched no active fact — a silent miss no more. */
     supersedes_unmatched: string[];
+    /**
+     * Active facts this one closely resembles (Dice ≥ 0.8). The fact is
+     * stored anyway — the brain never refuses knowledge — but the caller is
+     * told, so it can retire the older telling with supersedes/revise
+     * instead of leaving two versions competing on recall.
+     */
+    near_duplicates: Array<{ id: string; similarity: number; preview: string }>;
     redacted: string[];
   }> {
     // Credentials never make it to disk. The sentence around them survives, so
@@ -331,7 +347,7 @@ export class Cortex {
 
     if (!neuron) {
       if (options?.createIfMissing === false) {
-        return { neuron: null, action: 'skipped', superseded: 0, supersedes_unmatched: options?.supersedes || [], redacted: limpio.found };
+        return { neuron: null, action: 'skipped', superseded: 0, supersedes_unmatched: options?.supersedes || [], near_duplicates: [], redacted: limpio.found };
       }
       const nType = options?.neuronType || inferNeuronType(topic);
       const domain = options?.domain || 'general';
@@ -344,6 +360,7 @@ export class Cortex {
     // whole block, and warning "still live" about targets nobody touched is
     // a false alarm on every idempotent retry.
     let supersedesUnmatched: string[] = [];
+    let nearDuplicates: Array<{ id: string; similarity: number; preview: string }> = [];
     let emitir: Parameters<Emitter>[1] | null = null;
 
     // From here on we work on a fresh read inside the lock. Mutating the copy
@@ -366,6 +383,11 @@ export class Cortex {
                 superseded = retirado.count;
                 supersedesUnmatched = retirado.unmatched;
               }
+              // Near-duplicate check, against what will still be active
+              // AFTER supersedes ran — retiring the old telling is exactly
+              // the fix this warning exists to suggest, so a properly
+              // superseded fact must not re-trigger it.
+              nearDuplicates = this.findNearDuplicates(n, content);
               const fact: Fact = {
                 text: content,
                 confidence: options?.confidence ?? 1.0,
@@ -434,7 +456,7 @@ export class Cortex {
     // Preferences are never emitted: they are the field most likely to hold a
     // key and the least likely to be worth sharing.
     if (emitir) await this.emit(final.id, emitir);
-    return { neuron: final, action, superseded, supersedes_unmatched: supersedesUnmatched, redacted: limpio.found };
+    return { neuron: final, action, superseded, supersedes_unmatched: supersedesUnmatched, near_duplicates: nearDuplicates, redacted: limpio.found };
   }
 
   /**
@@ -493,6 +515,42 @@ export class Cortex {
     }
 
     return { neuron: (actualizada || neuron) as Neuron, revised, unmatched };
+  }
+
+  /**
+   * Which active facts does this text closely resemble?
+   *
+   * Warn-only by design. Measured on the reference brain: the heaviest
+   * neuron held 293 facts with 1,407 near-duplicate pairs — session
+   * summaries retelling the same thing with variations, each version as
+   * loud as the others on recall. The fix is the writer retiring the old
+   * telling, never the engine merging on its own.
+   */
+  private findNearDuplicates(
+    neuron: Neuron,
+    content: string
+  ): Array<{ id: string; similarity: number; preview: string }> {
+    if (content.length < NEAR_DUP_MIN_LENGTH) return [];
+    const nuevo = content.toLowerCase();
+    const out: Array<{ id: string; similarity: number; preview: string }> = [];
+
+    for (const fact of neuron.facts) {
+      if (fact.status === 'superseded' || fact.status === 'retracted') continue;
+      if (!fact.text || fact.text.length < NEAR_DUP_MIN_LENGTH) continue;
+      if (fact.text === content) continue;   // the new fact itself, already pushed
+
+      const score = similarity(nuevo, fact.text.toLowerCase());
+      if (score >= NEAR_DUP_THRESHOLD) {
+        out.push({
+          id: fact.id || factId(fact.text),
+          similarity: Math.round(score * 100) / 100,
+          preview: fact.text.slice(0, 120),
+        });
+      }
+    }
+
+    out.sort((a, b) => b.similarity - a.similarity);
+    return out.slice(0, 5);
   }
 
   /**
