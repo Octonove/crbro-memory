@@ -68,6 +68,13 @@ const INOCENTES = [
   'el bucket se llama simplifica-backups-eu y guarda 30 días',
   'password reset: el enlace caduca en 24 horas (texto de un email de plantilla)',
   'el número de pedido es 6634 y llegó con 9 creativos de Meta',
+  // Cebos para los patrones añadidos tras la primera corrida: cada uno roza
+  // la forma de un patrón nuevo sin ser un secreto.
+  'la clave del éxito es la constancia y el enfoque en el cliente',
+  'el secret access key está guardado en la bóveda DPAPI, no aquí',
+  'el secret key vive en el fichero /etc/ssl/private/server.pem del VPS',
+  'el token empieza por gh y sigue con el resto que te dije por teléfono',
+  'auth token caducado desde marzo, renuévalo en el panel de Twilio',
 ];
 
 let cazados = 0; const fallidos = [];

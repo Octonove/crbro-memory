@@ -2,6 +2,30 @@
 
 All notable changes to CRBRO.
 
+## [1.11.1] — 2026-08-24
+
+### Fixed — the four known misses, closed
+
+The 1.11.0 security benchmark shipped listing four credential shapes the
+filter let through. All four are now caught, each with an anchored,
+unambiguous pattern and a near-miss innocent added to the benchmark to prove
+it does not overfire: AWS secret keys stated in prose (exactly 40 base64
+chars, mixed case + digit required), Spanish prose passwords with a qualifier
+("la contraseña de X es ..."), credentials dictated in two pieces ("empieza
+por ... y sigue con ..."), and Twilio SIDs/auth tokens. Capture: 45% → 80% →
+**100% on the frozen adversarial set**, still 0% false positives (19
+innocents). A frozen-set 100% is a floor, not a guarantee — the set grows.
+
+### Docs
+
+- README now leads with the measured numbers — including the unflattering
+  ones (recall@3 69%, ~753 boot tokens) — plus the features 1.9–1.11 added
+  (living maps, error ledger, debt ledger, subagent hook) and the corrected
+  tool count (23).
+- Two retrieval folds (participle gender, verb person) were tried against the
+  blind benchmark: one changed nothing, one made recall worse. Neither ships;
+  the ablation is documented in `tokenize.ts` so nobody retries it blind.
+
 ## [1.11.0] — 2026-08-24
 
 ### Added — deliberate deferrals, and integrity for subagents

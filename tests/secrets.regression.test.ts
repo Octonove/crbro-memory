@@ -43,3 +43,39 @@ describe('generic API key/secret does not swallow filesystem paths', () => {
     expect(secretKinds('api_key=9f8e7d6c5b4a39281706f5e4d3c2b1a0abcd')).toContain('generic API key/secret');
   });
 });
+
+describe('the four misses from the first security benchmark, now caught', () => {
+  it('AWS secret key stated in prose (40 base64 chars, mixed case + digit)', () => {
+    expect(secretKinds('el secret access key vale wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY'))
+      .toContain('AWS secret key');
+  });
+  it('but not a label with no value, nor a path after the label', () => {
+    expect(secretKinds('el secret access key está guardado en la bóveda DPAPI')).toEqual([]);
+    expect(secretKinds('el secret key vive en /etc/ssl/private/server.pem del VPS')).toEqual([]);
+  });
+
+  it('Spanish prose password with a qualifier between label and copula', () => {
+    expect(secretKinds('la contraseña de WP-Admin es Muñoz2024$Reformas! no la pierdas'))
+      .toContain('password (prose)');
+  });
+  it('but not a qualified phrase with no digit in the value', () => {
+    expect(secretKinds('la clave del éxito es la constancia y el enfoque')).toEqual([]);
+  });
+
+  it('a credential dictated in two pieces', () => {
+    expect(secretKinds('el token empieza por ghp_ y sigue con 1234567890abcdefghijklmnopqrstuvwxyzAB'))
+      .toContain('split credential');
+  });
+  it('but not prose about where something begins, with no token tail', () => {
+    expect(secretKinds('el token empieza por gh y sigue con el resto que te dije por teléfono')).toEqual([]);
+  });
+
+  it('Twilio SID and a labelled hex auth token', () => {
+    const kinds = secretKinds('ACb1234567890abcdef1234567890abcdef con su auth token 0123456789abcdef0123456789abcdef');
+    expect(kinds).toContain('Twilio account SID');
+    expect(kinds).toContain('auth token (hex)');
+  });
+  it('but not the words "auth token" in ordinary prose', () => {
+    expect(secretKinds('auth token caducado desde marzo, renuévalo en el panel')).toEqual([]);
+  });
+});

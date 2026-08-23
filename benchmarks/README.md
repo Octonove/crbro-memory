@@ -47,23 +47,28 @@ sube mucho; con paráfrasis, esto es lo que hay.
 ## Security — el filtro de redacción
 
 Un **piso, no una prueba** de seguridad (como dice Ponytail de su check
-determinista). 20 credenciales en formas adversariales + 14 textos inocentes
+determinista). 20 credenciales en formas adversariales + 19 textos inocentes
 con pinta de secreto.
 
 | | resultado |
 |---|--:|
-| **captura** | 16/20 (80%) |
-| **falsos positivos** | 0/14 (0%) |
+| **captura** | 20/20 (100%) |
+| **falsos positivos** | 0/19 (0%) |
 
-Los 4 que se colan (secreto suelto sin etiqueta, contraseña con carácter no
-ASCII, secreto partido en dos frases, un par de tokens de proveedor menor) van
-como issues conocidos. La cifra de falsos positivos es la que casi nadie
-publica: un filtro que grita a todo acaba desactivado.
+Un 100% sobre un conjunto CONGELADO es un piso, no una garantía: significa que
+ninguna forma de evasión *conocida* pasa, no que ninguna forma pase. El
+conjunto crece cuando aparece una nueva (y cada patrón nuevo trae consigo sus
+inocentes-cebo: por eso hay 19 y no 14). La cifra de falsos positivos es la que
+casi nadie publica: un filtro que grita a todo acaba desactivado.
 
-> Este mismo benchmark, en su primera ejecución, encontró que el filtro cazaba
-> solo el 45% — dejaba pasar DSN de base de datos, contraseñas en prosa y
-> `API_KEY=`. Se reforzaron los patrones (a 80%) manteniendo el 0% de ruido.
-> Para eso existe el benchmark.
+> Historia de este número, sin maquillar: la primera ejecución encontró que el
+> filtro cazaba solo el **45%** — dejaba pasar DSN de base de datos,
+> contraseñas en prosa y `API_KEY=`. Se reforzó a 80%. Los 4 que aún se
+> colaban (AWS secret en prosa, contraseña con ñ, clave partida en dos frases,
+> Twilio) se publicaron como issues conocidos, y en la iteración siguiente se
+> cazaron con patrones anclados a formas inequívocas — cada uno con su inocente
+> gemelo en la lista para vigilar que no gritan de más. Para eso existe el
+> benchmark.
 
 ## Cost — la cifra en contra
 
