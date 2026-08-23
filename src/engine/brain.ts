@@ -302,8 +302,11 @@ export class Brain {
         const sourceTag = neuron.tags.find(t => t.startsWith('source:'));
         const source = sourceTag ? sourceTag.split(':')[1] : 'manual';
 
-        // Combine all facts into a single instruction block
+        // Combine the ACTIVE facts into a single instruction block. Without
+        // the filter, correcting a protocol via supersedes injected both the
+        // old and the new wording into every session, side by side.
         const instructions = neuron.facts
+          .filter(f => !f.status || f.status === 'active')
           .map(f => f.text)
           .join('\n\n');
 

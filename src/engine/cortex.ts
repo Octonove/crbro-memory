@@ -81,8 +81,10 @@ export type Emitter = (
     | { kind: 'decision'; text: string; why?: string; at: string }
     | { kind: 'pattern'; text: string; at: string }
     | { kind: 'error'; text: string; at: string }
+    | { kind: 'debt'; text: string; at: string }
     | { kind: 'map'; text: string; at: string }
     | { kind: 'error_purge'; key: string; at: string }
+    | { kind: 'debt_purge'; key: string; at: string }
 ) => Promise<void> | void;
 
 export class Cortex {
@@ -274,6 +276,7 @@ export class Cortex {
         connections: [],
         tags: [],
         errors: [],
+        debts: [],
       };
     });
 
@@ -292,7 +295,7 @@ export class Cortex {
    */
   async learn(
     topic: string,
-    type: 'fact' | 'decision' | 'pattern' | 'preference' | 'error',
+    type: 'fact' | 'decision' | 'pattern' | 'preference' | 'error' | 'debt',
     content: string,
     options?: {
       confidence?: number;
@@ -435,6 +438,15 @@ export class Cortex {
               n.errors.push(content);
               this.tally.topics.add(n.id);
               emitir = { kind: 'error' as const, text: content, at: now() };
+            }
+            break;
+          }
+          case 'debt': {
+            if (!n.debts) n.debts = [];
+            if (!n.debts.includes(content)) {
+              n.debts.push(content);
+              this.tally.topics.add(n.id);
+              emitir = { kind: 'debt' as const, text: content, at: now() };
             }
             break;
           }
@@ -781,6 +793,12 @@ export class Cortex {
           e => !wanted.includes((e || '').trim().toLowerCase())
         );
       }
+      const deudasAntes = (current.debts || []).length;
+      if (current.debts) {
+        current.debts = current.debts.filter(
+          d => !wanted.includes((d || '').trim().toLowerCase())
+        );
+      }
       let mapaBorrado = 0;
       if (current.map && wanted.includes(current.map.text.trim().toLowerCase())) {
         delete current.map;
@@ -790,7 +808,7 @@ export class Cortex {
       removed = antes - (
         current.facts.length + current.decisions.length +
         current.patterns.length + current.preferences.length
-      ) + (erroresAntes - (current.errors || []).length) + mapaBorrado;
+      ) + (erroresAntes - (current.errors || []).length) + (deudasAntes - (current.debts || []).length) + mapaBorrado;
       if (removed === 0) return null;
       current.last_accessed = now();
       return current;
@@ -815,6 +833,11 @@ export class Cortex {
           await this.emit(found.id, { kind: 'error_purge', key: entryId(e), at: cuando });
         }
       }
+      for (const d of found.debts || []) {
+        if (wanted.includes((d || '').trim().toLowerCase())) {
+          await this.emit(found.id, { kind: 'debt_purge', key: entryId(d), at: cuando });
+        }
+      }
       if (found.map && wanted.includes(found.map.text.trim().toLowerCase())) {
         await this.emit(found.id, { kind: 'map', text: '', at: cuando });
       }
@@ -835,12 +858,13 @@ export class Cortex {
     patterns: number;
     preferences: number;
     errors: number;
+    debts: number;
     map: number;
   }>> {
     const out: Array<{
       neuron_id: string; name: string; kinds: string[];
       facts: number; decisions: number; patterns: number; preferences: number;
-      errors: number; map: number;
+      errors: number; debts: number; map: number;
     }> = [];
 
     for (const id of await listJSONFiles(this.brain.paths.cortex)) {
@@ -868,13 +892,14 @@ export class Cortex {
       const patterns = contar(n.patterns || []);
       const preferences = contar(n.preferences || []);
       const errors = contar(n.errors || []);
+      const debts = contar(n.debts || []);
       const mapa = contar(n.map?.text ? [n.map.text] : []);
 
-      if (facts + decisions + patterns + preferences + errors + mapa > 0) {
+      if (facts + decisions + patterns + preferences + errors + debts + mapa > 0) {
         out.push({
           neuron_id: n.id, name: n.name, kinds: [...kinds],
           facts, decisions, patterns, preferences,
-          errors, map: mapa,
+          errors, debts, map: mapa,
         });
       }
     }

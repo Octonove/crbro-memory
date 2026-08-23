@@ -15,7 +15,7 @@ import { contentHash } from '../utils/hash.js';
 /** Bumped only if the shape changes in a way older clients cannot read. */
 export const OPS_VERSION = 1;
 
-export type OpKind = 'neuron' | 'fact' | 'status' | 'decision' | 'pattern' | 'tag' | 'error' | 'map' | 'purge';
+export type OpKind = 'neuron' | 'fact' | 'status' | 'decision' | 'pattern' | 'tag' | 'error' | 'map' | 'purge' | 'debt';
 
 interface OpBase {
   v: number;
@@ -78,6 +78,12 @@ export interface ErrorOp extends OpBase {
   text: string;
 }
 
+/** A deliberate deferral with its revisit condition. Union, like errors. */
+export interface DebtOp extends OpBase {
+  op: 'debt';
+  text: string;
+}
+
 /**
  * A full replacement of the neuron's system map. The newest `at` wins;
  * ties break on the content hash so every machine picks the same winner.
@@ -97,12 +103,12 @@ export interface MapOp extends OpBase {
  */
 export interface PurgeOp extends OpBase {
   op: 'purge';
-  pkind: 'error';
+  pkind: 'error' | 'debt';
   /** entryId() of the removed text. The text itself does not travel again. */
   key: string;
 }
 
-export type Op = NeuronOp | FactOp | StatusOp | DecisionOp | PatternOp | TagOp | ErrorOp | MapOp | PurgeOp;
+export type Op = NeuronOp | FactOp | StatusOp | DecisionOp | PatternOp | TagOp | ErrorOp | MapOp | PurgeOp | DebtOp;
 
 /**
  * Same wording, same id, on every machine.

@@ -2,6 +2,56 @@
 
 All notable changes to CRBRO.
 
+## [1.11.0] — 2026-08-24
+
+### Added — deliberate deferrals, and integrity for subagents
+
+- **`crbro_learn` accepts `type: "debt"`** — the twin of `type: "error"`. An
+  error is "did X wrong, fixed it so"; a debt is "skipped X on purpose — here
+  is the ceiling, revisit when Y". The graveyard of the unbuilt: when someone
+  re-proposes a dead idea, recall serves the decision with its reason. Debts
+  travel through shared spaces like errors (set union, purge on forget), and
+  `crbro_maintenance` flags the ones that never named a revisit condition — a
+  deferral without a trigger quietly becomes permanent.
+- **A `SubagentStart` hook** (`hooks/crbro-subagent.mjs`, wired by
+  `npx crbro-memory install-hooks`). SessionStart context never reaches
+  Task-spawned subagents, so until now every subagent ran without the
+  behavioral protocols the session booted with — the anti-hallucination and
+  verification rules governed the orchestrator while the agents doing the
+  unsupervised work ran bare. The hook reads the same protocol neurons
+  `crbro_boot` reads (one source of truth), and is hardened to never block a
+  session: BOM-safe, stdin-independent by default, fail-open scoping, embedded
+  fallback, always exit 0.
+
+### Fixed
+
+- **Stronger secret detection.** A fresh benchmark found the redaction filter
+  caught only 45% of credentials in varied forms — it let database DSNs,
+  passwords in prose and `API_KEY=` through. Five patterns added (connection
+  strings, generic labelled keys, prose passwords, SendGrid, fine-grained
+  GitHub PATs); capture is now 80% with 0% false positives, and the four that
+  still slip are documented as known issues.
+- **`redact()` no longer eats legitimate prose** when two patterns match the
+  same span (e.g. "la clave es AIza… guárdala en la bóveda" kept the "guárdala
+  en la bóveda"). Left-to-right cursor pass instead of a right-to-left one with
+  stale offsets. This was latent since the first vendor patterns; the new
+  patterns made it common.
+- **`loadProtocols()` and the subagent hook filter retired facts.** Correcting
+  a protocol via `supersedes` used to inject both the old and new wording into
+  every session (and every subagent). Active facts only now.
+- **A lone purge persists across a sync.** Forgetting an error or debt when no
+  other change touched the neuron left it live on teammates' machines until an
+  unrelated write happened to flush it — a credential forgotten inside an error
+  did not disappear from their recall. The merge report now counts removals so
+  the sync change-gate fires.
+
+### Benchmarks
+
+New `benchmarks/`: retrieval (recall@3 69% with blind paraphrased queries — the
+honest price of no semantic search), security (the filter, failures listed),
+and cost (the tokens CRBRO adds, published on purpose). All deterministic, no
+API, run in CI. What is NOT measured, and why, is in `benchmarks/LIMITS.md`.
+
 ## [1.10.0] — 2026-08-23
 
 ### Added — the memory diet
