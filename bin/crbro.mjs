@@ -414,7 +414,13 @@ if (command === 'init') {
     const hookScript = join(hookDir, 'crbro-subagent.mjs');
     fs.mkdirSync(hookDir, { recursive: true });
     fs.copyFileSync(source, hookScript);
-    const hookCmd = `node "${hookScript.split('\\').join('/')}"`;
+    // Injection is OPT-IN since 1.12 (pre-registered consequence of three
+    // clean-control benchmark runs: no measured benefit in any model, harm
+    // and fabricated compliance in small ones — see the benchmarks in the
+    // card repo). `install-hooks` alone installs the machinery inert;
+    // `install-hooks --inject` enables injection for every subagent.
+    const conInyeccion = process.argv.includes('--inject');
+    const hookCmd = (conInyeccion ? 'CRBRO_SUBAGENT_INJECT=full ' : '') + `node "${hookScript.split('\\').join('/')}"`;
 
     let settings = {};
     try {
@@ -431,7 +437,12 @@ if (command === 'init') {
     const list = settings.hooks.SubagentStart = settings.hooks.SubagentStart || [];
     const yaEsta = JSON.stringify(list).includes('crbro-subagent');
     if (yaEsta) {
-      console.log('  ✅ SubagentStart hook already installed. Nothing to do.');
+      console.log('  ✅ SubagentStart hook already installed. Script refreshed.');
+      if (conInyeccion && !JSON.stringify(list).includes('CRBRO_SUBAGENT_INJECT')) {
+        console.log('     ⚠️  The installed entry does NOT enable injection. To enable it,');
+        console.log('     remove the SubagentStart entry from settings.json and re-run');
+        console.log('     install-hooks --inject.');
+      }
       return;
     }
     list.push({
@@ -448,9 +459,17 @@ if (command === 'init') {
     fs.renameSync(tmp, settingsPath);
     console.log('  ✅ SubagentStart hook installed.');
     console.log(`     ${settingsPath}`);
-    console.log('     Every Task-spawned subagent now receives the same behavioral');
-    console.log('     protocols the session boots with. Scope it with the');
-    console.log('     CRBRO_SUBAGENT_MATCHER env var (regex on agent_type) if needed.');
+    if (conInyeccion) {
+      console.log('     Injection ENABLED: every Task-spawned subagent receives the');
+      console.log('     protocol block. Scope it with CRBRO_SUBAGENT_MATCHER (regex on');
+      console.log('     agent_type) if needed. Measured caveat: on small models the');
+      console.log('     block bought no benchmarked benefit and induced fabricated');
+      console.log('     compliance in some runs — see the benchmarks before scoping.');
+    } else {
+      console.log('     Injection is OPT-IN and currently OFF (the measured default:');
+      console.log('     three clean benchmark runs found no benefit in any model and');
+      console.log('     harm in small ones). Re-run with --inject to enable it.');
+    }
   }).catch(console.error);
 
 } else if (command === '--help' || command === '-h') {

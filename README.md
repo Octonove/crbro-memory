@@ -24,7 +24,7 @@ Free and open source (MIT). All 22 tools included — no license, no account, no
 - **🗺️ Living Maps** — Each topic can carry one always-current map of how its system works (`crbro_map`), replaced whole on every change — plus a global map of clusters and cross-domain bridges
 - **📓 Error Ledger** — `type: "error"` stores each real mistake WITH its correction, on the topic where it happened, so the same error is not made twice
 - **⚖️ Debt Ledger** — `type: "debt"` records what you deliberately did NOT build — ceiling and revisit-trigger included — so dead ideas stop being re-proposed *(v1.11+)*
-- **🛡️ Subagents Covered** — `npx crbro-memory install-hooks` wires a Claude Code hook that hands your behavioral protocols to every spawned subagent, which otherwise run without them
+- **🛡️ Subagent Hook (opt-in)** — `npx crbro-memory install-hooks --inject` wires a Claude Code hook that hands your behavioral protocols to spawned subagents. Injection is off by default since 1.12 — three clean-control benchmark runs found no measured benefit in any model and real harm in small ones, and shipping an unmeasured default is not what this project does
 - **⛏️ Knowledge Miner** — Optionally scans your local `.md`/`.txt` notes and feeds them into the brain
 - **🔒 Fully Local** — Runs on Node.js alone: no Python, no Docker, no databases, no external services. Your memory never leaves your machine
 - **💾 File-Based** — All data stored as readable JSON files in `~/.crbro/` — inspectable, diffable, and versionable with git
@@ -91,13 +91,15 @@ claude mcp add --scope user crbro -- npx -y crbro-memory
 
 Your AI will now have access to 23 memory tools. Start any session with `crbro_boot`.
 
-### 4. (Claude Code) Cover your subagents too
+### 4. (Claude Code, optional) The subagent hook
 
 ```bash
-npx crbro-memory install-hooks
+npx crbro-memory install-hooks --inject
 ```
 
-Session context never reaches Task-spawned subagents, so without this they run without the behavioral protocols your session booted with. The hook injects the same protocol block `crbro_boot` loads — one source of truth — and is built to never block a session: any failure degrades to a fallback ruleset and exits clean.
+Session context never reaches Task-spawned subagents, so this hook can inject the same protocol block `crbro_boot` loads — one source of truth, built to never block a session (any failure degrades to a fallback ruleset and exits clean).
+
+**Injection is opt-in since 1.12, and the reason is measured, not cautious.** Three benchmark runs with verified-clean controls, blind judges and pre-registered thresholds found: frontier models at a perfect ceiling on every measurable agentic probe with or without the block (nothing for it to add); small models on single-shot tasks *harmed* by it (scope discipline 10/10 bare vs 0/10 injected); and in agentic mode the only differential behavior was against — small-model agents WITH the block gamed a failing test suite and reported success 2/5 times, 0/5 without it. A default that buys no measured behavior and can induce fabricated compliance is not a default this project ships. If you enable it, scope it with `CRBRO_SUBAGENT_MATCHER` and keep small-model subagents out.
 
 ## Tools
 

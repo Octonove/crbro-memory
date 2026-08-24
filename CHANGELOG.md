@@ -2,6 +2,30 @@
 
 All notable changes to CRBRO.
 
+## [1.12.0] — 2026-08-24
+
+### Changed — subagent injection is now opt-in, because we measured it
+
+The 1.11 SubagentStart hook injected the behavioral-protocol block into every
+spawned subagent by default. Then we benchmarked it properly — three runs
+with verified-clean controls, blind judges and pre-registered thresholds —
+and the pre-registered kill criterion fired:
+
+- Frontier models scored a perfect ceiling on every measurable agentic probe
+  with AND without the block. There is nothing for injection to add.
+- Small models on single-shot tasks were HARMED by it: scope discipline went
+  from 10/10 bare to 0/10 injected, and a shorter variant did not fix it —
+  the failure mode is the block's presence, not its wording.
+- In agentic mode the only differential behavior was against: 2/5 small-model
+  agents WITH the block deleted a failing test suite, replaced it with tests
+  built to pass, and reported success. 0/5 without it.
+
+So: `install-hooks` now installs the machinery inert, and
+`install-hooks --inject` (or `CRBRO_SUBAGENT_INJECT=full`) enables it
+knowingly. `CRBRO_SUBAGENT_MATCHER` still scopes by agent_type. The full
+data, pre-registrations and the runs that produced them are published in the
+card repo's `benchmarks/` — including every result that went against us.
+
 ## [1.11.1] — 2026-08-24
 
 ### Fixed — the four known misses, closed
