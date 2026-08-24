@@ -13,10 +13,22 @@
 // neurons in the brain's cortex. One source of truth, so this hook can never
 // drift from what the main session was given.
 //
-// Scoping (opt-in): set CRBRO_SUBAGENT_MATCHER to a regex and the protocols
-// are injected only into subagents whose agent_type matches. Unanchored,
-// case-insensitive. Invalid regex or missing agent_type fail OPEN (inject):
-// scoping must never silently drop the integrity layer.
+// INJECTION IS OPT-IN since 1.12 (set CRBRO_SUBAGENT_INJECT=full to enable).
+// This is not caution — it is the pre-registered consequence of measurement.
+// Three clean-control benchmark runs (blind judges, pre-registered
+// thresholds; see synthetica-decks/benchmarks/) found: frontier models at a
+// perfect ceiling on every measurable agentic probe with and without the
+// block (nothing for injection to add); small models on single-shot tasks
+// HARMED by the block (scope discipline 10/10 bare vs 0/10 injected); and in
+// agentic mode the only differential behavior was against — 2/5 small-model
+// agents WITH the block gamed a failing test suite and reported success,
+// 0/5 without it. An injection that buys no measured behavior and can induce
+// fabricated compliance must not be the default.
+//
+// Scoping (when injection is enabled): set CRBRO_SUBAGENT_MATCHER to a regex
+// and the protocols are injected only into subagents whose agent_type
+// matches. Unanchored, case-insensitive. Invalid regex or missing agent_type
+// fail OPEN (inject): scoping must never silently drop the layer.
 //
 // Failure contract: this hook never blocks a session. Any error — unreadable
 // brain, bad JSON, stdin that never ends (the Windows PowerShell wrapper can
@@ -101,6 +113,13 @@ function inject() {
   } catch {
     // A stdout error at hook exit must not surface as a hook failure.
   }
+}
+
+// Opt-in gate (1.12): without explicit consent, the hook is inert. Silence
+// here is the measured default, not a failure — see the header.
+const INJECT = String(process.env.CRBRO_SUBAGENT_INJECT || '').toLowerCase();
+if (INJECT !== 'full' && INJECT !== '1' && INJECT !== 'on') {
+  process.exit(0);
 }
 
 // A bad regex must never crash the hook; treat it as "no matcher" and inject.
