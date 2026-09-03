@@ -19,6 +19,12 @@ está PUBLICADO en npm, no el local.
 
 ## 1. Publicar en npm
 
+El bump va en TRES archivos: `package.json`, `server.json` y el campo
+`version` de `package-lock.json` (dos sitios: la raíz y `packages[""]`).
+Editar solo package.json deja el lock atrás — llegó a decir 1.8.2 con el
+paquete en 1.16.0. `npm version <x.y.z> --no-git-tag-version` hace los dos
+primeros de una vez.
+
 ```bash
 npm run build
 npm test
