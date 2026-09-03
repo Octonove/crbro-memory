@@ -203,6 +203,11 @@ Lectura honesta:
   «formulario de contacto web de reformas» (la neurona acertada contesta con
   otra línea; con also_matched sí aparece), «posición de la keyword principal
   de octonove» y «política de copias de seguridad de las webs».
+- ¿Suerte de una tanda? Una **segunda muestra ciega** de palabras clave,
+  escrita por otra instancia con el mismo encargo (`blind-keys2.json`), da
+  81% / 85% sola y exactamente el mismo 90% / 92% (96% / 98% con
+  also_matched) con todo activado. Dos muestras no son una distribución,
+  pero la conclusión no depende de cuál se elija.
 - Advertencia de siempre: 48 consultas, el mismo conjunto desde 1.12, cada
   punto son dos consultas. Y las palabras clave del cerebro real las escribirá
   el modelo en uso al guardar, siguiendo la descripción de la herramienta:
