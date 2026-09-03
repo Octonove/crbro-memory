@@ -11,8 +11,8 @@
 //     the 470 MB figure that got it rejected in 1.4 was the fp32 file);
 //   - the runtime (transformers.js + onnxruntime) is ~380 MB of node modules
 //     that most users never need, and a cold load takes ~13 s per process;
-//   - a first pass over the reference brain (5,124 chunks) takes about a
-//     minute and a half at ~18 ms per line.
+//   - a first pass over the reference brain (5,129 chunks, 3,984 lines) takes
+//     three minutes: 20-45 ms per line by length, plus the model load.
 // So nothing here is installed, downloaded or loaded unless the user runs
 // `npx crbro-memory semantic install` AND sets CRBRO_SEMANTIC=1. Without
 // both, this file is dead code and recall is exactly the 1.13 engine.

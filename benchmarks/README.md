@@ -126,9 +126,10 @@ vector no distingue lo relacionado de lo que no lo es, y un fallo léxico debe
 seguir siendo un fallo, no una respuesta segura y equivocada.
 
 **Lo que cuesta:** ~380 MB de runtime + 118 MB de modelo en disco, ~13 s de
-carga en frío por proceso (se calienta en segundo plano tras el boot), ~18 ms
-por línea nueva al guardar, y unas decenas de ms por consulta. Por eso es
-opcional y va a seguir siéndolo.
+carga en frío por proceso (se calienta en segundo plano tras el boot), 20–45 ms
+por línea nueva al guardar según su longitud (el cerebro de referencia, 5.129
+chunks y 3.984 líneas sin cabeceras, tardó 3 minutos en total), y unas decenas
+de ms por consulta. Por eso es opcional y va a seguir siéndolo.
 
 ## Security — el filtro de redacción
 
