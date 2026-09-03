@@ -6,7 +6,7 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
-    "crbro-memory": "./bin/crbro.mjs"
+    "crbro-memory": "bin/crbro.mjs"
   },
   "scripts": {
     "build": "tsc",
@@ -29,7 +29,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Octonove/crbro-memory"
+    "url": "git+https://github.com/Octonove/crbro-memory.git"
   },
   "engines": {
     "node": ">=18.0.0"
