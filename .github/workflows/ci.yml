@@ -23,3 +23,17 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: npm test
+
+  audit:
+    # A registry's build log caught 9 advisories this pipeline never looked
+    # at. Runs apart from the matrix so a new upstream advisory shows red
+    # here without stopping build-and-test; fixing it is usually one
+    # `npm audit fix`. Moderate and below pass: they are noted, not blocked.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: npm audit --audit-level=high
