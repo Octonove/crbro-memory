@@ -50,6 +50,18 @@ export interface Decision {
 
 export type NeuronType = 'project' | 'tech' | 'lang' | 'person' | 'domain' | 'process' | 'protocol';
 
+/**
+ * Retirement of a decision, pattern, error or debt. Only the non-active
+ * states exist here: an entry that is active has no record at all.
+ */
+export type EntryStatus = 'superseded' | 'retracted';
+
+export interface EntryRetirement {
+  status: EntryStatus;
+  revised: string;           // ISO date of the retirement
+  note?: string;             // why it stopped being true
+}
+
 export interface Neuron {
   id: string;                // "project_octochat"
   name: string;              // "OctoChat"
@@ -90,6 +102,17 @@ export interface Neuron {
    * debt, so "prefer the more recent" could not apply to the error ledger.
    */
   entry_dates?: Record<string, string>;
+  /**
+   * Retired decisions, patterns, errors and debts, keyed by entryId(text) —
+   * the same hash as entry_dates and the sync purge ops. Absent key === active.
+   * A sidecar for the same reason entry_dates is one: the element type of
+   * those arrays never changes, every reader keeps working, and a pre-2.0
+   * brain is valid as it is. A retired entry stays in the file but leaves
+   * recall exactly like a superseded fact does; `crbro_revise status=active`
+   * deletes the key and brings it back. The sidecar never travels as a sync
+   * op — it survives a sync only because applyOps copies and prunes it.
+   */
+  entry_status?: Record<string, EntryRetirement>;
   /**
    * The living map of the system: where it lives, what serves what, which
    * pieces talk to each other, the traps. One document, replaced whole on
@@ -226,6 +249,14 @@ export interface BootResult {
   open_items?: PendingTask[];
   /** Items closed recently, so a stale to-do list is not repeated back. */
   recently_closed?: PendingTask[];
+  /**
+   * Tools removed in 2.0 → what replaces each one. Filled by the server,
+   * not by Brain.boot(), and served on every boot for the whole 2.x line so
+   * a client with an older card can find its way.
+   */
+  retired_tools?: Record<string, string>;
+  /** The last few session logs, newest first. Filled by the server. */
+  recent_sessions?: SessionLog[];
   message: string;
 }
 

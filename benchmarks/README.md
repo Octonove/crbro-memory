@@ -249,11 +249,20 @@ CRBRO no es gratis, y publicarlo es lo que hace creíble el resto.
 
 - **~750 tokens** de contexto que el arranque añade a cada sesión (el bloque de
   protocolos), y lo mismo por cada subagente que inyecta el hook.
-- **~5,4k tokens** de definiciones de las 23 tools (descripción + esquema de
-  entrada, 21.662 caracteres medidos con un `tools/list` real), que pagan en
-  cada petición los clientes que cargan todas las tools (Claude Desktop,
-  Cursor); Claude Code las difiere y paga solo las que usa. En 1.12 eran
-  25.086 caracteres (~6,3k tokens) y no se decía.
+- **~6,5k tokens** de definiciones de las 15 tools de 2.0: 25.866 caracteres
+  de descripción + esquema de entrada (10.725 + 15.141), medidos el 03-09-2026
+  con un `tools/list` real — un `listTools()` del cliente del SDK contra el
+  servidor sobre `InMemoryTransport`, como hace
+  `tests/tool.definitions.test.ts` — y divididos por 4, la aproximación de
+  caracteres por token de siempre, no un recuento de tokenizador. Con los
+  esquemas de salida de las tres tools de lectura el payload completo son
+  34.047 caracteres (~8,5k tokens). Lo pagan en cada petición los clientes que
+  cargan todas las tools (Claude Desktop, Cursor); Claude Code las difiere y
+  paga solo las que usa. Menos tools no es menos texto: las 23 de 1.13 medían
+  21.662 caracteres (~5,4k tokens), porque cada parámetro absorbido sigue
+  explicándose en la tool que lo acogió — `crbro_inspect` sola pesa 5.529
+  caracteres con sus cinco vistas y su esquema de salida. En 1.12 eran 25.086
+  caracteres (~6,3k tokens) y no se decía.
 - **~0,15 ms** de latencia por recall (local, sin red).
 - El cerebro de referencia: 1.145 neuronas, ~30 MB en disco (índice 25 MB).
 

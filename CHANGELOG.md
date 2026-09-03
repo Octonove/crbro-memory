@@ -2,15 +2,171 @@
 
 All notable changes to CRBRO.
 
-## [Unreleased]
+## [2.0.0] — 2026-09-03
 
+### One surface of 15 tools
+
+The 23 tools of 1.x were nine reads with nine names, one writer that logged
+sessions twice over, and a sync verb that was really an action of the space.
+A model choosing between `crbro_neuron`, `crbro_neurons` and
+`crbro_connections` was choosing between three doors to the same room, and
+Glama's rubric said the same thing in its own words ("16-25 feels heavy").
+2.0 folds them: the reads become views of one `crbro_inspect`, the session
+log lives only in `crbro_consolidate`, and `crbro_sync` becomes `crbro_space
+action=sync`. The brain format does not change — a pre-2.0 brain opens as it
+is, and the one new field (`entry_status`, below) is a sidecar that every
+1.x reader ignores.
+
+**Why the eight core verbs were not renamed.** `boot`, `learn`, `recall`,
+`revise`, `forget`, `connect`, `context` and `consolidate` are written into
+the customer cards — the zero-crbro skill and its copies in every language of
+the decks. A `verb_noun` rename would have bought one point of naming
+consistency at the price of a break in every copy sold, so the eight keep
+their names and their shipped parameters (`topic` + `neuron_id` in learn,
+`from`/`to` in connect). The one card line that changes is `crbro_sync` →
+`crbro_space action=sync`; boot and consolidate sync on their own, so a card
+that still says `crbro_sync` loses the manual form and nothing else.
+
+**23 → 15**
+
+| 1.x | 2.0 |
+|-----|-----|
+| `crbro_status` | `crbro_inspect view=status` — everything status returned, plus `hot_topics_recalculated` |
+| `crbro_neuron` | `crbro_inspect view=neuron neuron=<id or name>` — still bumps `access_count`, and says so |
+| `crbro_neurons` | `crbro_inspect view=neurons [domain\|type\|min_heat\|limit\|offset]` |
+| `crbro_hot_topics` | `crbro_inspect view=neurons` (the same rows, live instead of cached) · `view=status` (`hot_topics_recalculated`) |
+| `crbro_connections` | `crbro_inspect view=neuron neuron=<id> [min_strength]` — connections come resolved with name, type and strength |
+| `crbro_sessions` | `crbro_inspect view=sessions [limit]` |
+| `crbro_global_map` | `crbro_inspect view=global_map` — computed live on every call, never written to disk |
+| `crbro_session_log` | `crbro_consolidate summary=... [topics_touched=[...]]` — `topics_touched` logs neuron ids the session only read; write counters stay real (+ `crbro_context set_topics=[...]` to replace the active topics) |
+| `crbro_sync` | `crbro_space action=sync [name]` |
+| the other 14 | same names; what changed inside each is listed below |
+
+**The descriptions, rewritten.** Every one of the 15 says in its first
+sentence whether it reads or writes and names the neighbour to use for the
+adjacent job (recall → "to read one neuron by id use `crbro_inspect
+view=neuron`"; inspect → "to search by content use `crbro_recall`"; map →
+"inspect already returns the map"). Mode and parameter detail moved into the
+parameters' own `describe()` text. All 15 stay under 1,000 characters
+(enforced by test), none names a retired tool, and the two whole-object
+destructions — share commit, forget entire — use the same two-step wording:
+call without `confirm_token`, show the dry run, call again with the token; a
+stale token is refused.
+
+**The three-stage lifecycle, spelled out.** A new truth that replaces an old
+one → `crbro_learn` with `supersedes` (one call does both). Something stopped
+being true, or was never true, and nothing replaces it → `crbro_revise` (kept
+in the file, gone from recall, reversible with `status=active`). Something
+must not exist on disk at all — a credential, personal data, a whole neuron →
+`crbro_forget` (quarantine copy first). The sentence opens the three
+descriptions and closes boot's `memory_discipline`. Every new parameter that
+names a neuron is called `neuron` and takes an id or a name.
+
+- `crbro_boot` returns `retired_tools` (the table above, keyed by the old
+  name) on every call throughout 2.x, and `recent_sessions` with the last
+  three logs; `last_session` is now the newest of them instead of the `null`
+  that 1.x reported forever.
+- `crbro_inspect` (read-only, structured): `view=neuron` reads by id or name,
+  pages facts newest first (`limit`, `offset`, `include_superseded`), and
+  resolves connections with `min_strength`. `view=neurons` takes `offset`;
+  `view=status` adds `hot_topics_recalculated`; `view=global_map` is computed
+  live — nothing writes `prefrontal/global_map.json` any more, and a dry-run
+  maintenance writes nothing at all (a leftover cache file is deleted on the
+  next real run).
+- `crbro_revise`: `facts` is optional; `entries` retires decisions, patterns,
+  errors and debts by exact text through a new `entry_status` sidecar keyed
+  like `entry_dates` (retired entries leave recall like a superseded fact;
+  `crbro_learn` refuses to re-add one and answers `skipped_retired`).
+  `status=active` reactivates a retired fact or entry — local only on a
+  shared neuron, and the response says so (`shared_warning`). `summary`,
+  `domain`, `tags` (the whole list is replaced — re-send `priority:` and
+  `source:` tags on protocol neurons) and `name` (the id never moves) edit
+  metadata in the same call.
+- `crbro_forget`: exactly one mode per call. `facts` (decision and pattern
+  removals now travel to spaces as purge ops, as errors and debts already
+  did), `entire` (two-step with `confirm_token` derived from the neuron's
+  counts; refused while the neuron is shared — unshare first), `restore`
+  (newest quarantine copy, merged into the neuron if it exists again),
+  `merge_into` (union of everything, synapses rewired, source quarantined
+  then deleted), `session` (one day's log, quarantined first).
+- `crbro_connect`: `from`/`to` are validated (unknown id is an error, not a
+  dangling synapse), `type` is optional (default `conceptual`), `strength`
+  sets an absolute value instead of the 0.5 / +0.1 rule, and
+  `action=disconnect` deletes the synapse — which is why the tool now carries
+  `destructiveHint: true`.
+- `crbro_context`: a call with no arguments reads and no longer rewrites the
+  file (`written: false`); `discard_pending` drops an open item without
+  recording it as done; `clear` empties topics, pending and recently closed.
+- `crbro_consolidate` passes the summary through the credential filter
+  before storing it (`redacted` lists the kinds found, never the values),
+  returns `session_id`, and sets the context's `last_session`. It is the only
+  way to log a session.
+- `crbro_learn` on an exact duplicate of an active fact updates `confidence`
+  in place and takes `keywords_replace`; the response says `duplicate` and
+  `updated_in_place`. Teammates only ever receive the union of keys and the
+  maximum confidence, so lowering either does not propagate — documented,
+  not fought.
+- `crbro_maintenance`: `repair` fixes what the integrity check finds
+  (dangling connection ids, orphan synapse files, stale `entry_dates` /
+  `entry_status` keys, manifest counters); `unarchive` brings ids (or `all`)
+  back from `archives/` and reindexes them. Retired debts no longer count as
+  open. The report gains `archives_count`, `repairable`, `repaired`,
+  `repairs[]`.
+- `crbro_audit` also scans the session logs (`session_findings`,
+  `sessions_affected` — kinds only, as everywhere).
+- `crbro_space action=leave` pushes pending notes, deletes the local copy of
+  the space and stops following its neurons; the remote is untouched.
+  `crbro_share unshare:true` stops following one neuron (tombstoned in
+  `unshared.json`, re-shareable later, and only then can it be forgotten).
+  What was already sent stays in the remote and in teammates' brains — the
+  description says so instead of "sharing cannot be undone".
+- Search index version 4 → 5: retired entries are excluded from chunks, so
+  the index rebuilds once on the first start after upgrading. Ops version
+  stays 1: an older teammate reads the two new purge kinds and ignores them,
+  a degradation, not a corruption.
+- 22 tool-surface tests (264 in the whole suite, with tests/surface2 and
+  tests/lifecycle2 covering the engine side), speaking real MCP to the server over
+  an in-memory transport: the fifteen names and nothing else, no retired
+  name in any description or schema, disconnect on an absent synapse,
+  forget entire without token, revise `status=active` back into recall,
+  context without arguments not writing, dry-run maintenance leaving no
+  global map file.
+
+**Upgrading — what breaks and what does not.** A client that calls one of
+the nine retired names gets the MCP "unknown tool" error; `retired_tools` in
+boot only helps a model that has booted, which is the first thing every card
+does. A 1.x card against a 2.0 server loses only the `crbro_sync` line. Claude
+Code hooks that name `mcp__crbro__crbro_session_log` in a matcher or in the
+session-start text must drop it, or every session start orders a call to a
+tool that no longer exists. The cards ship before or with the server, never
+after (see RELEASING.md). 1.x stays installable — `npx -y crbro-memory@1` —
+for anyone who cannot move yet; it receives no new features.
+
+**Cost, measured.** The 15 definitions weigh 25,866 characters of
+description + input schema (~6.5k tokens) in a real `tools/list`, against
+21,662 (~5.4k) for the 23 of 1.13: fewer tools, not fewer characters,
+because each parameter a fold absorbed still explains itself inside the tool
+that took it. Counting the output schemas of the three readers the whole
+payload is 34,047 characters (~8.5k tokens). Claude Code defers tool
+definitions and pays only for the ones it uses; Claude Desktop and Cursor
+pay it on every request.
+
+### Also
+
+- Fixed in the merge: a fact saved before facts had ids (brain format 1.0,
+  any neuron older than 1.5) could never be superseded or retracted by a
+  teammate. The incoming `fact` note landed on it by text, but the `status`
+  note that followed carried only the fid, which nothing had registered for
+  the local fact, so the retirement was dropped — on every replay. Found by
+  materialising a 1.16 brain plus a hand-written 1.x log under 2.0; 1.16 has
+  the same hole. Two tests in `tests/sync.test.ts` pin it.
 - Lockfile-only security refresh: `npm audit` reported 9 advisories (6 of
   them in the production tree) in the express chain that the MCP SDK pulls in
   — qs, postcss, vite, nanoid. `npm audit fix` clears all 9 within the
-  declared ranges, so no dependency range moved and 193 tests still pass.
-  It surfaced in a registry build log, not in ours: our CI never ran audit.
-  Nothing to republish — the npm tarball ships no lockfile, so anyone
-  installing crbro-memory already resolves the fixed versions.
+  declared ranges, so no dependency range moved. It surfaced in a registry
+  build log, not in ours: our CI never ran audit. The npm tarball ships no
+  lockfile, so anyone installing crbro-memory already resolved the fixed
+  versions.
 
 ## [1.16.0] — 2026-09-03
 

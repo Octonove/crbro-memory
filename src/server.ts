@@ -1,5 +1,5 @@
 // ─── CRBRO MCP Server ────────────────────────────────────────────
-// Main server with all 23 tools registered.
+// Main server with the 15 tools of the 2.0 surface registered.
 //
 // Every tool goes through registerTool with a title, MCP annotations
 // (readOnlyHint / destructiveHint / idempotentHint / openWorldHint) and, for
@@ -8,7 +8,13 @@
 // it over its siblings, its side effects and what it returns — and nothing
 // else: the discipline of using the memory well is said once, at boot, in
 // memory_discipline, because these definitions are paid on every request in
-// clients that load all tools (measured: ~5.4k tokens for the 23).
+// clients that load all tools.
+//
+// 2.0 folded the nine read/duplicate tools of 1.x (status, neuron, neurons,
+// hot_topics, connections, sessions, global_map, session_log, sync) into
+// crbro_inspect, crbro_space action=sync and crbro_consolidate. RETIRED_TOOLS
+// below is the only place the old names survive: boot serves it so a client
+// with an old habit finds the replacement without a round trip.
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
@@ -26,11 +32,39 @@ import { semanticStatus } from './search/semantic.js';
 import { Maintenance } from './engine/maintenance.js';
 import {
   createSpace, joinSpace, listSpaces, readSpace, prepareShare, commitShare,
-  syncSpaceNow, syncAll, getIdentity, attachSync,
+  syncSpaceNow, syncAll, getIdentity, attachSync, sharedMap, unshareNeuron, leaveSpace,
 } from './sync/space.js';
 import {
   detectBackend, setSecret, getSecret, listSecrets, removeSecret, KeychainUnavailable,
 } from './engine/keychain.js';
+import { readJSON } from './utils/fs.js';
+import { contentHash } from './utils/hash.js';
+import type { HotTopics, Neuron } from './types/index.js';
+
+/**
+ * Old tool name → how to do the same thing on the 2.0 surface. Served by
+ * crbro_boot as `retired_tools` for the whole 2.x line, and asserted by the
+ * definitions test. Keys are the ONLY place a retired name may appear in a
+ * string the model receives.
+ */
+export const RETIRED_TOOLS: Readonly<Record<string, string>> = {
+  crbro_status: 'crbro_inspect view=status',
+  crbro_neuron: 'crbro_inspect view=neuron neuron=<id or name>',
+  crbro_neurons: 'crbro_inspect view=neurons [domain|type|min_heat|limit|offset]',
+  crbro_hot_topics: 'crbro_inspect view=neurons (rows) and crbro_inspect view=status (hot_topics_recalculated)',
+  crbro_connections: 'crbro_inspect view=neuron neuron=<id> [min_strength]',
+  crbro_sessions: 'crbro_inspect view=sessions [limit]',
+  crbro_global_map: 'crbro_inspect view=global_map',
+  crbro_session_log: 'crbro_consolidate summary=... [topics_touched=[...] for neuron ids you only read] (logs the session) plus crbro_context set_topics=[...] if you need to replace the active topics',
+  crbro_sync: 'crbro_space action=sync [name]',
+};
+
+/** The one sentence about the lifecycle, shared by three descriptions and boot. */
+const THREE_STAGES =
+  'A new truth that REPLACES an old one → crbro_learn with supersedes (one call does both). ' +
+  'Something stopped being true, or was never true, and nothing replaces it → crbro_revise ' +
+  '(kept in the file, gone from recall, reversible with status active). Something must not exist ' +
+  'on disk at all — a credential, personal data, a whole neuron → crbro_forget (quarantine copy first).';
 
 /**
  * The version of CRBRO that is actually running. The manifest carries its own
@@ -46,6 +80,21 @@ function runningVersion(): string {
     return 'unknown';
   }
 }
+
+function textResult(text: string, isError = false) {
+  return { content: [{ type: 'text' as const, text }], ...(isError ? { isError: true as const } : {}) };
+}
+
+function jsonResult(payload: unknown) {
+  return { content: [{ type: 'text' as const, text: JSON.stringify(payload, null, 2) }] };
+}
+
+function errorResult(where: string, err: unknown) {
+  return textResult(`CRBRO ${where} error: ${err instanceof Error ? err.message : String(err)}`, true);
+}
+
+const NEURON_TYPES = ['project', 'tech', 'lang', 'person', 'domain', 'process', 'protocol'] as const;
+const INSPECT_VIEWS = ['status', 'neuron', 'neurons', 'sessions', 'global_map'] as const;
 
 export function createServer(): McpServer {
   const server = new McpServer({
@@ -69,6 +118,11 @@ export function createServer(): McpServer {
   // reference brain: only 106 of 1,183 neurons were searchable.
   cortex.setIndexer(neuron => searchEngine.indexNeuron(neuron));
 
+  // The mirror of the indexer: when a neuron leaves the cortex (forget entire,
+  // merge_into) its chunks leave the index too. The index is derived data, so
+  // a failure here is swallowed by the cortex like a failed reindex.
+  cortex.setRemover(id => searchEngine.removeNeuron(id));
+
   // When a neuron belongs to a shared space, every write also appends a note
   // to this machine's own log. Nobody ever writes to anyone else's file, so
   // two people working at once have nothing to collide over.
@@ -78,6 +132,10 @@ export function createServer(): McpServer {
   // license engine (Firestore-backed freemium) lives in git history before
   // that version if it is ever needed again.
 
+  /** id first, then name — the resolution every neuron-taking tool shares. */
+  const resolveNeuron = async (ref: string): Promise<Neuron | null> =>
+    (await cortex.peek(ref)) || (await cortex.findByName(ref));
+
   // ═══════════════════════════════════════════════════════════════
   // TOOL 1: crbro_boot — Boot sequence
   // ═══════════════════════════════════════════════════════════════
@@ -85,7 +143,7 @@ export function createServer(): McpServer {
     'crbro_boot',
     {
       title: 'Boot the brain',
-      description: 'Boot the CRBRO brain — call it FIRST in every conversation, before any other work. Loads persistent memory from earlier sessions: hot topics, active context with open_items and recently_closed (never report recently_closed as pending; verify open_items before repeating them), recent session history, counts, any active protocols as a protocol_enforcement block you must follow, and memory_discipline — the rules for using this memory well. Initializes the brain on first use, readies the search index and syncs shared team spaces (offline is a normal outcome, not an error). Skipping it means losing all accumulated context.',
+      description: 'Read the brain at session start — call it FIRST in every conversation, before any other work; writes only the boot stamp (and the brain itself on first use). Loads memory from earlier sessions: hot topics, active context with open_items and recently_closed (never report recently_closed as pending; verify open_items before repeating them), recent_sessions, counts, active protocols as a protocol_enforcement block you must follow, memory_discipline (the rules for using this memory well) and retired_tools (old tool names → their replacement). Readies the search index and syncs shared team spaces (offline is normal). Skipping it loses all context; close the session with crbro_consolidate.',
       inputSchema: {},
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },
@@ -101,6 +159,13 @@ export function createServer(): McpServer {
         const equipos = await syncAll(brain, cortex, 5_000);
 
         const response: any = { ...result };
+
+        // The last three real session logs, and last_session taken from them:
+        // the manifest field brain.boot reads was never written by anything,
+        // so it came back null in every session.
+        response.recent_sessions = await hippocampus.listSessions(3);
+        response.last_session = response.recent_sessions[0]?.session_id ?? result.last_session ?? null;
+        response.retired_tools = RETIRED_TOOLS;
 
         // Inject protocol enforcement.
         // The instruction text goes in ONE place. It used to be emitted twice --
@@ -142,8 +207,8 @@ export function createServer(): McpServer {
 
         // How to use this memory well — said once here, at boot, instead of
         // repeated inside every tool description. Measured with a real
-        // tools/list: the 23 definitions cost ~6.3k tokens on every request
-        // in clients that load all tools; this paragraph costs ~200, once.
+        // tools/list in 1.13: the definitions cost thousands of tokens on every
+        // request in clients that load all tools; this paragraph costs ~250, once.
         // Semantic recall is installed by init since 1.16; say so once when
         // it is missing, so the agent can offer the one command that fixes it.
         const sem = semanticStatus();
@@ -156,6 +221,8 @@ export function createServer(): McpServer {
         response.memory_discipline =
           'Before crbro_learn, crbro_recall: what you are about to save may already exist — then pass ' +
           'supersedes instead of adding a sibling (two versions of one fact compete on recall as equals). ' +
+          'crbro_recall searches by content; to read one neuron by id or name, list neurons, sessions or ' +
+          'the global map, use crbro_inspect. ' +
           'Structure — paths, what serves what, traps — goes in crbro_map, not in facts; anything derivable ' +
           'from the repo or git history is not worth storing. Write facts dense and self-contained: they are ' +
           'recalled without this conversation, and add keywords: the words a future question may use that ' +
@@ -164,74 +231,178 @@ export function createServer(): McpServer {
           'deliberate deferral with its ceiling and revisit trigger. Credentials never go in the brain: ' +
           'crbro_secret, then record only the NAME. Recall results carry confidence — "weak" means the match ' +
           'covers little of the question, verify before relying on it — and when two facts disagree, prefer ' +
-          'the more recent. Call crbro_consolidate before the conversation ends; it logs the session too.';
+          'the more recent. ' + THREE_STAGES + ' ' +
+          'Call crbro_consolidate before the conversation ends; it logs the session too.';
 
-        return {
-          content: [{
-            type: 'text' as const,
-            text: JSON.stringify(response, null, 2),
-          }],
-        };
+        return jsonResult(response);
       } catch (err) {
-        return {
-          content: [{
-            type: 'text' as const,
-            text: `CRBRO boot error: ${err instanceof Error ? err.message : String(err)}`,
-          }],
-          isError: true,
-        };
+        return errorResult('boot', err);
       }
     }
   );
 
   // ═══════════════════════════════════════════════════════════════
-  // TOOL 2: crbro_status — Brain status
+  // TOOL 2: crbro_inspect — Read-only views of the brain
   // ═══════════════════════════════════════════════════════════════
   server.registerTool(
-    'crbro_status',
+    'crbro_inspect',
     {
-      title: 'Brain status',
-      description: 'Read-only snapshot: CRBRO version, brain format, neuron/synapse/session totals, brain path, last boot and last consolidation. Loads no memory — that is crbro_boot.',
-      inputSchema: {},
+      title: 'Inspect the brain',
+      description: 'Read-only views of the brain by id or name; to search by content use crbro_recall. Nothing is written except in view=neuron, which bumps that neuron\'s access_count and last_accessed. view=status: version, brain path, totals, last boot/consolidation, semantic state, hot_topics_recalculated. view=neuron: one neuron in full — facts newest first, paged with limit/offset (superseded hidden unless include_superseded), decisions, patterns, preferences, errors, debts, entry_status, system map, and its connections resolved with name, type and strength (min_strength filters). view=neurons: rows hottest first (id, name, domain, type, heat, last_accessed, facts_count), filtered by domain, type, min_heat, paged with limit/offset. view=sessions: day logs newest first, the only place session summaries are read. view=global_map: one cluster per domain plus cross-domain bridges, computed live. Params of other views are ignored.',
+      inputSchema: {
+        view: z.enum(INSPECT_VIEWS).describe('Which read to perform. Only the params listed for that view are honoured; the rest are ignored, never an error.'),
+        neuron: z.string().optional().describe('view=neuron only, required there: neuron id (e.g. "project_octochat") or name (e.g. "OctoChat"). Reading bumps access_count and last_accessed.'),
+        domain: z.string().optional().describe('view=neurons: exact domain match, e.g. "proyectos-web".'),
+        type: z.enum(NEURON_TYPES).optional().describe('view=neurons: only this neuron type.'),
+        min_heat: z.number().min(0).max(1).optional().describe('view=neurons: minimum heat, 0.0-1.0. Heat blends access frequency, recency and connectivity.'),
+        min_strength: z.number().min(0).max(1).optional().describe('view=neuron: drop connections weaker than this (0.0-1.0). Omit or 0 = all.'),
+        limit: z.number().int().positive().optional().describe('Page size. view=neuron: facts per page (default 40, max 200); view=neurons: rows (default 50, max 500); view=sessions: day logs (default 10, max 100). Other views ignore it.'),
+        offset: z.number().int().min(0).optional().describe('Items to skip. view=neuron: facts (newest first); view=neurons: rows after the heat sort. Default 0.'),
+        include_superseded: z.boolean().optional().describe('view=neuron: also return superseded and retracted facts (default false). Retired decisions, patterns, errors and debts are always returned, with entry_status saying which are retired.'),
+      },
       outputSchema: {
-        crbro_version: z.string(),
-        brain_format: z.string().optional(),
-        total_neurons: z.number(),
-        total_synapses: z.number(),
-        total_sessions: z.number(),
-        brain_path: z.string().optional(),
-        last_boot: z.string().nullable().optional(),
-        last_consolidation: z.string().nullable().optional(),
-        semantic: z.object({ installed: z.boolean(), enabled: z.boolean(), mode: z.string(), model_downloaded: z.boolean(), home: z.string(), model: z.string() }).optional(),
+        view: z.enum(INSPECT_VIEWS),
+        status: z.object({
+          crbro_version: z.string(),
+          brain_format: z.string().optional(),
+          total_neurons: z.number(),
+          total_synapses: z.number(),
+          total_sessions: z.number(),
+          brain_path: z.string().optional(),
+          last_boot: z.string().nullable().optional(),
+          last_consolidation: z.string().nullable().optional(),
+          semantic: z.object({ installed: z.boolean(), enabled: z.boolean(), mode: z.string(), model_downloaded: z.boolean(), home: z.string(), model: z.string() }).optional(),
+          hot_topics_recalculated: z.string().nullable(),
+        }).optional(),
+        neuron: z.object({}).loose().optional(),
+        neurons: z.object({
+          total: z.number(),
+          offset: z.number(),
+          neurons: z.array(z.object({
+            id: z.string(), name: z.string(), domain: z.string(), type: z.string(),
+            heat: z.number(), last_accessed: z.string(), facts_count: z.number(),
+          }).loose()),
+        }).optional(),
+        sessions: z.object({
+          total: z.number(),
+          sessions: z.array(z.object({
+            session_id: z.string().optional(), date: z.string().optional(), summary: z.string().optional(),
+            topics_touched: z.array(z.string()).optional(),
+            key_facts_added: z.number().optional(), decisions_made: z.number().optional(),
+          }).loose()),
+        }).optional(),
+        global_map: z.object({
+          total_clusters: z.number(),
+          total_bridges: z.number(),
+          computed_at: z.string(),
+          clusters: z.array(z.object({}).loose()),
+          bridges: z.array(z.object({}).loose()),
+        }).optional(),
       },
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
-    async () => {
+    async (args) => {
       try {
-        const manifest = await brain.getManifest();
-        const payload = {
-          crbro_version: runningVersion(),
-          brain_format: manifest.version,
-          total_neurons: manifest.total_neurons,
-          total_synapses: manifest.total_synapses,
-          total_sessions: manifest.total_sessions,
-          brain_path: manifest.brain_path,
-          last_boot: manifest.last_boot,
-          last_consolidation: manifest.last_consolidation,
-          semantic: semanticStatus(),
-        };
-        return {
+        const done = (payload: unknown) => ({
           content: [{ type: 'text' as const, text: JSON.stringify(payload, null, 2) }],
-          structuredContent: payload,
-        };
+          structuredContent: { view: args.view, [args.view]: payload },
+        });
+
+        if (args.view === 'status') {
+          const manifest = await brain.getManifest();
+          const hot = await readJSON<HotTopics>(brain.paths.hotTopics());
+          return done({
+            crbro_version: runningVersion(),
+            brain_format: manifest.version,
+            total_neurons: manifest.total_neurons,
+            total_synapses: manifest.total_synapses,
+            total_sessions: manifest.total_sessions,
+            brain_path: manifest.brain_path,
+            last_boot: manifest.last_boot,
+            last_consolidation: manifest.last_consolidation,
+            semantic: semanticStatus(),
+            hot_topics_recalculated: hot?.last_recalculated ?? null,
+          });
+        }
+
+        if (args.view === 'neuron') {
+          if (!args.neuron) {
+            return textResult('view=neuron needs `neuron`: a neuron id or name.', true);
+          }
+          // Try by id first, then by name; cortex.get is the read that bumps
+          // access stats, and it is used on purpose (heat feeds on reads).
+          let neuron = await cortex.get(args.neuron);
+          if (!neuron) {
+            const found = await cortex.findByName(args.neuron);
+            if (found) neuron = await cortex.get(found.id);
+          }
+          if (!neuron) {
+            return textResult(
+              `Neuron not found: "${args.neuron}". Find the id with crbro_recall or crbro_inspect view=neurons.`, true);
+          }
+
+          // A whole neuron can be enormous - the biggest on the reference brain
+          // serialises to 528,836 characters, more than most models can hold - so
+          // facts are paged instead of dumped.
+          const limit = Math.min(Math.max(args.limit ?? 40, 1), 200);
+          const offset = Math.max(args.offset ?? 0, 0);
+          const visible = (neuron.facts || []).filter(f =>
+            args.include_superseded ? true : (f.status !== 'superseded' && f.status !== 'retracted')
+          );
+          const ordered = [...visible].sort((a, b) =>
+            String(b.added || '').localeCompare(String(a.added || ''))
+          );
+          const page = ordered.slice(offset, offset + limit);
+          const connections = await synapses.getConnections(neuron.id, args.min_strength);
+
+          return done({
+            ...neuron,
+            connection_ids: neuron.connections || [],
+            connections,
+            total_connections: connections.length,
+            facts: page,
+            facts_pagination: {
+              total: ordered.length,
+              returned: page.length,
+              offset,
+              has_more: offset + page.length < ordered.length,
+              order: 'newest first',
+              hidden_superseded: (neuron.facts || []).length - visible.length,
+            },
+            access_bumped: true,
+          });
+        }
+
+        if (args.view === 'neurons') {
+          const limit = Math.min(Math.max(args.limit ?? 50, 1), 500);
+          const offset = Math.max(args.offset ?? 0, 0);
+          const rows = await cortex.list({
+            domain: args.domain,
+            type: args.type,
+            min_heat: args.min_heat,
+            limit,
+            offset,
+          });
+          return done({ total: rows.length, offset, neurons: rows });
+        }
+
+        if (args.view === 'sessions') {
+          const limit = Math.min(Math.max(args.limit ?? 10, 1), 100);
+          const sessions = await hippocampus.listSessions(limit);
+          return done({ total: sessions.length, sessions });
+        }
+
+        // view === 'global_map': computed live, never cached, nothing written.
+        const globalMap = await prefrontal.getGlobalMap();
+        return done({
+          total_clusters: globalMap.clusters.length,
+          total_bridges: globalMap.bridges.length,
+          computed_at: globalMap.last_rebuilt,
+          clusters: globalMap.clusters,
+          bridges: globalMap.bridges,
+        });
       } catch (err) {
-        return {
-          content: [{
-            type: 'text' as const,
-            text: `CRBRO status error: ${err instanceof Error ? err.message : String(err)}`,
-          }],
-          isError: true,
-        };
+        return errorResult('inspect', err);
       }
     }
   );
@@ -243,230 +414,108 @@ export function createServer(): McpServer {
     'crbro_learn',
     {
       title: 'Learn something',
-      description: 'Store a fact, decision, pattern, preference, error or debt on a topic. The neuron is created if it does not exist; pass neuron_id (from crbro_recall) to target an exact one and skip name matching. Recall first: to replace an outdated fact pass its id in supersedes rather than adding a sibling. A fact stored verbatim before is skipped silently; decisions always append; preferences never leave this machine. Credential-like values are replaced with a marker before touching disk and listed in redacted — store the value with crbro_secret and record only its name. Add keywords a future question may use that the text lacks (synonyms, the other language, the generic name of the product). Returns neuron_id, action (created|updated), superseded count, near_duplicates (stored anyway; retire the old telling), supersedes_unmatched (those targets are still live — retire them with crbro_revise) and running totals.',
+      description: 'Write: store a fact, decision, pattern, preference, error or debt on a topic; the neuron is created if missing (or pass neuron_id). Stage 1 of the lifecycle: a new truth that REPLACES an old one → crbro_learn with supersedes (one call does both); to retire with no replacement use crbro_revise; to delete from disk use crbro_forget. crbro_recall first — it may already exist. The same fact text again is not duplicated: keywords merge (or keywords_replace) and a changed confidence applies (updated_in_place); text matching a retired fact or entry is refused with skipped_retired. Decisions always append; preferences never leave this machine. Credentials are replaced with a marker and listed in redacted — crbro_secret them, record only the name. Returns neuron_id, action, superseded count, near_duplicates (stored anyway; retire the old telling), supersedes_unmatched (still live) and totals.',
       inputSchema: {
         topic: z.string().describe('Topic name, e.g. "OctoChat", "Firebase", "SEO Strategy".'),
         type: z.enum(['fact', 'decision', 'pattern', 'preference', 'error', 'debt']).describe('error = a mistake plus its correction, in one entry. debt = a deliberate deferral: what was NOT done on purpose, its ceiling, and the revisit condition, e.g. "DEFERRED: protecting the PDFs. CEILING: anyone can download them without signing up. REVISIT WHEN: the signup flow works."'),
         content: z.string().describe('The knowledge itself. Dense and self-contained: it is recalled without this conversation as context.'),
-        confidence: z.number().min(0).max(1).optional().describe('0.0-1.0, default 1.0. Facts only.'),
-        domain: z.string().optional().describe('Domain, e.g. "proyectos-web". Applied when the neuron is created; on an existing neuron it only replaces the default "general".'),
+        confidence: z.number().min(0).max(1).optional().describe('0.0-1.0, default 1.0. Facts only. On an exact-duplicate active fact the stored confidence is updated to this value (updated_in_place:true).'),
+        domain: z.string().optional().describe('Domain, e.g. "proyectos-web". Applied when the neuron is created; on an existing neuron it only replaces the default "general" (crbro_revise domain replaces it unconditionally).'),
         rationale: z.string().optional().describe('Why the decision was taken. Stored and indexed with it; ignored for other types.'),
         neuron_id: z.string().optional().describe('Exact neuron id from crbro_recall, e.g. "project_octochat". Skips name matching entirely.'),
         supersedes: z.array(z.string()).optional().describe('Facts this one replaces: their ids or exact text. They leave recall but stay in the file. Unmatched targets are reported and stay live.'),
         keywords: z.array(z.string()).optional().describe('Facts only. 2-5 words a future question may use that the text does not contain: synonyms, the other language, the generic name of the product named. Indexed with the fact, never shown. The same text again with new keywords merges them.'),
+        keywords_replace: z.boolean().optional().describe('When the exact fact text already exists, replace its stored keywords with `keywords` instead of merging (default false). Teammates in a shared space only ever receive the union.'),
       },
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     },
     async (args) => {
-      try {        const result = await cortex.learn(args.topic, args.type, args.content, {
+      try {
+        const result = await cortex.learn(args.topic, args.type, args.content, {
           confidence: args.confidence,
           domain: args.domain,
           rationale: args.rationale,
           neuronId: args.neuron_id,
           supersedes: args.supersedes,
           keys: args.keywords,
+          keysReplace: args.keywords_replace,
         });
         // Indexing happens inside cortex.learn, through the indexer hook.
+
+        if (result.action === 'skipped_retired' && result.skipped_retired) {
+          const r = result.skipped_retired;
+          return jsonResult({
+            neuron_id: result.neuron?.id ?? null,
+            action: 'skipped_retired',
+            skipped_retired: r,
+            message: `Not stored: this text matches a ${r.status} entry (${r.id}${r.revised ? `, revised ${r.revised}` : ''}). ` +
+              (r.note ? `Note: ${r.note}. ` : '') +
+              'If it is true again, reactivate it with crbro_revise status active; if you meant a different fact, reword it.',
+          });
+        }
 
         // `neuron` is only null when the caller asked not to create one,
         // which the MCP path never does. Guard anyway so the types stay honest.
         if (!result.neuron) {
-          return {
-            content: [{
-              type: 'text' as const,
-              text: `No neuron matched "${args.topic}" and none was created.`,
-            }],
-          };
+          return textResult(`No neuron matched "${args.topic}" and none was created.`);
         }
 
-        return {
-          content: [{
-            type: 'text' as const,
-            text: JSON.stringify({
-              neuron_id: result.neuron.id,
-              action: result.action,
-              superseded_facts: result.superseded,
-              near_duplicates: result.near_duplicates.length > 0
-                ? result.near_duplicates
-                : undefined,
-              near_duplicates_warning: result.near_duplicates.length > 0
-                ? 'Stored, but this closely resembles the fact(s) listed above. If this is ' +
-                  'a newer telling of the same thing, retire the old one: pass its id in ' +
-                  '`supersedes` next time, or crbro_revise it now. Two versions of one fact ' +
-                  'keep competing on recall as equals.'
-                : undefined,
-              supersedes_unmatched: result.supersedes_unmatched.length > 0
-                ? result.supersedes_unmatched
-                : undefined,
-              supersedes_warning: result.supersedes_unmatched.length > 0
-                ? 'These supersedes targets matched NO active fact — the old version is ' +
-                  'still live and will keep appearing on recall. Find its id with ' +
-                  'crbro_recall and retire it with crbro_revise.'
-                : undefined,
-              redacted: result.redacted.length > 0 ? result.redacted : undefined,
-              redaction_note: result.redacted.length > 0
-                ? `Stored, but ${result.redacted.length} credential(s) were replaced with a marker: ` +
-                  `${result.redacted.join(', ')}. The sentence around them was kept. ` +
-                  'Do not try to store the value again. Offer the user crbro_secret instead: ' +
-                  'it puts the credential in the OS keychain, and then you record only its name here.'
-                : undefined,
-              total_facts: result.neuron.facts.length,
-              total_decisions: result.neuron.decisions.length,
-              total_patterns: result.neuron.patterns.length,
-              message: result.action === 'created'
-                ? `New neuron "${result.neuron.name}" created in ${result.neuron.domain}`
-                : `Updated neuron "${result.neuron.name}" — ${args.type} added` +
-                  (result.superseded > 0 ? `, ${result.superseded} older fact(s) superseded` : ''),
-            }, null, 2),
-          }],
-        };
-      } catch (err) {
-        return {
-          content: [{
-            type: 'text' as const,
-            text: `CRBRO learn error: ${err instanceof Error ? err.message : String(err)}`,
-          }],
-          isError: true,
-        };
-      }
-    }
-  );
-
-  // ═══════════════════════════════════════════════════════════════
-  // TOOL 4: crbro_neuron — Read a specific neuron
-  // ═══════════════════════════════════════════════════════════════
-  server.registerTool(
-    'crbro_neuron',
-    {
-      title: 'Read a neuron',
-      description: 'Read one neuron by id or name: facts newest first (superseded and retracted hidden unless include_superseded), decisions, patterns, preferences, errors, debts, entry dates, connections, heat and system map. Reading bumps its access stats. Big neurons are paged — use offset rather than pulling everything at once. To find the right neuron first, use crbro_recall.',
-      inputSchema: {
-        id: z.string().describe('Neuron id (e.g. "project_octochat") or name (e.g. "OctoChat").'),
-        limit: z.number().optional().describe('Facts to return: default 40, max 200.'),
-        offset: z.number().optional().describe('Facts to skip. Facts come newest first.'),
-        include_superseded: z.boolean().optional().describe('Also return superseded and retracted facts (default false).'),
-      },
-      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-    },
-    async (args) => {
-      try {        // Try by ID first, then by name
-        let neuron = await cortex.get(args.id);
-        if (!neuron) {
-          neuron = await cortex.findByName(args.id);
-          if (neuron) {
-            // Touch the found neuron
-            neuron = await cortex.get(neuron.id);
-          }
-        }
-
-        if (!neuron) {
-          return {
-            content: [{
-              type: 'text' as const,
-              text: `Neuron not found: "${args.id}". Use crbro_neurons to list available neurons.`,
-            }],
-          };
-        }
-
-        // A whole neuron can be enormous - the biggest on the reference brain
-        // serialises to 528,836 characters, more than most models can hold - so
-        // facts are paged instead of dumped.
-        const limit = Math.min(Math.max(args.limit ?? 40, 1), 200);
-        const offset = Math.max(args.offset ?? 0, 0);
-
-        const visible = (neuron.facts || []).filter(f =>
-          args.include_superseded ? true : (f.status !== 'superseded' && f.status !== 'retracted')
-        );
-        const ordered = [...visible].sort((a, b) =>
-          String(b.added || '').localeCompare(String(a.added || ''))
-        );
-        const page = ordered.slice(offset, offset + limit);
-
-        return {
-          content: [{
-            type: 'text' as const,
-            text: JSON.stringify({
-              ...neuron,
-              facts: page,
-              facts_pagination: {
-                total: ordered.length,
-                returned: page.length,
-                offset,
-                has_more: offset + page.length < ordered.length,
-                order: 'newest first',
-                hidden_superseded: (neuron.facts || []).length - visible.length,
-              },
-            }, null, 2),
-          }],
-        };
-      } catch (err) {
-        return {
-          content: [{
-            type: 'text' as const,
-            text: `CRBRO neuron error: ${err instanceof Error ? err.message : String(err)}`,
-          }],
-          isError: true,
-        };
-      }
-    }
-  );
-
-  // ═══════════════════════════════════════════════════════════════
-  // TOOL 5: crbro_neurons — List neurons
-  // ═══════════════════════════════════════════════════════════════
-  server.registerTool(
-    'crbro_neurons',
-    {
-      title: 'List neurons',
-      description: 'List neurons, hottest first, filtered by domain, type or min_heat. Read-only. Each row: id, name, domain, type, heat, last_accessed, facts_count. To search content rather than list topics, use crbro_recall.',
-      inputSchema: {
-        domain: z.string().optional().describe('Only this domain, e.g. "proyectos-web".'),
-        type: z.enum(['project', 'tech', 'lang', 'person', 'domain', 'process', 'protocol']).optional().describe('Only this neuron type.'),
-        min_heat: z.number().optional().describe('Minimum heat, 0.0-1.0. Heat blends access frequency, recency and connectivity.'),
-        limit: z.number().optional().describe('Max rows (default 50).'),
-      },
-      outputSchema: {
-        total: z.number(),
-        neurons: z.array(z.object({
-          id: z.string(), name: z.string(), domain: z.string(), type: z.string(),
-          heat: z.number(), last_accessed: z.string(), facts_count: z.number(),
-        }).loose()),
-      },
-      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-    },
-    async (args) => {
-      try {        const neurons = await cortex.list({
-          domain: args.domain,
-          type: args.type,
-          min_heat: args.min_heat,
-          limit: args.limit,
+        return jsonResult({
+          neuron_id: result.neuron.id,
+          action: result.action,
+          duplicate: result.duplicate || undefined,
+          updated_in_place: result.updated_in_place || undefined,
+          superseded_facts: result.superseded,
+          near_duplicates: result.near_duplicates.length > 0
+            ? result.near_duplicates
+            : undefined,
+          near_duplicates_warning: result.near_duplicates.length > 0
+            ? 'Stored, but this closely resembles the fact(s) listed above. If this is ' +
+              'a newer telling of the same thing, retire the old one: pass its id in ' +
+              '`supersedes` next time, or crbro_revise it now. Two versions of one fact ' +
+              'keep competing on recall as equals.'
+            : undefined,
+          supersedes_unmatched: result.supersedes_unmatched.length > 0
+            ? result.supersedes_unmatched
+            : undefined,
+          supersedes_warning: result.supersedes_unmatched.length > 0
+            ? 'These supersedes targets matched NO active fact — the old version is ' +
+              'still live and will keep appearing on recall. Find its id with ' +
+              'crbro_recall and retire it with crbro_revise.'
+            : undefined,
+          redacted: result.redacted.length > 0 ? result.redacted : undefined,
+          redaction_note: result.redacted.length > 0
+            ? `Stored, but ${result.redacted.length} credential(s) were replaced with a marker: ` +
+              `${result.redacted.join(', ')}. The sentence around them was kept. ` +
+              'Do not try to store the value again. Offer the user crbro_secret instead: ' +
+              'it puts the credential in the OS keychain, and then you record only its name here.'
+            : undefined,
+          total_facts: result.neuron.facts.length,
+          total_decisions: result.neuron.decisions.length,
+          total_patterns: result.neuron.patterns.length,
+          message: result.action === 'created'
+            ? `New neuron "${result.neuron.name}" created in ${result.neuron.domain}`
+            : result.action === 'skipped'
+            ? (result.updated_in_place
+                ? `"${result.neuron.name}" already held this ${args.type}; its confidence/keywords were updated in place.`
+                : `"${result.neuron.name}" already held this ${args.type} verbatim; nothing added.`)
+            : `Updated neuron "${result.neuron.name}" — ${args.type} added` +
+              (result.superseded > 0 ? `, ${result.superseded} older fact(s) superseded` : ''),
         });
-
-        const payload = { total: neurons.length, neurons };
-        return {
-          content: [{ type: 'text' as const, text: JSON.stringify(payload, null, 2) }],
-          structuredContent: payload,
-        };
       } catch (err) {
-        return {
-          content: [{
-            type: 'text' as const,
-            text: `CRBRO neurons error: ${err instanceof Error ? err.message : String(err)}`,
-          }],
-          isError: true,
-        };
+        return errorResult('learn', err);
       }
     }
   );
 
   // ═══════════════════════════════════════════════════════════════
-  // TOOL 6: crbro_recall — Search the brain
+  // TOOL 4: crbro_recall — Search the brain
   // ═══════════════════════════════════════════════════════════════
   server.registerTool(
     'crbro_recall',
     {
       title: 'Recall',
-      description: 'Search everything saved in earlier sessions — the full text of facts, decisions, patterns, preferences, errors, debts and system maps, not just topic names. Read-only. One result per neuron: its best matching chunk (matching_content, matched_kind, matched_added), a confidence label (weak = the match covers little of the question; verify before relying on it) and, for the top results, also_matched — the neuron\'s next best lines. Superseded and retracted facts never surface. Call it before asking the user something they may already have told you, and before crbro_learn. If nothing matches or all is weak, pass 2-4 alternative phrasings in queries (fused by rank), or retry with fewer, more distinctive words (names, ids, filenames). has_map:true means the neuron keeps a system map — read it with crbro_map before touching that system.',
+      description: 'Read-only search of everything saved in earlier sessions — the full text of facts, decisions, patterns, preferences, errors, debts and maps, not just topic names; to read one neuron by id or name use crbro_inspect view=neuron. One result per neuron: its best matching chunk with matched_kind and matched_added, a confidence label (weak = little of the question covered; verify first), plus also_matched. Retired facts and entries never surface. Call it before asking the user what they may already have told you, and before crbro_learn. If nothing matches, retry with 2-4 phrasings in queries or fewer, distinctive words. has_map:true: read the system map with crbro_map before touching that system.',
       inputSchema: {
         query: z.string().describe('What to look for, e.g. "Firebase authentication setup". Fewer, distinctive terms beat full sentences.'),
         queries: z.array(z.string()).optional().describe('Alternative phrasings of the same question, searched together with query and fused by rank. Use synonyms, the other language and the concrete product name; 2-4 is plenty.'),
@@ -490,7 +539,8 @@ export function createServer(): McpServer {
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     async (args) => {
-      try {        const results = await searchEngine.searchMany([args.query, ...(args.queries || [])], {
+      try {
+        const results = await searchEngine.searchMany([args.query, ...(args.queries || [])], {
           domain: args.domain,
           limit: args.limit,
         });
@@ -501,415 +551,394 @@ export function createServer(): McpServer {
           results,
           hint: results.length === 0
             ? 'Nothing matched. Try fewer, more distinctive words - names, ids, filenames - rather than a full sentence.'
-            : 'matching_content is the chunk that matched; matched_added is when it was recorded; confidence "weak" means little of the question was covered - verify before relying on it. Prefer recent facts when two disagree. has_map: true means the neuron holds a system map - read it with crbro_map before working on that system.',
+            : 'matching_content is the chunk that matched; matched_added is when it was recorded; confidence "weak" means little of the question was covered - verify before relying on it. Prefer recent facts when two disagree. has_map: true means the neuron holds a system map - read it with crbro_map before working on that system. To read the whole neuron: crbro_inspect view=neuron.',
         };
         return {
           content: [{ type: 'text' as const, text: JSON.stringify(payload, null, 2) }],
           structuredContent: payload,
         };
       } catch (err) {
-        return {
-          content: [{
-            type: 'text' as const,
-            text: `CRBRO recall error: ${err instanceof Error ? err.message : String(err)}`,
-          }],
-          isError: true,
-        };
+        return errorResult('recall', err);
       }
     }
   );
 
   // ═══════════════════════════════════════════════════════════════
-  // TOOL 7: crbro_connect — Create/strengthen a synapse
+  // TOOL 5: crbro_revise — Retire, reactivate, edit metadata
+  // ═══════════════════════════════════════════════════════════════
+  const reviseSchema = z.object({
+    neuron: z.string().describe('Neuron id or name holding what to revise, e.g. "project_octochat".'),
+    facts: z.array(z.string()).optional().describe('Facts to move to `status`: their ids (from crbro_recall) or exact text (trimmed, case-insensitive). For superseded/retracted only active facts match; for active only retired ones do.'),
+    entries: z.array(z.string()).optional().describe('Exact texts of decisions, patterns, errors or debts to move to `status`. Retired entries stay in the file (entry_status) but leave recall like a superseded fact.'),
+    status: z.enum(['superseded', 'retracted', 'active']).optional().describe('superseded = a newer truth exists (default); retracted = it was never true; active = reactivate a retired fact or entry. Reactivation is local: on a shared neuron the next sync re-applies the retirement (the response carries shared_warning).'),
+    note: z.string().optional().describe('Why. Stored as revision_note on facts and entry_status.note on entries. The next reader will wonder.'),
+    summary: z.string().optional().describe('Replace the neuron summary. Credentials are redacted and listed in redacted.'),
+    domain: z.string().optional().describe('Replace the neuron domain unconditionally, e.g. "proyectos-web".'),
+    tags: z.array(z.string()).optional().describe('Replace the WHOLE tag list (trimmed, deduplicated). On protocol neurons re-send the priority: and source: tags or they are gone.'),
+    name: z.string().optional().describe('Rename the neuron. Its id, file, synapses and shared state stay the same.'),
+  }).superRefine((v, ctx) => {
+    const any = [v.facts, v.entries, v.summary, v.domain, v.tags, v.name].some(x => x !== undefined);
+    if (!any) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'Nothing to revise: pass facts, entries, or a metadata field (summary, domain, tags, name).',
+      });
+    }
+  });
+
+  server.registerTool(
+    'crbro_revise',
+    {
+      title: 'Revise a neuron',
+      description: 'Write: change what a neuron says without deleting anything. Stage 2 of the lifecycle: something stopped being true, or was never true, and nothing replaces it → crbro_revise (kept in the file, gone from recall, reversible with status active). If a replacement exists, crbro_learn with supersedes does both; for what must not exist on disk use crbro_forget. facts retires facts by id or exact text; entries retires decisions, patterns, errors and debts by exact text; status active reactivates either (local only on a shared neuron: the next sync re-applies the retirement, shared_warning says so). summary, domain, tags and name edit metadata in the same call (tags replaces the whole list; the id never changes). Anything in unmatched is STILL LIVE — fix and re-run.',
+      inputSchema: reviseSchema,
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async (args) => {
+      try {
+        const target = await resolveNeuron(args.neuron);
+        if (!target) {
+          return textResult(`Neuron not found: "${args.neuron}". Use crbro_recall to find the right neuron id first.`);
+        }
+        const status = args.status || 'superseded';
+
+        let revisedFacts = 0;
+        let revisedEntries = 0;
+        const unmatched: string[] = [];
+        let changed: string[] = [];
+        let redacted: string[] = [];
+
+        if (args.facts && args.facts.length > 0) {
+          const r = await cortex.revise(target.id, args.facts, { status, note: args.note });
+          revisedFacts = r.revised;
+          unmatched.push(...r.unmatched);
+        }
+        if (args.entries && args.entries.length > 0) {
+          const r = await cortex.retireEntries(target.id, args.entries, { status, note: args.note });
+          revisedEntries = r.revised;
+          unmatched.push(...r.unmatched);
+        }
+        const meta = { summary: args.summary, domain: args.domain, tags: args.tags, name: args.name };
+        if (Object.values(meta).some(v => v !== undefined)) {
+          const r = await cortex.setMeta(target.id, meta);
+          changed = r.changed;
+          redacted = r.redacted;
+        }
+
+        const shared = (await sharedMap(brain))[target.id];
+        const sharedWarning = status === 'active' && shared
+          ? `"${target.id}" is shared in space "${shared}": reactivation is local only — the retirement comes back from the shared log on the next sync.`
+          : undefined;
+
+        const parts: string[] = [];
+        if (revisedFacts > 0) parts.push(`${revisedFacts} fact(s) ${status === 'active' ? 'reactivated' : 'retired'}`);
+        if (revisedEntries > 0) parts.push(`${revisedEntries} entr(y/ies) ${status === 'active' ? 'reactivated' : 'retired'}`);
+        if (changed.length > 0) parts.push(`${changed.join(', ')} updated`);
+        const touchedTargets = (args.facts?.length ?? 0) + (args.entries?.length ?? 0);
+
+        return jsonResult({
+          neuron_id: target.id,
+          revised_facts: revisedFacts,
+          revised_entries: revisedEntries,
+          unmatched: unmatched.length > 0 ? unmatched : undefined,
+          changed,
+          status,
+          shared_warning: sharedWarning,
+          redacted: redacted.length > 0 ? redacted : undefined,
+          message: parts.length > 0
+            ? `${parts.join('; ')} in "${target.name}".` +
+              (status !== 'active' && (revisedFacts + revisedEntries) > 0 ? ' They no longer appear in recall.' : '') +
+              (unmatched.length > 0 ? ` WARNING: ${unmatched.length} target(s) matched nothing and are unchanged.` : '')
+            : touchedTargets > 0
+            ? 'Nothing matched. Pass the fact id from crbro_recall, or the exact text; for status active only retired items match.'
+            : 'Nothing changed: the metadata already had those values.',
+        });
+      } catch (err) {
+        return errorResult('revise', err);
+      }
+    }
+  );
+
+  // ═══════════════════════════════════════════════════════════════
+  // TOOL 6: crbro_forget — Remove from disk, five modes
+  // ═══════════════════════════════════════════════════════════════
+  const forgetSchema = z.object({
+    neuron: z.string().optional().describe('Neuron id or name the mode acts on. Required for every mode except session. restore needs the exact neuron id.'),
+    facts: z.array(z.string()).optional().describe('Mode facts: fact ids, or the exact text of a fact, decision, pattern, preference, error or debt; the exact full text of the map removes the map. Deleted for good after a quarantine copy; decision/pattern removals travel to shared spaces like errors and debts.'),
+    entire: z.boolean().optional().describe('Mode entire: delete the whole neuron and its synapses. Without confirm_token it is a dry run — { neuron_id, dry_run:true, counts, shared_in, confirm_token }. Refused (no token) while the neuron is shared: crbro_share unshare first.'),
+    confirm_token: z.string().optional().describe('Only with entire:true — the token from the dry run. Derived from the neuron\'s counts, so it goes stale (and is refused) when the neuron changed in between.'),
+    restore: z.boolean().optional().describe('Mode restore: bring back the newest quarantine copy of `neuron` (exact id). If the neuron exists again, the copy is merged into it (merged_into_existing:true, moved counts). The quarantine file stays, so restore is repeatable.'),
+    merge_into: z.string().optional().describe('Mode merge_into: target neuron id or name. Everything of `neuron` is unioned into it, synapses rewired, then `neuron` is deleted (quarantined first). Refused while `neuron` is shared.'),
+    session: z.string().optional().describe('Mode session: session id ("session_2026-09-03" or "2026-09-03") whose log is deleted after a quarantine copy. `neuron` is not needed.'),
+  }).superRefine((v, ctx) => {
+    const modes = [
+      v.facts !== undefined ? 'facts' : null,
+      v.entire ? 'entire' : null,
+      v.restore ? 'restore' : null,
+      v.merge_into !== undefined ? 'merge_into' : null,
+      v.session !== undefined ? 'session' : null,
+    ].filter((m): m is string => m !== null);
+    if (modes.length !== 1) {
+      ctx.addIssue({
+        code: 'custom',
+        message: `Pass exactly ONE mode: facts (entries of a neuron), entire (whole neuron, two steps), restore (from quarantine), merge_into (another neuron) or session (a day log). Got ${modes.length === 0 ? 'none' : modes.join(' + ')}. confirm_token is only valid with entire.`,
+      });
+    }
+    if (v.confirm_token !== undefined && !v.entire) {
+      ctx.addIssue({ code: 'custom', path: ['confirm_token'], message: 'confirm_token is only valid with entire:true.' });
+    }
+    if (v.session === undefined && !v.neuron) {
+      ctx.addIssue({ code: 'custom', path: ['neuron'], message: 'neuron (id or name) is required for every mode except session.' });
+    }
+  });
+
+  const forgetToken = (n: Neuron): string => contentHash(
+    `forget:${n.id}:${(n.facts || []).length}:${(n.decisions || []).length}:${(n.patterns || []).length}:${(n.connections || []).length}`, 8);
+
+  server.registerTool(
+    'crbro_forget',
+    {
+      title: 'Forget for good',
+      description: 'Write, destructive: remove from disk after a quarantine copy (backup returned). Stage 3 of the lifecycle: something must not exist on disk at all — a credential, personal data, a whole neuron → crbro_forget; for knowledge that merely stopped being true use crbro_revise, which keeps the history. One mode per call. facts: delete entries of a neuron (facts, decisions, patterns, preferences, errors, debts, the map) by id or exact text. entire: delete the whole neuron and its synapses — call it without confirm_token first: the dry run reports what would happen and returns confirm_token. Show the user, get agreement, call again with the token; a stale token is refused. restore: bring back the newest quarantine copy. merge_into: union a neuron into another, rewire synapses, delete the source. session: delete one day\'s log. entire and merge_into refuse a shared neuron — crbro_share unshare first. A removed credential must still be rotated.',
+      inputSchema: forgetSchema,
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+    },
+    async (args) => {
+      try {
+        // ── session ──
+        if (args.session !== undefined) {
+          const r = await hippocampus.forgetSession(args.session);
+          return jsonResult({
+            ...r,
+            message: r.removed
+              ? `Session log ${r.session_id} deleted. A copy is in ${r.backup}.`
+              : `No session log called ${r.session_id}. List them with crbro_inspect view=sessions.`,
+          });
+        }
+
+        const ref = args.neuron as string;
+
+        // ── facts ──
+        if (args.facts !== undefined) {
+          const r = await cortex.forget(ref, args.facts);
+          if (!r.neuron_id) {
+            return textResult(`Neuron not found: "${ref}". Use crbro_recall or crbro_audit to find the right one.`);
+          }
+          return jsonResult({
+            neuron_id: r.neuron_id,
+            removed: r.removed,
+            backup: r.backup,
+            message: r.removed > 0
+              ? `${r.removed} entr(y/ies) removed from "${r.neuron_id}". A copy of the neuron as it was is in ${r.backup}. ` +
+                'If any of them was a credential, rotate it: it existed on disk and in the index.'
+              : 'Nothing matched. Pass the fact id from crbro_recall, or its exact text.',
+          });
+        }
+
+        // ── restore ──
+        if (args.restore) {
+          const r = await cortex.restoreNeuron(ref);
+          if (!r.neuron) {
+            return textResult(`No quarantine copy found for neuron id "${ref}". restore needs the exact id the neuron had; names are not resolved here.`);
+          }
+          return jsonResult({
+            neuron_id: r.neuron.id,
+            restored_from: r.restored_from,
+            merged_into_existing: r.merged_into_existing,
+            moved: r.moved,
+            message: r.merged_into_existing
+              ? `"${r.neuron.name}" existed again, so the quarantine copy was merged into it (see moved). Synapses were not restored: reconnect with crbro_connect if needed.`
+              : `"${r.neuron.name}" restored from ${r.restored_from}. Synapses were not restored: reconnect with crbro_connect if needed.`,
+          });
+        }
+
+        // ── merge_into ──
+        if (args.merge_into !== undefined) {
+          const from = await resolveNeuron(ref);
+          if (!from) return textResult(`Neuron not found: "${ref}".`);
+          const into = await resolveNeuron(args.merge_into);
+          if (!into) return textResult(`Target neuron not found: "${args.merge_into}".`);
+          if (from.id === into.id) {
+            return textResult(`"${ref}" and "${args.merge_into}" are the same neuron (${from.id}); nothing to merge.`);
+          }
+          const shared = (await sharedMap(brain))[from.id];
+          if (shared) {
+            return textResult(
+              `Refused: "${from.id}" is shared in space "${shared}" and would be re-created by the next sync. ` +
+              'Take it out first with crbro_share unshare:true, then merge.', true);
+          }
+          const r = await cortex.mergeNeurons(from.id, into.id);
+          if (!r.from || !r.into || !r.moved) {
+            return textResult(`Merge did not run: ${!r.from ? `source "${ref}"` : `target "${args.merge_into}"`} could not be resolved.`, true);
+          }
+          const rewired = await synapses.rewire(from.id, into.id);
+          return jsonResult({
+            from: r.from,
+            into: r.into,
+            backup: r.backup,
+            moved: r.moved,
+            synapses: rewired,
+            message: `"${from.name}" merged into "${into.name}" and deleted; a copy is in ${r.backup}. ` +
+              `Synapses: ${rewired.moved} moved, ${rewired.merged} merged, ${rewired.dropped} dropped. ` +
+              `Undo with crbro_forget restore:true neuron="${from.id}".`,
+          });
+        }
+
+        // ── entire (two steps) ──
+        const target = await resolveNeuron(ref);
+        if (!target) return textResult(`Neuron not found: "${ref}".`);
+        const shared = (await sharedMap(brain))[target.id];
+        const counts = {
+          facts: (target.facts || []).length,
+          decisions: (target.decisions || []).length,
+          patterns: (target.patterns || []).length,
+          preferences: (target.preferences || []).length,
+          errors: (target.errors || []).length,
+          debts: (target.debts || []).length,
+          connections: (target.connections || []).length,
+        };
+        const token = forgetToken(target);
+
+        if (!args.confirm_token) {
+          return jsonResult({
+            neuron_id: target.id,
+            name: target.name,
+            dry_run: true,
+            counts,
+            shared_in: shared ?? null,
+            confirm_token: shared ? undefined : token,
+            message: shared
+              ? `Refused: "${target.id}" is shared in space "${shared}" and would be re-created by the next sync. ` +
+                'Take it out first with crbro_share unshare:true, then call again.'
+              : `Dry run: deleting "${target.name}" removes ${counts.facts} fact(s), ${counts.decisions} decision(s), ` +
+                `${counts.patterns} pattern(s), ${counts.preferences} preference(s), ${counts.errors} error(s), ${counts.debts} debt(s) ` +
+                `and ${counts.connections} synapse(s). A quarantine copy is kept (restore:true brings it back). ` +
+                'Show this to the user; with their agreement call again with confirm_token.',
+          });
+        }
+
+        if (shared) {
+          return textResult(
+            `Refused: "${target.id}" is shared in space "${shared}". Take it out first with crbro_share unshare:true.`, true);
+        }
+        if (args.confirm_token !== token) {
+          return textResult(
+            `Stale confirm_token: "${target.id}" changed since the dry run. Call again without the token to get a fresh one.`, true);
+        }
+
+        const r = await cortex.forgetNeuron(target.id);
+        if (!r.neuron_id) return textResult(`Neuron not found: "${ref}".`);
+        const synapsesRemoved = await synapses.removeAllFor(target.id);
+        return jsonResult({
+          neuron_id: r.neuron_id,
+          removed: 'neuron',
+          backup: r.backup,
+          counts: r.counts,
+          synapses_removed: synapsesRemoved,
+          message: `"${target.name}" deleted with ${synapsesRemoved} synapse(s). A copy is in ${r.backup}; ` +
+            `crbro_forget restore:true neuron="${target.id}" brings it back. If it held a credential, rotate it.`,
+        });
+      } catch (err) {
+        return errorResult('forget', err);
+      }
+    }
+  );
+
+  // ═══════════════════════════════════════════════════════════════
+  // TOOL 7: crbro_connect — Create, strengthen or delete a synapse
   // ═══════════════════════════════════════════════════════════════
   server.registerTool(
     'crbro_connect',
     {
       title: 'Connect two neurons',
-      description: 'Create or strengthen the undirected synapse between two neurons: created at strength 0.5, +0.1 per repeat call (cap 1.0). Idle synapses decay and crbro_maintenance prunes the weak. Returns synapse_id, action (created|strengthened) and strength. Neurons written in the same session are linked automatically by crbro_consolidate; use this for relationships that are not just co-occurrence.',
+      description: 'Write: create, strengthen or delete the undirected synapse between two neurons; both ids are validated. action=connect (default) creates at strength 0.5 and adds +0.1 per repeat call (cap 1.0), or sets the absolute strength you pass; action=disconnect deletes the synapse and unlinks both neurons — the destructive side. Idle synapses decay and crbro_maintenance prunes the weak; crbro_consolidate links neurons written in the same session by itself, so use this for relationships beyond co-occurrence. To read connections use crbro_inspect view=neuron. Returns synapse_id, action (created|strengthened|disconnected|absent) and strength.',
       inputSchema: {
-        from: z.string().describe('Source neuron id, e.g. "project_octochat". Not validated: use an exact id from crbro_recall or crbro_neurons, or the synapse points at nothing.'),
-        to: z.string().describe('Target neuron id. Order does not matter — (a,b) and (b,a) are the same synapse.'),
-        type: z.enum(['dependency', 'causal', 'temporal', 'conceptual', 'hierarchy', 'alternative']).describe('Relationship kind. Used only on creation; a strengthening call keeps the existing type.'),
+        action: z.enum(['connect', 'disconnect']).optional().describe('connect = create or strengthen (default); disconnect = delete the synapse and unlink both neurons. An absent synapse returns action:absent, removed:false, not an error.'),
+        from: z.string().describe('Exact neuron id, e.g. "project_octochat". Validated: an unknown id is an error.'),
+        to: z.string().describe('Exact neuron id. Order does not matter — (a,b) and (b,a) are the same synapse.'),
+        type: z.enum(['dependency', 'causal', 'temporal', 'conceptual', 'hierarchy', 'alternative']).optional().describe('Relationship kind, used only when the synapse is created (default conceptual). Ignored on strengthen and on disconnect.'),
+        strength: z.number().min(0).max(1).optional().describe('Absolute strength 0.0-1.0 to set, on create or on an existing synapse, instead of the 0.5 / +0.1 rule.'),
         context: z.string().optional().describe('One line on the relationship. On strengthen it replaces the stored text; omit to keep it.'),
       },
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     },
     async (args) => {
-      try {        const result = await synapses.connect(args.from, args.to, args.type, args.context);
+      try {
+        for (const id of [args.from, args.to]) {
+          if (!(await cortex.peek(id))) {
+            return textResult(`Unknown neuron: ${id}. Pass exact ids — find them with crbro_recall or crbro_inspect view=neurons.`, true);
+          }
+        }
 
-        return {
-          content: [{
-            type: 'text' as const,
-            text: JSON.stringify({
-              synapse_id: result.synapse.id,
-              action: result.action,
-              strength: result.synapse.strength,
-              message: result.action === 'created'
-                ? `New synapse: ${args.from} ↔ ${args.to} (${args.type})`
-                : `Synapse strengthened: ${args.from} ↔ ${args.to} → strength ${result.synapse.strength}`,
-            }, null, 2),
-          }],
-        };
-      } catch (err) {
-        return {
-          content: [{
-            type: 'text' as const,
-            text: `CRBRO connect error: ${err instanceof Error ? err.message : String(err)}`,
-          }],
-          isError: true,
-        };
-      }
-    }
-  );
+        if (args.action === 'disconnect') {
+          const r = await synapses.disconnect(args.from, args.to);
+          return jsonResult({
+            synapse_id: r.synapse_id,
+            action: r.removed ? 'disconnected' : 'absent',
+            removed: r.removed,
+            message: r.removed
+              ? `Synapse removed: ${args.from} ↔ ${args.to}. Both neurons no longer list each other.`
+              : `No synapse between ${args.from} and ${args.to}; nothing to remove.`,
+          });
+        }
 
-  // ═══════════════════════════════════════════════════════════════
-  // TOOL 8: crbro_connections — Get neuron connections
-  // ═══════════════════════════════════════════════════════════════
-  server.registerTool(
-    'crbro_connections',
-    {
-      title: 'Neuron connections',
-      description: 'List every synapse touching one neuron, strongest first — target_id, target_name, type, strength and context per entry. Read-only; an unknown or unconnected id returns an empty list, not an error.',
-      inputSchema: {
-        neuron_id: z.string().describe('Exact neuron id, e.g. "project_octochat". Names are not resolved here — get the id from crbro_recall or crbro_neurons.'),
-        min_strength: z.number().optional().describe('Drop connections weaker than this (0.0-1.0). Omit for all; 0 is no filter.'),
-      },
-      outputSchema: {
-        neuron_id: z.string(),
-        total_connections: z.number(),
-        connections: z.array(z.object({
-          target_id: z.string(), target_name: z.string(), type: z.string(),
-          strength: z.number(), context: z.string(),
-        }).loose()),
-      },
-      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-    },
-    async (args) => {
-      try {        const connections = await synapses.getConnections(args.neuron_id, args.min_strength);
-
-        const payload = { neuron_id: args.neuron_id, total_connections: connections.length, connections };
-        return {
-          content: [{ type: 'text' as const, text: JSON.stringify(payload, null, 2) }],
-          structuredContent: payload,
-        };
-      } catch (err) {
-        return {
-          content: [{
-            type: 'text' as const,
-            text: `CRBRO connections error: ${err instanceof Error ? err.message : String(err)}`,
-          }],
-          isError: true,
-        };
-      }
-    }
-  );
-
-  // ═══════════════════════════════════════════════════════════════
-  // TOOL 9: crbro_session_log — Log a session
-  // ═══════════════════════════════════════════════════════════════
-  server.registerTool(
-    'crbro_session_log',
-    {
-      title: 'Log a session',
-      description: 'Log a session summary to the hippocampus — one entry per calendar day; a same-day call appends to it. Also replaces the active-topics list with topics_touched. Normally unnecessary: crbro_consolidate logs the session itself.',
-      inputSchema: {
-        summary: z.string().describe('What happened in this session. Appended if today already has an entry.'),
-        topics_touched: z.array(z.string()).describe('Relevant neuron ids. Merged (deduplicated) into the day entry; becomes the active-topics list.'),
-        key_facts_added: z.number().optional().describe('New facts stored. Summed into the day total on same-day calls.'),
-        decisions_made: z.number().optional().describe('Decisions recorded. Summed into the day total on same-day calls.'),
-      },
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
-    },
-    async (args) => {
-      try {        const session = await hippocampus.logSession({
-          summary: args.summary,
-          topics_touched: args.topics_touched,
-          key_facts_added: args.key_facts_added,
-          decisions_made: args.decisions_made,
+        const type = args.type ?? 'conceptual';
+        const result = await synapses.connect(args.from, args.to, type, args.context, { strength: args.strength });
+        return jsonResult({
+          synapse_id: result.synapse.id,
+          action: result.action,
+          strength: result.synapse.strength,
+          message: result.action === 'created'
+            ? `New synapse: ${args.from} ↔ ${args.to} (${type}) at strength ${result.synapse.strength}`
+            : `Synapse strengthened: ${args.from} ↔ ${args.to} → strength ${result.synapse.strength}`,
         });
-
-        // Update active context with last session
-        await prefrontal.updateContext({
-          set_topics: args.topics_touched,
-        });
-
-        return {
-          content: [{
-            type: 'text' as const,
-            text: JSON.stringify({
-              session_id: session.session_id,
-              date: session.date,
-              message: 'Session logged to hippocampus.',
-            }, null, 2),
-          }],
-        };
       } catch (err) {
-        return {
-          content: [{
-            type: 'text' as const,
-            text: `CRBRO session_log error: ${err instanceof Error ? err.message : String(err)}`,
-          }],
-          isError: true,
-        };
+        return errorResult('connect', err);
       }
     }
   );
 
   // ═══════════════════════════════════════════════════════════════
-  // TOOL 10: crbro_sessions — List recent sessions
-  // ═══════════════════════════════════════════════════════════════
-  server.registerTool(
-    'crbro_sessions',
-    {
-      title: 'Recent sessions',
-      description: 'List recent session logs, newest first, one per day: date, merged summary, topics_touched neuron ids, fact/decision counters. Read-only. Read them before asking the user what was already done; crbro_boot already returns the last one.',
-      inputSchema: {
-        limit: z.number().optional().describe('Day logs to return, newest first (default 10).'),
-      },
-      outputSchema: {
-        total: z.number(),
-        sessions: z.array(z.object({
-          session_id: z.string().optional(), date: z.string().optional(), summary: z.string().optional(),
-          topics_touched: z.array(z.string()).optional(),
-          key_facts_added: z.number().optional(), decisions_made: z.number().optional(),
-        }).loose()),
-      },
-      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-    },
-    async (args) => {
-      try {        const sessions = await hippocampus.listSessions(args.limit);
-
-        const payload = { total: sessions.length, sessions };
-        return {
-          content: [{ type: 'text' as const, text: JSON.stringify(payload, null, 2) }],
-          structuredContent: payload,
-        };
-      } catch (err) {
-        return {
-          content: [{
-            type: 'text' as const,
-            text: `CRBRO sessions error: ${err instanceof Error ? err.message : String(err)}`,
-          }],
-          isError: true,
-        };
-      }
-    }
-  );
-
-  // ═══════════════════════════════════════════════════════════════
-  // TOOL 11: crbro_context — Active context
+  // TOOL 8: crbro_context — Active context
   // ═══════════════════════════════════════════════════════════════
   server.registerTool(
     'crbro_context',
     {
       title: 'Working context',
-      description: 'Read or update the working context: active topics, open items, last session. Call with no arguments to read; every call returns the full state plus resolved, the items it closed. Close items as soon as they are done — an item left open is repeated back to the user in later sessions long after it was finished.',
+      description: 'Read or write the working context: active topics, open items, recently closed, last session. Called with no arguments it only reads (written:false, nothing touched); any argument writes and returns the full state plus resolved and discarded. Close items as soon as they are done — resolve_pending records them in recently_closed, discard_pending drops one without recording it, clear empties everything — because an item left open is repeated back to the user in later sessions long after it was finished. Sessions are logged by crbro_consolidate, not here.',
       inputSchema: {
-        set_topics: z.array(z.string()).optional().describe('Replace the whole active-topics list with these neuron ids (no merge). crbro_session_log also overwrites it.'),
+        set_topics: z.array(z.string()).optional().describe('Replace the whole active-topics list with these neuron ids (no merge). crbro_consolidate also rewrites it from the session.'),
         add_pending: z.string().optional().describe('Add an open item, written so it can be checked later. Identical text is deduplicated, so re-adding is a safe no-op.'),
         resolve_pending: z.string().optional().describe('Close an open item by id (e.g. "p_ab12cd") or by 8+ characters of its text (case-insensitive substring; several items can close at once). Matches move to recently_closed, newest first, capped at 15. An empty resolved in the reply means nothing matched.'),
+        discard_pending: z.string().optional().describe('Drop an open item by id or 8+ characters of its text WITHOUT recording it as done (it never appears in recently_closed). Same matcher as resolve_pending; matches come back in discarded.'),
+        clear: z.boolean().optional().describe('Empty active_topics, pending_tasks and recently_closed. Runs before the other updates in the same call.'),
       },
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     async (args) => {
-      try {        const ctx = await prefrontal.updateContext({
+      try {
+        const ctx = await prefrontal.updateContext({
           set_topics: args.set_topics,
           add_pending: args.add_pending,
           resolve_pending: args.resolve_pending,
+          discard_pending: args.discard_pending,
+          clear: args.clear,
         });
-
-        return {
-          content: [{
-            type: 'text' as const,
-            text: JSON.stringify(ctx, null, 2),
-          }],
-        };
+        return jsonResult(ctx);
       } catch (err) {
-        return {
-          content: [{
-            type: 'text' as const,
-            text: `CRBRO context error: ${err instanceof Error ? err.message : String(err)}`,
-          }],
-          isError: true,
-        };
+        return errorResult('context', err);
       }
     }
   );
 
   // ═══════════════════════════════════════════════════════════════
-  // TOOL 12: crbro_hot_topics — Hot topics
-  // ═══════════════════════════════════════════════════════════════
-  server.registerTool(
-    'crbro_hot_topics',
-    {
-      title: 'Hot topics',
-      description: 'The hottest neurons by heat (access frequency, recency, connectivity). Read-only, served from a cache rebuilt at consolidate and maintenance — last_recalculated says when. crbro_boot already returns this list.',
-      inputSchema: {
-        limit: z.number().optional().describe('Topics to return (default 15; the cache never holds more than 20).'),
-      },
-      outputSchema: {
-        topics: z.array(z.object({
-          id: z.string(), name: z.string(), heat: z.number(), last_access: z.string(), domain: z.string(),
-        }).loose()),
-        last_recalculated: z.string().optional(),
-      },
-      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-    },
-    async (args) => {
-      try {        const hotTopics = await prefrontal.getHotTopics(args.limit);
-
-        const payload = { ...hotTopics };
-        return {
-          content: [{ type: 'text' as const, text: JSON.stringify(payload, null, 2) }],
-          structuredContent: payload,
-        };
-      } catch (err) {
-        return {
-          content: [{
-            type: 'text' as const,
-            text: `CRBRO hot_topics error: ${err instanceof Error ? err.message : String(err)}`,
-          }],
-          isError: true,
-        };
-      }
-    }
-  );
-
-  // ═══════════════════════════════════════════════════════════════
-  // TOOL 13: crbro_global_map — Global neural map
-  // ═══════════════════════════════════════════════════════════════
-  server.registerTool(
-    'crbro_global_map',
-    {
-      title: 'Global map',
-      description: 'The global map: one cluster per domain (node ids, top neurons, heat) and bridges where synapses cross domains, served from a cache stamped last_rebuilt. Read-only unless rebuild:true, which rescans every neuron and rewrites that cache (derived data, no knowledge is touched). For one system\'s internals use crbro_map instead.',
-      inputSchema: {
-        rebuild: z.boolean().optional().describe('true = rescan every neuron and rewrite the cached map (slower on big brains). Default: serve the cache, building it only if missing — it can lag recent learning; crbro_maintenance also rebuilds it.'),
-      },
-      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-    },
-    async (args) => {
-      try {
-        const globalMap = await prefrontal.getGlobalMap(args.rebuild);
-
-        return {
-          content: [{
-            type: 'text' as const,
-            text: JSON.stringify({
-              total_clusters: globalMap.clusters.length,
-              total_bridges: globalMap.bridges.length,
-              last_rebuilt: globalMap.last_rebuilt,
-              clusters: globalMap.clusters,
-              bridges: globalMap.bridges,
-            }, null, 2),
-          }],
-        };
-      } catch (err) {
-        return {
-          content: [{
-            type: 'text' as const,
-            text: `CRBRO global_map error: ${err instanceof Error ? err.message : String(err)}`,
-          }],
-          isError: true,
-        };
-      }
-    }
-  );
-
-  // ═══════════════════════════════════════════════════════════════
-  // TOOL 14: crbro_maintenance — Run maintenance
-  // ═══════════════════════════════════════════════════════════════
-  server.registerTool(
-    'crbro_maintenance',
-    {
-      title: 'Brain maintenance',
-      description: 'Run brain maintenance: recalculate heat, prune weak synapses, check integrity and rebuild the search index. Returns a report (counts, integrity_issues, notes) and flags debts that never named a revisit trigger. dry_run:true reports without writing anything. Archiving cold neurons and purging miner boilerplate are OFF unless asked — on a mature brain most neurons look cold, and archived ones stop being searchable. For session close use crbro_consolidate, not this.',
-      inputSchema: {
-        dry_run: z.boolean().optional().describe('true = report only: no heat recalc, archiving, purge, lock sweep, pruning or index rebuild. Counts, debts and integrity checks still run.'),
-        archive: z.boolean().optional().describe('Also move cold neurons (heat < 0.05, untouched 90+ days) out of the cortex. Off by default; run dry_run first and read archivable_neurons. Restore by moving the file from archives/ back into cortex/.'),
-        purge_boilerplate: z.boolean().optional().describe('Also delete contentless facts left by early miner versions ("Referenced in: file.md"). Off by default; every run reports how many there are. Neurons left empty are kept.'),
-      },
-      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
-    },
-    async (args) => {
-      try {
-        const report = await maintenance.run(args.dry_run, { archive: args.archive, purgeBoilerplate: args.purge_boilerplate });
-
-        return {
-          content: [{
-            type: 'text' as const,
-            text: JSON.stringify({
-              mode: args.dry_run ? 'DRY RUN' : 'EXECUTED',
-              ...report,
-            }, null, 2),
-          }],
-        };
-      } catch (err) {
-        return {
-          content: [{
-            type: 'text' as const,
-            text: `CRBRO maintenance error: ${err instanceof Error ? err.message : String(err)}`,
-          }],
-          isError: true,
-        };
-      }
-    }
-  );
-
-  // ═══════════════════════════════════════════════════════════════
-  // TOOL 15: crbro_consolidate — End-of-session consolidation
-  // ═══════════════════════════════════════════════════════════════
-  server.registerTool(
-    'crbro_consolidate',
-    {
-      title: 'Consolidate the session',
-      description: 'Call before the conversation ends whenever significant work was done. Persists pending knowledge and index writes, logs the session from summary (no separate crbro_session_log needed), recalculates heat, links the neurons written this session with weak temporal synapses (synapses_updated), updates the manifest and syncs shared team spaces (offline is normal; notes go out next time). Returns the session\'s real write counts — facts_saved, decisions_saved, topics_touched — and per-space sync state. Not consolidating loses the session\'s knowledge.',
-      inputSchema: {
-        summary: z.string().describe('What was accomplished: concrete work, decisions, outcomes. Stored verbatim as the session log later sessions read.'),
-      },
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
-    },
-    async (args) => {
-      try {        const result = await maintenance.consolidate(args.summary);
-        // Flush any index writes still sitting in the debounce window, so a
-        // session that ends right after a learn does not lose it.
-        await searchEngine.flush();
-        // Send the session's notes to the team before the lights go out.
-        const compartidos = await syncAll(brain, cortex, 10_000);
-
-        return {
-          content: [{
-            type: 'text' as const,
-            text: JSON.stringify({
-              ...result,
-              shared_spaces: compartidos.length > 0
-                ? compartidos.map(c => ({ space: c.space, state: c.state, pushed: c.pushed }))
-                : undefined,
-              message: 'Session consolidated. Brain state persisted.',
-            }, null, 2),
-          }],
-        };
-      } catch (err) {
-        return {
-          content: [{
-            type: 'text' as const,
-            text: `CRBRO consolidate error: ${err instanceof Error ? err.message : String(err)}`,
-          }],
-          isError: true,
-        };
-      }
-    }
-  );
-
-  // ═══════════════════════════════════════════════════════════════
-  // TOOL: crbro_map — The living map of a system
+  // TOOL 9: crbro_map — The living map of a system
   // ═══════════════════════════════════════════════════════════════
   server.registerTool(
     'crbro_map',
     {
       title: 'System map',
-      description: 'Read or replace a neuron\'s system map: ONE living document — where the system lives, what serves what, which pieces talk to each other, the traps that cost hours. Read it before working on a system touched in past sessions; after changing the system, rewrite the whole map — content replaces the previous version entirely (append-only maps rot). Omit content to read (map:null if none yet); an empty string clears it. Reading never creates a neuron, writing does. Credentials are redacted on write and listed in redacted. Atomic facts belong in crbro_learn — the map is the prose reference around them.',
+      description: 'Read or replace a neuron\'s system map: ONE living document — where the system lives, what serves what, which pieces talk to each other, the traps that cost hours. crbro_inspect view=neuron already returns the map; use crbro_map to read it alone without bumping access stats, or to rewrite it. Omit content to read (map:null if none); content replaces the previous version entirely (append-only maps rot); an empty string clears it. Read it before working on a system touched in past sessions; after changing the system rewrite the whole map. Reading never creates a neuron, writing does. Credentials are redacted on write. Atomic facts belong in crbro_learn — the map is the prose around them.',
       inputSchema: {
         neuron: z.string().describe('Neuron id or name, e.g. "project_octochat" or "OctoChat".'),
         content: z.string().optional().describe('The new map, replacing the old one whole; omit to read. Write the reference you will need next time: paths, ids, what-serves-what, gotchas. An empty string clears the map.'),
@@ -920,149 +949,128 @@ export function createServer(): McpServer {
     async (args) => {
       try {
         if (args.content === undefined) {
-          const neuron =
-            (await cortex.peek(args.neuron)) || (await cortex.findByName(args.neuron));
+          const neuron = await resolveNeuron(args.neuron);
           if (!neuron) {
-            return {
-              content: [{
-                type: 'text' as const,
-                text: `Neuron not found: "${args.neuron}". Use crbro_recall to find the right neuron_id first.`,
-              }],
-            };
+            return textResult(`Neuron not found: "${args.neuron}". Use crbro_recall to find the right neuron id first.`);
           }
           if (!neuron.map || !neuron.map.text) {
-            return {
-              content: [{
-                type: 'text' as const,
-                text: JSON.stringify({
-                  neuron_id: neuron.id,
-                  map: null,
-                  message: `"${neuron.name}" has no system map yet. After working on this system, write one with crbro_map + content: where it lives, what serves what, the traps.`,
-                }, null, 2),
-              }],
-            };
+            return jsonResult({
+              neuron_id: neuron.id,
+              map: null,
+              message: `"${neuron.name}" has no system map yet. After working on this system, write one with crbro_map + content: where it lives, what serves what, the traps.`,
+            });
           }
-          return {
-            content: [{
-              type: 'text' as const,
-              text: JSON.stringify({
-                neuron_id: neuron.id,
-                updated: neuron.map.updated,
-                by: neuron.map.by,
-                map: neuron.map.text,
-                hint: 'If anything here proved wrong or the system changed, rewrite the map before closing the task.',
-              }, null, 2),
-            }],
-          };
+          return jsonResult({
+            neuron_id: neuron.id,
+            updated: neuron.map.updated,
+            by: neuron.map.by,
+            map: neuron.map.text,
+            hint: 'If anything here proved wrong or the system changed, rewrite the map before closing the task.',
+          });
         }
 
         const result = await cortex.setMap(args.neuron, args.content, {
           domain: args.domain,
         });
         if (!result.neuron) {
-          return {
-            content: [{
-              type: 'text' as const,
-              text: `Could not store the map for "${args.neuron}".`,
-            }],
-          };
+          return textResult(`Could not store the map for "${args.neuron}".`);
         }
-        return {
-          content: [{
-            type: 'text' as const,
-            text: JSON.stringify({
-              neuron_id: result.neuron.id,
-              action: result.action,
-              updated: result.neuron.map?.updated,
-              length: args.content.length,
-              redacted: result.redacted.length > 0 ? result.redacted : undefined,
-              message: args.content.trim() === ''
-                ? `System map of "${result.neuron.name}" cleared.`
-                : `System map of "${result.neuron.name}" replaced. The previous version is gone - this one is now the reference.`,
-            }, null, 2),
-          }],
-        };
+        return jsonResult({
+          neuron_id: result.neuron.id,
+          action: result.action,
+          updated: result.neuron.map?.updated,
+          length: args.content.length,
+          redacted: result.redacted.length > 0 ? result.redacted : undefined,
+          message: args.content.trim() === ''
+            ? `System map of "${result.neuron.name}" cleared.`
+            : `System map of "${result.neuron.name}" replaced. The previous version is gone - this one is now the reference.`,
+        });
       } catch (err) {
-        return {
-          content: [{
-            type: 'text' as const,
-            text: `CRBRO map error: ${err instanceof Error ? err.message : String(err)}`,
-          }],
-          isError: true,
-        };
+        return errorResult('map', err);
       }
     }
   );
 
   // ═══════════════════════════════════════════════════════════════
-  // TOOL 16: crbro_revise — Retire knowledge that stopped being true
+  // TOOL 10: crbro_consolidate — End-of-session consolidation
   // ═══════════════════════════════════════════════════════════════
   server.registerTool(
-    'crbro_revise',
+    'crbro_consolidate',
     {
-      title: 'Revise facts',
-      description: 'Mark stored facts as no longer current — the moment you find something saved is out of date or was wrong, since a memory that only appends keeps serving the old version with equal confidence. Superseded facts leave crbro_recall but stay in the neuron file, so the correction is auditable. Matches by fact id or exact text; anything reported in unmatched is STILL LIVE — fix and re-run. If a replacement fact exists, crbro_learn with supersedes does both in one call. To delete outright, use crbro_forget.',
+      title: 'Consolidate the session',
+      description: 'Write: close the session — the only way to log a session. Call it before the conversation ends. Persists pending knowledge and index writes, logs the session from summary (credentials stripped, kinds in redacted), sets the context\'s last_session, recalculates heat, links the neurons written this session with weak temporal synapses (synapses_updated), updates the manifest and syncs shared team spaces (offline is normal). Returns session_id, facts_saved, decisions_saved, topics_touched and per-space sync state; topics_touched logs neurons you only read. Not consolidating loses the session\'s knowledge. Mid-session open items go to crbro_context; housekeeping is crbro_maintenance.',
       inputSchema: {
-        neuron: z.string().describe('Neuron id or name holding the facts, e.g. "project_octochat".'),
-        facts: z.array(z.string()).describe('Facts to retire: their ids (from crbro_recall) or exact text (trimmed, case-insensitive). Already-retired facts never match.'),
-        status: z.enum(['superseded', 'retracted']).optional().describe('superseded = there is a newer truth (default); retracted = it was never true.'),
-        note: z.string().optional().describe('Why it stopped being true. The next reader will wonder.'),
+        summary: z.string().describe('What was accomplished: concrete work, decisions, outcomes. Stored (after credential redaction) as the session log later sessions read.'),
+        topics_touched: z.array(z.string()).optional().describe('Neuron ids this session used WITHOUT writing (recalled, inspected, discussed). Added to the log\'s topics_touched next to the ids written this session; write counters stay real. Unknown ids are dropped and listed in topics_unknown.'),
       },
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },
     async (args) => {
       try {
-        const result = await cortex.revise(args.neuron, args.facts, {
-          status: args.status,
-          note: args.note,
+        const result = await maintenance.consolidate(args.summary, { topicsTouched: args.topics_touched });
+        // Flush any index writes still sitting in the debounce window, so a
+        // session that ends right after a learn does not lose it.
+        await searchEngine.flush();
+        // Send the session's notes to the team before the lights go out.
+        const compartidos = await syncAll(brain, cortex, 10_000);
+
+        return jsonResult({
+          ...result,
+          shared_spaces: compartidos.length > 0
+            ? compartidos.map(c => ({ space: c.space, state: c.state, pushed: c.pushed }))
+            : undefined,
+          message: 'Session consolidated. Brain state persisted.',
         });
-
-        if (!result.neuron) {
-          return {
-            content: [{
-              type: 'text' as const,
-              text: `Neuron not found: "${args.neuron}". Use crbro_recall to find the right neuron_id first.`,
-            }],
-          };
-        }
-
-        return {
-          content: [{
-            type: 'text' as const,
-            text: JSON.stringify({
-              neuron_id: result.neuron.id,
-              revised: result.revised,
-              status: args.status || 'superseded',
-              unmatched: result.unmatched.length > 0 ? result.unmatched : undefined,
-              message: result.revised > 0
-                ? `${result.revised} fact(s) retired in "${result.neuron.name}". They no longer appear in recall.` +
-                  (result.unmatched.length > 0
-                    ? ` WARNING: ${result.unmatched.length} target(s) matched nothing and are still live.`
-                    : '')
-                : 'Nothing matched. Pass the fact id from crbro_recall, or its exact text.',
-            }, null, 2),
-          }],
-        };
       } catch (err) {
-        return {
-          content: [{
-            type: 'text' as const,
-            text: `CRBRO revise error: ${err instanceof Error ? err.message : String(err)}`,
-          }],
-          isError: true,
-        };
+        return errorResult('consolidate', err);
       }
     }
   );
 
   // ═══════════════════════════════════════════════════════════════
-  // TOOL 17: crbro_audit — What should not be in the brain
+  // TOOL 11: crbro_maintenance — Run maintenance
+  // ═══════════════════════════════════════════════════════════════
+  server.registerTool(
+    'crbro_maintenance',
+    {
+      title: 'Brain maintenance',
+      description: 'Write: brain housekeeping — recalculate heat, prune weak synapses, check integrity, rebuild the search index. Returns a report (counts, integrity_issues, repairable, notes) and flags debts without a revisit trigger. dry_run:true writes nothing at all (the global map is computed live, never cached). Extras are OFF unless asked: archive cold neurons (on a mature brain most look cold, and archived ones stop being searchable), unarchive them back, purge_boilerplate left by early miners, repair what the integrity check found. For session close use crbro_consolidate; to only read the brain use crbro_inspect.',
+      inputSchema: {
+        dry_run: z.boolean().optional().describe('true = report only: no heat recalc, archiving, unarchiving, purge, repair, lock sweep, pruning or index rebuild, and no file written. Counts, debts and integrity checks still run.'),
+        archive: z.boolean().optional().describe('Also move cold neurons (heat < 0.05, untouched 90+ days) out of the cortex into archives/. Off by default; run dry_run first and read archivable_neurons. Undo with unarchive.'),
+        unarchive: z.union([z.array(z.string()), z.literal('all')]).optional().describe('Move these neuron ids (or "all") from archives/ back into the cortex and reindex them. Off in dry_run; the report says archives_count and unarchived_neurons; unknown ids are listed in notes.'),
+        purge_boilerplate: z.boolean().optional().describe('Also delete contentless facts left by early miner versions ("Referenced in: file.md"). Off by default; every run reports how many there are. Neurons left empty are kept.'),
+        repair: z.boolean().optional().describe('Fix what the integrity check found: dangling connection ids, synapse files pointing at missing neurons, entry_dates/entry_status keys with no live entry, manifest counters. Off in dry_run; the report lists repairs[] one line each.'),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+    },
+    async (args) => {
+      try {
+        const report = await maintenance.run(args.dry_run, {
+          archive: args.archive,
+          purgeBoilerplate: args.purge_boilerplate,
+          repair: args.repair,
+          unarchive: args.unarchive,
+        });
+
+        return jsonResult({
+          mode: args.dry_run ? 'DRY RUN' : 'EXECUTED',
+          ...report,
+        });
+      } catch (err) {
+        return errorResult('maintenance', err);
+      }
+    }
+  );
+
+  // ═══════════════════════════════════════════════════════════════
+  // TOOL 12: crbro_audit — What should not be in the brain
   // ═══════════════════════════════════════════════════════════════
   server.registerTool(
     'crbro_audit',
     {
       title: 'Audit for credentials',
-      description: 'Read-only scan of every field of every neuron (facts, decisions, patterns, preferences, errors, debts, system map) for credentials stored before the filter caught them — API keys, tokens, passwords. Reports where they sit and what kind, never the values. Findings are in the search index too, so recall can return them: remove with crbro_forget, then rotate the credential. Run it after upgrading and whenever a secret may have been pasted into a conversation.',
+      description: 'Read-only scan of every field of every neuron (facts, decisions, patterns, preferences, errors, debts, system map) and of every session log for credentials stored before the filter caught them — API keys, tokens, passwords. Reports where they sit and what kind, never the values. Findings are in the search index too, so recall can return them: remove with crbro_forget (facts for entries, session for a day log), then rotate the credential. Run it after upgrading and whenever a secret may have been pasted into a conversation. crbro_inspect shows content; this only judges it.',
       inputSchema: {},
       outputSchema: {
         neurons_affected: z.number(),
@@ -1072,6 +1080,10 @@ export function createServer(): McpServer {
           facts: z.number(), decisions: z.number(), patterns: z.number(), preferences: z.number(),
           errors: z.number(), debts: z.number(), map: z.number(),
         }).loose()),
+        sessions_affected: z.number().optional(),
+        session_findings: z.array(z.object({
+          session_id: z.string(), date: z.string(), kinds: z.array(z.string()),
+        }).loose()).optional(),
         message: z.string(),
         note: z.string().optional(),
       },
@@ -1080,18 +1092,27 @@ export function createServer(): McpServer {
     async () => {
       try {
         const hallazgos = await cortex.auditSecrets();
+        const sesiones = await hippocampus.auditSecrets();
         const total = hallazgos.reduce(
           (n, h) => n + h.facts + h.decisions + h.patterns + h.preferences + h.errors + h.debts + h.map, 0);
 
+        const clean = hallazgos.length === 0 && sesiones.length === 0;
         const payload = {
           neurons_affected: hallazgos.length,
           facts_affected: total,
           findings: hallazgos,
-          message: hallazgos.length === 0
-            ? 'No credentials found in the brain.'
-            : `${total} entr(y/ies) across ${hallazgos.length} neuron(s) contain something that looks like a credential. ` +
-              'They are also inside the search index, so recall can return them. ' +
-              'Remove them with crbro_forget, then rotate the credentials — assume they are compromised.',
+          sessions_affected: sesiones.length,
+          session_findings: sesiones,
+          message: clean
+            ? 'No credentials found in the brain or in the session logs.'
+            : (hallazgos.length > 0
+                ? `${total} entr(y/ies) across ${hallazgos.length} neuron(s) contain something that looks like a credential. ` +
+                  'They are also inside the search index, so recall can return them. Remove them with crbro_forget facts. '
+                : '') +
+              (sesiones.length > 0
+                ? `${sesiones.length} session log(s) contain something that looks like a credential; remove each with crbro_forget session. `
+                : '') +
+              'Then rotate the credentials — assume they are compromised.',
           note: 'Values are never shown here, by design.',
         };
         return {
@@ -1099,25 +1120,19 @@ export function createServer(): McpServer {
           structuredContent: payload,
         };
       } catch (err) {
-        return {
-          content: [{
-            type: 'text' as const,
-            text: `CRBRO audit error: ${err instanceof Error ? err.message : String(err)}`,
-          }],
-          isError: true,
-        };
+        return errorResult('audit', err);
       }
     }
   );
 
   // ═══════════════════════════════════════════════════════════════
-  // TOOL 22: crbro_secret — Credentials, brokered to the OS keychain
+  // TOOL 13: crbro_secret — Credentials, brokered to the OS keychain
   // ═══════════════════════════════════════════════════════════════
   server.registerTool(
     'crbro_secret',
     {
       title: 'Keychain secret',
-      description: 'Credentials, brokered to the operating system\'s own keychain (macOS Keychain, Linux Secret Service, Windows DPAPI): CRBRO keeps no copy and invents no crypto, and no sync or team space can reach the store. The moment the user hands you a credential: set it here, then record only the NAME with crbro_learn. get returns the value for the task at hand — an environment variable of the same name wins, a missing secret returns found:false, not an error — and it must not be printed back unless the user asked for that secret. list returns names only; remove deletes one; status says which store this machine has. Names are SCREAMING_SNAKE_CASE; set updates an existing name in place and rejects empty values. A machine with no store is a normal status answer, not a failure — environment variables still work.',
+      description: 'Read or write credentials in the operating system\'s keychain (macOS Keychain, Linux Secret Service, Windows DPAPI): CRBRO keeps no copy, invents no crypto, and no sync or team space can reach the store. When the user hands you a credential, set it here, then record only the NAME with crbro_learn. get returns the value for the task at hand — an environment variable of the same name wins; a missing secret returns found:false, not an error — never print it back unless the user asked. list returns names only; remove deletes one; status says which store this machine has (none is a normal answer; env vars still work). Names are SCREAMING_SNAKE_CASE; set updates in place and rejects empty values.',
       inputSchema: {
         action: z.enum(['get', 'set', 'list', 'remove', 'status'])
           .describe('get = read one, set = store or update one, list = names only, remove = delete one, status = which keychain this machine offers, or why none.'),
@@ -1184,94 +1199,32 @@ export function createServer(): McpServer {
               };
         }
 
-        return {
-          content: [{
-            type: 'text' as const,
-            text: JSON.stringify(payload, null, 2),
-          }],
-        };
+        return jsonResult(payload);
 
       } catch (err) {
-        return {
-          content: [{
-            type: 'text' as const,
-            text: err instanceof KeychainUnavailable
-              ? `No credential store available: ${err.message}`
-              : `CRBRO secret error: ${err instanceof Error ? err.message : String(err)}`,
-          }],
-          isError: true,
-        };
+        return textResult(
+          err instanceof KeychainUnavailable
+            ? `No credential store available: ${err.message}`
+            : `CRBRO secret error: ${err instanceof Error ? err.message : String(err)}`,
+          true);
       }
     }
   );
 
   // ═══════════════════════════════════════════════════════════════
-  // TOOL 18: crbro_forget — Remove knowledge for good
-  // ═══════════════════════════════════════════════════════════════
-  server.registerTool(
-    'crbro_forget',
-    {
-      title: 'Forget for good',
-      description: 'Permanently remove entries from a neuron — for what must not exist at all: a credential, personal data, something stored by mistake. Matches facts, decisions, patterns, preferences, errors and debts by id or exact text (trimmed, case-insensitive), and the system map by its exact full text. Destructive, with a net: the whole neuron is copied to .quarantine/ first (backup path returned) and the search index is updated; nothing matched returns removed:0, not an error. On shared neurons the removal travels. For knowledge that merely stopped being true use crbro_revise, which keeps the history. Tell the user what will be removed and get their agreement first; a removed credential must still be rotated — it existed on disk and in the index.',
-      inputSchema: {
-        neuron: z.string().describe('Neuron id or name holding the entries.'),
-        facts: z.array(z.string()).describe('Fact ids, or the exact text of a fact, decision, pattern, preference, error or debt. The exact full text of the map removes the map.'),
-      },
-      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
-    },
-    async (args) => {
-      try {
-        const r = await cortex.forget(args.neuron, args.facts);
-
-        if (!r.neuron_id) {
-          return {
-            content: [{
-              type: 'text' as const,
-              text: `Neuron not found: "${args.neuron}". Use crbro_recall or crbro_audit to find the right one.`,
-            }],
-          };
-        }
-
-        return {
-          content: [{
-            type: 'text' as const,
-            text: JSON.stringify({
-              neuron_id: r.neuron_id,
-              removed: r.removed,
-              backup: r.backup,
-              message: r.removed > 0
-                ? `${r.removed} fact(s) removed from "${r.neuron_id}". A copy of the neuron as it was is in ${r.backup}. ` +
-                  'If any of them was a credential, rotate it: it existed on disk and in the index.'
-                : 'Nothing matched. Pass the fact id from crbro_recall, or its exact text.',
-            }, null, 2),
-          }],
-        };
-      } catch (err) {
-        return {
-          content: [{
-            type: 'text' as const,
-            text: `CRBRO forget error: ${err instanceof Error ? err.message : String(err)}`,
-          }],
-          isError: true,
-        };
-      }
-    }
-  );
-
-  // ═══════════════════════════════════════════════════════════════
-  // TOOL 19: crbro_space — Join a team's shared memory
+  // TOOL 14: crbro_space — A team's shared memory
   // ═══════════════════════════════════════════════════════════════
   server.registerTool(
     'crbro_space',
     {
       title: 'Team space',
-      description: 'Shared memory with teammates. A space is a private git repository holding notes about the projects you choose to share — nothing else from your brain goes near it. One person runs create with the repository URL; everyone else runs join with the same URL; afterwards it syncs by itself at boot and consolidate. Joining shares nothing by itself: put each project in with crbro_share. status lists your identity and spaces. create and join need name, remote and author, and reply ok:false with the reason when git is missing or the push/clone fails.',
+      description: 'Read or write team spaces — shared memory with teammates: a private git repository holding notes about the projects you choose to share; nothing else from your brain goes near it. create starts one (name, remote, author); join clones one a teammate created; status reads your identity and spaces; sync exchanges notes now — the manual form of what crbro_boot and crbro_consolidate do alone, useful right after crbro_share (offline is a normal answer, not a failure); leave pushes pending notes, deletes the local copy and stops following its neurons (neurons untouched). Joining shares nothing: put each project in with crbro_share. create and join reply ok:false with the reason on failure.',
       inputSchema: {
-        action: z.enum(['create', 'join', 'status']).describe('create = start a new space and push it, join = clone one a teammate created, status = your identity and the spaces you are in.'),
-        name: z.string().optional().describe('Short name, e.g. "equipo" — the same on everyone\'s machine. Required for create and join.'),
+        action: z.enum(['create', 'join', 'status', 'sync', 'leave']).describe('create = start a new space and push it; join = clone one a teammate created; status = your identity and spaces; sync = exchange notes now; leave = sync, then forget the space locally.'),
+        name: z.string().optional().describe('Short name, e.g. "equipo" — the same on everyone\'s machine. Required for create, join and leave; optional for sync (omit = every space); ignored for status.'),
         remote: z.string().optional().describe('Git URL of a private repository — EMPTY for create, the same URL the creator used for join. E.g. git@github.com:acme/team-memory.git.'),
         author: z.string().optional().describe('How your notes are signed, e.g. "ana". Lowercase, no spaces. Required for create and join.'),
-        branch: z.string().optional().describe('Branch to use (default "main").'),
+        branch: z.string().optional().describe('Branch to use (default "main"). create and join only.'),
       },
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     },
@@ -1285,164 +1238,137 @@ export function createServer(): McpServer {
             const cfg = await readSpace(brain, n);
             if (cfg) detalle.push({ name: cfg.name, created_by: cfg.created_by, branch: cfg.branch });
           }
-          return {
-            content: [{
-              type: 'text' as const,
-              text: JSON.stringify({
-                you_are: id.author,
-                device: id.device,
-                spaces: detalle,
-                message: detalle.length === 0
-                  ? 'You are not in any shared space. Use action "create" to start one, or "join" if a teammate already did.'
-                  : `In ${detalle.length} space(s). They sync automatically at boot and on consolidate.`,
-              }, null, 2),
-            }],
-          };
+          return jsonResult({
+            you_are: id.author,
+            device: id.device,
+            spaces: detalle,
+            message: detalle.length === 0
+              ? 'You are not in any shared space. Use action "create" to start one, or "join" if a teammate already did.'
+              : `In ${detalle.length} space(s). They sync automatically at boot and on consolidate; action "sync" does it now.`,
+          });
+        }
+
+        if (args.action === 'sync') {
+          const informes = args.name
+            ? [await syncSpaceNow(brain, cortex, args.name, 30_000)]
+            : await syncAll(brain, cortex, 30_000);
+
+          if (informes.length === 0) {
+            return textResult('You are not in any shared space yet. Use action "create" or "join" first.');
+          }
+
+          return jsonResult({
+            spaces: informes.map(i => ({
+              space: i.space,
+              state: i.state,
+              neurons_updated: i.neurons_touched,
+              new_facts: i.merged.reduce((n, m) => n + m.facts_added, 0),
+              retracted: i.merged.reduce((n, m) => n + m.facts_retracted, 0),
+              teammates_seen: [...new Set(i.merged.flatMap(m => m.authors))],
+              divergence: i.merged.flatMap(m => m.divergence),
+              pushed: i.pushed,
+              message: i.message,
+            })),
+          });
+        }
+
+        if (args.action === 'leave') {
+          if (!args.name) {
+            return textResult('name is required for leave: which space to leave.');
+          }
+          const r = await leaveSpace(brain, cortex, args.name);
+          return jsonResult({
+            ...r,
+            next: r.ok
+              ? 'Your neurons are intact and no longer followed; the remote repository was not touched. Re-join later with action "join" and the same URL.'
+              : undefined,
+          });
         }
 
         if (!args.name || !args.remote) {
-          return {
-            content: [{ type: 'text' as const, text: 'Both name and remote are required for create and join.' }],
-          };
+          return textResult('Both name and remote are required for create and join.');
         }
         if (!args.author) {
-          return {
-            content: [{ type: 'text' as const, text: 'Pass author so your notes carry your name, e.g. author: "ana".' }],
-          };
+          return textResult('Pass author so your notes carry your name, e.g. author: "ana".');
         }
 
         const r = args.action === 'create'
           ? await createSpace(brain, args.name, args.remote, args.author, args.branch || 'main')
           : await joinSpace(brain, args.name, args.remote, args.author, args.branch || 'main');
 
-        return {
-          content: [{
-            type: 'text' as const,
-            text: JSON.stringify({
-              ok: r.ok,
-              message: r.message,
-              detail: r.detail,
-              next: r.ok && args.action === 'create'
-                ? 'Now share a project into it with crbro_share, and invite your teammates to the repository.'
-                : r.ok
-                ? 'Run crbro_sync to pull in what the others already know.'
-                : undefined,
-            }, null, 2),
-          }],
-        };
+        return jsonResult({
+          ok: r.ok,
+          message: r.message,
+          detail: r.detail,
+          next: r.ok && args.action === 'create'
+            ? 'Now share a project into it with crbro_share, and invite your teammates to the repository.'
+            : r.ok
+            ? 'Run crbro_space action=sync to pull in what the others already know.'
+            : undefined,
+        });
       } catch (err) {
-        return {
-          content: [{ type: 'text' as const, text: `CRBRO space error: ${err instanceof Error ? err.message : String(err)}` }],
-          isError: true,
-        };
+        return errorResult('space', err);
       }
     }
   );
 
   // ═══════════════════════════════════════════════════════════════
-  // TOOL 20: crbro_share — Put one project into a space
+  // TOOL 15: crbro_share — Put one project into a space, or take it out
   // ═══════════════════════════════════════════════════════════════
+  const shareSchema = z.object({
+    neuron: z.string().describe('Neuron id or name to share or unshare.'),
+    space: z.string().optional().describe('Space name, as created or joined with crbro_space. Required unless unshare:true.'),
+    confirm: z.string().optional().describe('The confirm_token from the dry run — returned only when no credential was found. Omit the first time. Ignored with unshare.'),
+    unshare: z.boolean().optional().describe('Stop following `neuron` in its space: no more notes go out, the next sync ignores it, and the neuron can then be forgotten. Already-sent notes stay in the remote and in teammates\' brains. space and confirm are ignored in this mode.'),
+  }).superRefine((v, ctx) => {
+    if (!v.unshare && !v.space) {
+      ctx.addIssue({ code: 'custom', path: ['space'], message: 'space is required unless unshare:true.' });
+    }
+  });
+
   server.registerTool(
     'crbro_share',
     {
       title: 'Share a project',
-      description: 'Share one neuron with a team space. Always call it without confirm first: the dry run reports exactly what would be sent — ops_to_emit, skipped_preferences (preferences never leave this machine) — and refuses outright if it finds a credential (it will not redact and send anyway: crbro_forget it and rotate it). Show the user that report and get their agreement, then call again with the confirm_token; a stale token is refused. Entries go out on the next crbro_sync or consolidate, and from then on everything learned about that project flows to the team. Sharing cannot be undone.',
-      inputSchema: {
-        neuron: z.string().describe('Neuron id or name to share.'),
-        space: z.string().describe('Space name, as created or joined with crbro_space.'),
-        confirm: z.string().optional().describe('The confirm_token from the dry run — returned only when no credential was found. Omit the first time.'),
-      },
+      description: 'Write: put one neuron into a team space, or take it out with unshare. Call it without confirm first: the dry run reports what would be sent — ops_to_emit, skipped_preferences (preferences never leave this machine) — and refuses outright if it finds a credential (crbro_forget it and rotate it). Show the user, get agreement, call again with the confirm token; a stale token is refused. Entries go out on the next crbro_space action=sync or consolidate, and from then on everything learned about that project flows to the team. unshare stops future notes; what was already sent stays in the remote and in teammates\' brains. Spaces are managed with crbro_space.',
+      inputSchema: shareSchema,
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     },
     async (args) => {
       try {
+        if (args.unshare) {
+          const r = await unshareNeuron(brain, cortex, args.neuron);
+          return jsonResult({
+            ...r,
+            next: r.ok
+              ? 'No more notes go out for this neuron. What was already sent stays in the remote and in teammates\' brains. It can now be forgotten or merged with crbro_forget.'
+              : undefined,
+          });
+        }
+
+        const space = args.space as string;
         if (!args.confirm) {
-          const prep = await prepareShare(brain, cortex, args.neuron, args.space);
+          const prep = await prepareShare(brain, cortex, args.neuron, space);
           if ('error' in prep) {
-            return { content: [{ type: 'text' as const, text: prep.error }] };
+            return textResult(prep.error);
           }
-          return {
-            content: [{
-              type: 'text' as const,
-              text: JSON.stringify({
-                ...prep,
-                message: prep.blocked.length > 0
-                  ? `Refused: ${prep.blocked.length} credential(s) found in this neuron. Nothing was sent. ` +
-                    'Remove them with crbro_forget and rotate them, then try again.'
-                  : `Ready to share ${prep.ops_to_emit} entries. ${prep.skipped_preferences} preference(s) will NOT be sent — ` +
-                    'preferences never leave this machine. Show the user what is about to be shared, then call again with the confirm token.',
-              }, null, 2),
-            }],
-          };
+          return jsonResult({
+            ...prep,
+            message: prep.blocked.length > 0
+              ? `Refused: ${prep.blocked.length} credential(s) found in this neuron. Nothing was sent. ` +
+                'Remove them with crbro_forget and rotate them, then try again.'
+              : `Ready to share ${prep.ops_to_emit} entries. ${prep.skipped_preferences} preference(s) will NOT be sent — ` +
+                'preferences never leave this machine. Show the user what is about to be shared, then call again with the confirm token.',
+          });
         }
 
-        const r = await commitShare(brain, cortex, args.neuron, args.space, args.confirm);
-        return {
-          content: [{
-            type: 'text' as const,
-            text: JSON.stringify({
-              ...r,
-              next: r.ok ? 'Run crbro_sync to send it now, or let it go out on the next consolidate.' : undefined,
-            }, null, 2),
-          }],
-        };
+        const r = await commitShare(brain, cortex, args.neuron, space, args.confirm);
+        return jsonResult({
+          ...r,
+          next: r.ok ? 'Run crbro_space action=sync to send it now, or let it go out on the next consolidate. unshare:true stops future notes.' : undefined,
+        });
       } catch (err) {
-        return {
-          content: [{ type: 'text' as const, text: `CRBRO share error: ${err instanceof Error ? err.message : String(err)}` }],
-          isError: true,
-        };
-      }
-    }
-  );
-
-  // ═══════════════════════════════════════════════════════════════
-  // TOOL 21: crbro_sync — Exchange notes with the team now
-  // ═══════════════════════════════════════════════════════════════
-  server.registerTool(
-    'crbro_sync',
-    {
-      title: 'Sync with the team',
-      description: 'Exchange notes with the team right now instead of waiting for the next boot or consolidate, which sync on their own — use it mid-session, e.g. right after crbro_share. Pulls what everyone else recorded and pushes yours, reporting per space: state, neurons updated, new facts, teammates seen, pushed. Being offline is a normal answer, not a failure: local memory works either way and pending notes go out next time.',
-      inputSchema: {
-        space: z.string().optional().describe('One space; state comes back "not_joined" if you are not in it. Omit to sync all of them.'),
-      },
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
-    },
-    async (args) => {
-      try {
-        const informes = args.space
-          ? [await syncSpaceNow(brain, cortex, args.space, 30_000)]
-          : await syncAll(brain, cortex, 30_000);
-
-        if (informes.length === 0) {
-          return {
-            content: [{ type: 'text' as const, text: 'You are not in any shared space yet. Use crbro_space to create or join one.' }],
-          };
-        }
-
-        return {
-          content: [{
-            type: 'text' as const,
-            text: JSON.stringify({
-              spaces: informes.map(i => ({
-                space: i.space,
-                state: i.state,
-                neurons_updated: i.neurons_touched,
-                new_facts: i.merged.reduce((n, m) => n + m.facts_added, 0),
-                retracted: i.merged.reduce((n, m) => n + m.facts_retracted, 0),
-                teammates_seen: [...new Set(i.merged.flatMap(m => m.authors))],
-                divergence: i.merged.flatMap(m => m.divergence),
-                pushed: i.pushed,
-                message: i.message,
-              })),
-            }, null, 2),
-          }],
-        };
-      } catch (err) {
-        return {
-          content: [{ type: 'text' as const, text: `CRBRO sync error: ${err instanceof Error ? err.message : String(err)}` }],
-          isError: true,
-        };
+        return errorResult('share', err);
       }
     }
   );

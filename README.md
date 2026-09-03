@@ -8,7 +8,7 @@
 
 ![CRBRO demo](docs/demo.gif)
 
-Free and open source (MIT). All 23 tools included — no license, no account, no tiers.
+Free and open source (MIT). All 15 tools included — no license, no account, no tiers.
 
 > ⭐ **If CRBRO gives your AI a memory worth keeping, a star on GitHub is the best way to support it.**
 
@@ -19,7 +19,7 @@ Free and open source (MIT). All 23 tools included — no license, no account, no
 - **🗣️ The model in the loop** — Two levers no embedding model replaces, measured blind: keywords written at save time (the caller knows the synonyms: a line about Hetzner gets *hosting, alojamiento, servidor*) and several phrasings searched at once, fused by rank. Zero disk, zero RAM; numbers in the table below *(v1.15+)*
 - **🧭 Semantic recall** — `npx crbro-memory init` installs a local embedding model (`multilingual-e5-small`, int8) fused with the keyword engine, so paraphrases the words do not cover start to land. Measured: +8 points of recall@1 over the keyword engine, +2 to +5 on top of save-time keywords. Costs ~500 MB on disk once per machine and ~0.5 GB of RAM while a server runs; `init --no-semantic` skips it, `CRBRO_SEMANTIC=0` turns it off *(v1.14+, installed by default since v1.16)*
 - **🔥 Heat Scores** — Automatic relevance tracking based on frequency, recency, and connectivity. Topics written in the same session are linked at consolidation, so the graph fills itself in *(v1.13+)*
-- **✏️ Correctable** — Knowledge can be superseded or retracted, not just piled up. A memory that only appends keeps serving yesterday's answer with today's confidence
+- **✏️ Correctable** — Knowledge can be superseded or retracted, not just piled up — facts, and since 2.0 decisions, patterns, errors and debts too. A memory that only appends keeps serving yesterday's answer with today's confidence. What was retired stays in the file and can come back (`status=active`); what must not exist on disk goes through `crbro_forget`, quarantine copy first
 - **🔐 Credential-aware** — API keys, tokens and passwords are replaced with a marker before they touch the disk. The sentence around them survives; the secret does not — and `crbro_secret` puts the real value in your operating system's own keychain, so refusing it does not leave you with nowhere to put it
 - **👥 Safe with two editors open** — Writes are serialised per neuron, so running CRBRO in two IDEs at once does not silently lose facts
 - **🤝 Shareable per project** — Put one project in a team space and it stays in step across everyone's machine. Everything else in your brain never leaves it
@@ -27,6 +27,7 @@ Free and open source (MIT). All 23 tools included — no license, no account, no
 - **📓 Error Ledger** — `type: "error"` stores each real mistake WITH its correction, on the topic where it happened, so the same error is not made twice. Dated since 1.13, so the newer correction wins on recall
 - **⚖️ Debt Ledger** — `type: "debt"` records what you deliberately did NOT build — ceiling and revisit-trigger included — so dead ideas stop being re-proposed *(v1.11+)*
 - **🏷️ Honest tool definitions** — Every tool carries MCP annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`), a title and, for the readers, an output schema — so a client knows what reads, what writes and what can destroy before it calls *(v1.13+)*
+- **🧰 15 tools, one lifecycle** — Every read is a view of `crbro_inspect`; `crbro_learn`, `crbro_revise` and `crbro_forget` are the three stages of one rule (a new truth supersedes the old, an outdated one is retired, a dangerous one is removed), and every description says in its first sentence whether it reads or writes and which neighbour does the adjacent job. Down from 23 in 1.x without touching the brain on disk; `crbro_boot` maps the old names to the new calls *(v2.0+)*
 - **🛡️ Subagent Hook (opt-in)** — `npx crbro-memory install-hooks --inject` wires a Claude Code hook that hands your behavioral protocols to spawned subagents. Injection is off by default since 1.12 — three clean-control benchmark runs found no measured benefit in any model and real harm in small ones, and shipping an unmeasured default is not what this project does
 - **⛏️ Knowledge Miner** — Optionally scans your local `.md`/`.txt` notes and feeds them into the brain
 - **🔒 Fully Local** — Runs on Node.js alone: no Python, no Docker, no databases, no external services. Your memory never leaves your machine. The one download is the embedding model at `init`, from Hugging Face, once per machine; nothing calls out afterwards
@@ -44,7 +45,7 @@ Every number below comes from a deterministic benchmark in [`benchmarks/`](bench
 | **Retrieval with the model in the loop** (same 48 queries; keywords and rewrites written blind by a model that saw only one half of the test) | keywords alone: recall@1 **83%** · recall@3 **90%** — everything on (keywords + rewrites + semantic layer): **90% / 92%**, and **96% / 98%** counting `also_matched` | The biggest lever costs nothing: 2-5 keywords written when a fact is saved close exactly the gaps no embedding model closed. Rewrites alone barely move the keyword engine (71% → 71% / 79%); they add up on top of keywords. Every configuration and the three questions still missed are in [`benchmarks/README.md`](benchmarks/README.md) *(v1.15+)* |
 | **Retrieval — false confidence** (14 questions about things that are NOT stored) | 11 return *something*; **2** at a real hit's score; **10 of 11** labelled `weak` | A keyword memory answers almost anything. Every result now carries `confidence`, and the label catches nearly every distractor — at the price of also calling 18 of 48 real hits weak. Weak means "little of the question was covered", not "wrong" |
 | **Secret redaction** (20 credentials in adversarial disguises, 19 near-miss innocents) | **100%** caught · **0%** false positives | 100% on *this frozen set* — a floor, not a security proof. The set grows as new evasion shapes appear; four of its entries were misses in the first run and were fixed, not hidden |
-| **Cost** (what CRBRO adds to a session) | ~**750 tokens** at boot · **~5.4k tokens** of tool definitions · **<1 ms** local recall over 300 facts | The boot block is paid once. The 23 tool definitions are paid on every request by clients that load all tools (Claude Desktop, Cursor); Claude Code defers them and pays only for the ones it uses. 1.12 measured 6.3k and did not say so |
+| **Cost** (what CRBRO adds to a session) | ~**750 tokens** at boot · **~6.5k tokens** of tool definitions · **<1 ms** local recall over 300 facts | The boot block is paid once. The 15 tool definitions (25,866 characters of description + input schema, measured with a real `tools/list` and divided by 4; 34,047 counting the output schemas of the three readers, ~8.5k tokens) are paid on every request by clients that load all tools (Claude Desktop, Cursor); Claude Code defers them and pays only for the ones it uses. Fewer tools, not fewer characters: the 23 of 1.13 measured 21,662 (~5.4k tokens), because each parameter's text now lives in the tool that absorbed it |
 
 What these benchmarks deliberately do **not** claim — human productivity, "it knows you", comparisons against other memory systems — is written down in [`benchmarks/LIMITS.md`](benchmarks/LIMITS.md).
 
@@ -102,7 +103,7 @@ docker build -t crbro-memory . && docker run -i -v crbro-brain:/root/.crbro crbr
 
 ### 3. Start using it
 
-Your AI will now have access to 23 memory tools. Start any session with `crbro_boot`.
+Your AI will now have access to 15 memory tools. Start any session with `crbro_boot`.
 
 ### 4. (Claude Code, optional) The subagent hook
 
@@ -118,29 +119,52 @@ Session context never reaches Task-spawned subagents, so this hook can inject th
 
 | Tool | Description |
 |------|-------------|
-| `crbro_boot` | Boot the brain at session start — loads hot topics and context |
-| `crbro_status` | Brain status — neurons, synapses, sessions count |
-| `crbro_learn` | Store a fact, decision, pattern, preference, error or debt — with the keywords a future question may use |
-| `crbro_neuron` | Read a specific neuron (topic) with all its knowledge |
-| `crbro_neurons` | List neurons with optional filters (domain, type, heat) |
+| `crbro_boot` | Boot the brain at session start — loads hot topics, context, the last three sessions and the `retired_tools` map |
+| `crbro_inspect` | Read-only views by id or name: `view=status`, `neuron`, `neurons`, `sessions`, `global_map` |
+| `crbro_learn` | Store a fact, decision, pattern, preference, error or debt — with the keywords a future question may use. `supersedes` retires the old version in the same call |
 | `crbro_recall` | Search every stored line, not just topic names — returns what matched, how confidently, and the topic's next best lines. Several phrasings at once are fused by rank |
-| `crbro_connect` | Create or strengthen a connection between neurons |
-| `crbro_connections` | Get all connections for a neuron |
-| `crbro_session_log` | Log a session summary |
-| `crbro_sessions` | List recent sessions |
-| `crbro_context` | Read/update active working context |
-| `crbro_hot_topics` | Get the most active topics by heat score |
+| `crbro_revise` | Retire facts (and decisions, patterns, errors, debts via `entries`) as superseded or retracted, reactivate them with `status=active`, and edit summary, domain, tags or name |
+| `crbro_forget` | Remove for good, keeping a copy in `.quarantine/` first — entries of a neuron, a whole neuron (two-step with `confirm_token`), a session log; `restore` and `merge_into` too |
+| `crbro_connect` | Create, strengthen, set the strength of or delete (`action=disconnect`) a connection between neurons |
+| `crbro_context` | Read (no arguments) or update the active working context — topics, open items, discard or clear |
 | `crbro_map` | Keep one living map of how a topic's system works — replaced whole, never patched |
-| `crbro_global_map` | View the neural network — clusters and cross-domain bridges |
-| `crbro_revise` | Mark facts as superseded or retracted when they stop being true |
-| `crbro_audit` | Find credentials stored in the brain — reports the kind, never the value |
-| `crbro_forget` | Remove facts for good, keeping a copy in `.quarantine/` first |
+| `crbro_consolidate` | End-of-session consolidation — the only way to log a session; links the topics it wrote and syncs spaces |
+| `crbro_maintenance` | Brain maintenance — heat, pruning, integrity, `repair`, `unarchive`, index rebuild |
+| `crbro_audit` | Find credentials stored in the brain, session logs included — reports the kind, never the value |
 | `crbro_secret` | Put a credential in the OS keychain and keep only its name in the brain |
-| `crbro_space` | Create or join a team space — a private git repo for shared projects |
-| `crbro_share` | Put one project into a space, after showing exactly what would be sent |
-| `crbro_sync` | Exchange notes with teammates now, instead of waiting for the next session |
-| `crbro_maintenance` | Brain maintenance — heat, pruning, integrity, index rebuild |
-| `crbro_consolidate` | End-of-session consolidation — logs the session and links the topics it wrote |
+| `crbro_space` | Create, join, `sync` or `leave` a team space — a private git repo for shared projects |
+| `crbro_share` | Put one project into a space, after showing exactly what would be sent; `unshare` stops following it |
+
+### Upgrading from 1.x
+
+2.0 went from 23 tools to 15 without touching the brain on disk: a 1.x brain
+opens as it is, and the search index rebuilds itself once. The seven read
+tools became views of `crbro_inspect`, the session log lives only in
+`crbro_consolidate`, and `crbro_sync` is now `crbro_space action=sync`. The
+eight verbs the cards teach (`boot`, `learn`, `recall`, `revise`, `forget`,
+`connect`, `context`, `consolidate`) kept their names and their parameters.
+`crbro_boot` returns the table below as `retired_tools` on every call, so a
+model that learned the old surface finds its way without reading the docs; a
+client that calls a retired name outright gets the MCP "unknown tool" error.
+
+| Retired | Use instead |
+|---------|-------------|
+| `crbro_status` | `crbro_inspect view=status` |
+| `crbro_neuron` | `crbro_inspect view=neuron neuron=<id or name>` |
+| `crbro_neurons` | `crbro_inspect view=neurons [domain\|type\|min_heat\|limit\|offset]` |
+| `crbro_hot_topics` | `crbro_inspect view=neurons` (rows) and `view=status` (`hot_topics_recalculated`) |
+| `crbro_connections` | `crbro_inspect view=neuron neuron=<id> [min_strength]` |
+| `crbro_sessions` | `crbro_inspect view=sessions [limit]` |
+| `crbro_global_map` | `crbro_inspect view=global_map` |
+| `crbro_session_log` | `crbro_consolidate summary=... [topics_touched=[...]]` — `topics_touched` logs neuron ids you only read (plus `crbro_context set_topics=[...]` to replace the active topics) |
+| `crbro_sync` | `crbro_space action=sync [name]` |
+
+If you use the Claude Code hooks, drop `mcp__crbro__crbro_session_log` from
+any matcher in `~/.claude/settings.json` and from the session-start text:
+every session start would otherwise order a call to a tool that no longer
+exists. Cannot move yet? 1.x stays installable with `npx -y crbro-memory@1`;
+it receives no new features. What changed inside each surviving tool is in
+[CHANGELOG.md](CHANGELOG.md).
 
 ## Credentials
 
@@ -215,10 +239,12 @@ know next time they sit down.
 - Credentials. `crbro_share` refuses outright if it finds one, and tells you
   where. It will not redact it and send the rest.
 
-> **Sharing cannot be undone.** Once a teammate has pulled a project it is on
-> their disk. Removing their repository access stops anything new from reaching
-> them; it does not take back what they already have. That is true of any
-> sync system — worth knowing before you share, not after.
+> **What was sent stays sent.** `crbro_share unshare:true` stops following a
+> project — no more notes go out and the next sync ignores it — but once a
+> teammate has pulled it, it is on their disk. Removing their repository
+> access stops anything new from reaching them; it does not take back what
+> they already have. That is true of any sync system — worth knowing before
+> you share, not after.
 
 ## Architecture
 
@@ -234,8 +260,9 @@ know next time they sit down.
 │   └── session_2026-05-06.json
 ├── prefrontal/             ← Working memory
 │   ├── active_context.json
-│   ├── hot_topics.json
-│   └── global_map.json
+│   └── hot_topics.json     (the global map is computed live since 2.0, never stored)
+├── .quarantine/            ← What crbro_forget removed, kept until you delete it
+├── unshared.json           ← Projects you stopped following in a space (after an unshare)
 ├── archives/               ← Cold neurons (opt-in; nothing is archived unless you ask)
 ├── shared/                 ← One git repo per team space. Notes only, never the cortex
 │   └── team/

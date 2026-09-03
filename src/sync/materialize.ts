@@ -33,7 +33,7 @@ export interface MergeReport {
   patterns_added: number;
   errors_added: number;
   debts_added: number;
-  /** Errors/debts removed by a purge op. Feeds the sync change-gate so a lone purge persists. */
+  /** Errors/debts/decisions/patterns removed by a purge op. Feeds the sync change-gate so a lone purge persists. */
   entries_removed: number;
   map_updated: boolean;
   tags_added: number;
@@ -88,7 +88,7 @@ export function applyOps(
   // reported rather than resolved. Overwriting someone's local name because a
   // teammate spelled it differently is not a merge, it is a stomp.
   const neuron: Neuron = base
-    ? { ...base, facts: [...base.facts], decisions: [...base.decisions], patterns: [...base.patterns], preferences: [...base.preferences], tags: [...base.tags], connections: [...base.connections], errors: [...(base.errors || [])], debts: [...(base.debts || [])], entry_dates: { ...(base.entry_dates || {}) }, map: base.map ? { ...base.map } : undefined }
+    ? { ...base, facts: [...base.facts], decisions: [...base.decisions], patterns: [...base.patterns], preferences: [...base.preferences], tags: [...base.tags], connections: [...base.connections], errors: [...(base.errors || [])], debts: [...(base.debts || [])], entry_dates: { ...(base.entry_dates || {}) }, entry_status: { ...(base.entry_status || {}) }, map: base.map ? { ...base.map } : undefined }
     : {
         id,
         name: neuronOp && neuronOp.op === 'neuron' ? neuronOp.name : id,
@@ -108,6 +108,7 @@ export function applyOps(
         errors: [],
         debts: [],
         entry_dates: {},
+        entry_status: {},
       };
 
   // The date of a pattern, error or debt travels in the op's `at`. Keep the
@@ -150,6 +151,11 @@ export function applyOps(
         // Same fact from two people. Keep the earliest date so provenance
         // reflects who knew it first, and the higher confidence.
         existing.id = existing.id || fo.fid;
+        // Register the incoming fid too. A fact stored before ids existed (or
+        // whose local id differs) was only reachable by text, so the StatusOp
+        // that follows — which carries the teammate's fid — found no target
+        // and the retirement was silently dropped, on every replay.
+        byFid.set(fo.fid, existing);
         existing.added = earliest(existing.added, fo.at);
         existing.confidence = Math.max(existing.confidence ?? 1, fo.conf ?? 1);
         if (fo.keys?.length) existing.keys = [...new Set([...(existing.keys || []), ...fo.keys])].slice(0, 8);
@@ -244,11 +250,17 @@ export function applyOps(
   // ─── Purges: a deliberate removal always wins ────────────────
   // Applied after the unions so order cannot matter: an error purged by
   // anyone stays gone even if another log re-adds it in the same replay.
-  const purgados = { error: new Set<string>(), debt: new Set<string>() };
+  // A pkind this build does not know is skipped, never guessed at.
+  const purgados = {
+    error: new Set<string>(), debt: new Set<string>(),
+    decision: new Set<string>(), pattern: new Set<string>(),
+  };
   for (const op of ops) {
     if (op.op === 'purge') {
       const po = op as PurgeOp;
-      if (po.pkind === 'error' || po.pkind === 'debt') purgados[po.pkind].add(po.key);
+      if (po.pkind === 'error' || po.pkind === 'debt' || po.pkind === 'decision' || po.pkind === 'pattern') {
+        purgados[po.pkind].add(po.key);
+      }
     }
   }
   if (purgados.error.size > 0 && neuron.errors && neuron.errors.length > 0) {
@@ -260,6 +272,16 @@ export function applyOps(
     const antes = neuron.debts.length;
     neuron.debts = neuron.debts.filter(d => !purgados.debt.has(entryId(d)));
     report.entries_removed += antes - neuron.debts.length;
+  }
+  if (purgados.decision.size > 0 && neuron.decisions.length > 0) {
+    const antes = neuron.decisions.length;
+    neuron.decisions = neuron.decisions.filter(d => !purgados.decision.has(entryId(d.text)));
+    report.entries_removed += antes - neuron.decisions.length;
+  }
+  if (purgados.pattern.size > 0 && neuron.patterns.length > 0) {
+    const antes = neuron.patterns.length;
+    neuron.patterns = neuron.patterns.filter(p => !purgados.pattern.has(entryId(p)));
+    report.entries_removed += antes - neuron.patterns.length;
   }
 
   // ─── The map: last writer wins, deterministically ────────────
@@ -330,6 +352,22 @@ export function applyOps(
       if (vivos.has(k)) ordenado[k] = neuron.entry_dates[k];
     }
     neuron.entry_dates = ordenado;
+  }
+
+  // Retirements (entry_status, 2.0) never travel as ops: the sidecar is local
+  // and survives a sync only because it is copied here and pruned like the
+  // dates. Decisions are retirable too, so they count as live entries.
+  if (neuron.entry_status) {
+    const vivos = new Set([
+      ...neuron.decisions.map(d => d.text),
+      ...neuron.patterns, ...neuron.preferences,
+      ...(neuron.errors || []), ...(neuron.debts || []),
+    ].map(entryId));
+    const ordenado: NonNullable<Neuron['entry_status']> = {};
+    for (const k of Object.keys(neuron.entry_status).sort()) {
+      if (vivos.has(k)) ordenado[k] = neuron.entry_status[k];
+    }
+    neuron.entry_status = ordenado;
   }
 
   report.authors = [...new Set(ops.map(o => o.by).filter(Boolean))].sort();

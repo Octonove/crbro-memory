@@ -1,8 +1,8 @@
 # Cómo publicar una versión de CRBRO
 
-Guía interna. El orden importa: **npm primero, registry MCP después** — el MCP
-Registry valida la propiedad leyendo el campo `mcpName` del `package.json` que
-está PUBLICADO en npm, no el local.
+Guía interna. El orden importa: **cartas antes o junto con el servidor, npm
+primero, registry MCP después** — el MCP Registry valida la propiedad leyendo
+el campo `mcpName` del `package.json` que está PUBLICADO en npm, no el local.
 
 ## 0. Prerrequisitos (una sola vez)
 
@@ -17,7 +17,29 @@ está PUBLICADO en npm, no el local.
   No es obligatorio para el registry, pero el `server.json` enlaza al repo y
   presentarlo como open source con un repo en 404 resta credibilidad.
 
-## 1. Publicar en npm
+## 1. Las cartas: antes o junto con el servidor, nunca después
+
+La carta zero-crbro (`~/.claude/skills/zero-crbro/SKILL.md` y sus copias en
+synthetica-decks: `skills/{raíz,de,en,fr,it}/zero-crbro.md` y
+`.invokard/skills/ídem`) enseña al modelo qué herramientas llamar. Si la
+release toca la superficie de `tools/list` — retira, renombra o pliega una
+herramienta, como hizo 2.0.0 con `crbro_sync` → `crbro_space action=sync` —
+las copias tienen que estar publicadas ANTES o JUNTO con el paquete de npm.
+Una carta vieja contra un servidor nuevo ordena llamar a una herramienta que
+ya no existe; un servidor viejo contra una carta nueva solo pierde la línea
+nueva. Por eso el orden no es negociable.
+
+- [ ] Las copias de zero-crbro nombran exactamente los 15 nombres que devuelve
+      `tools/list` y ninguno retirado; `scripts/check-card-copies.mjs` (en el
+      repo de decks) lo afirma.
+- [ ] `RETIRED_TOOLS` en `src/server.ts`, la tabla del README y la del
+      CHANGELOG dicen lo mismo, nombre por nombre.
+- [ ] Los hooks de Claude Code no nombran herramientas retiradas
+      (`~/.claude/settings.json` — matchers — y `crbro-session-start.txt`).
+- [ ] El README de los decks fija la versión mínima del servidor
+      (`crbro-memory >= 2.0.0`) y el aviso a clientes sale la misma semana.
+
+## 2. Publicar en npm
 
 El bump va en TRES archivos: `package.json`, `server.json` y el campo
 `version` de `package-lock.json` (dos sitios: la raíz y `packages[""]`).
@@ -32,14 +54,14 @@ npm pack --dry-run   # revisar que el tarball lleva dist/, bin/, README y LICENS
 npm publish
 ```
 
-## 2. Publicar en el MCP Registry
+## 3. Publicar en el MCP Registry
 
 Con la versión ya en npm, basta con empujar el tag — el workflow
 `.github/workflows/publish-mcp.yml` hace el resto vía OIDC (sin tokens):
 
 ```bash
-git tag v1.4.0
-git push origin v1.4.0
+git tag v2.0.0
+git push origin v2.0.0
 ```
 
 Verificar después:
@@ -48,7 +70,7 @@ Verificar después:
 curl "https://registry.modelcontextprotocol.io/v0.1/servers?search=io.github.Octonove/crbro-memory"
 ```
 
-## 3. Sincronizar Glama
+## 4. Sincronizar Glama
 
 Glama rescanea el repo una vez al día o cuando se pulsa **Sync Server** en
 `glama.ai/mcp/servers/Octonove/crbro-memory/admin/repository` (hace falta la
@@ -65,3 +87,7 @@ comprobar que «Last commit» es el commit del tag; el TDQS se recalcula solo.
 - **`version` sin rangos**: ni `^`, ni `~`, ni `1.x`. Versión exacta.
 - **`description` ≤ 100 caracteres** en `server.json`.
 - `package.json.mcpName` y `server.json.name` deben ser idénticos.
+- **Quitar o renombrar una herramienta es versión mayor.** Un cliente MCP de
+  terceros que la llame recibe `unknown tool`; el mapa `retired_tools` de
+  `crbro_boot` solo ayuda al que ya ha arrancado. Se entra en el CHANGELOG con
+  la tabla viejo → nuevo y se sigue el paso 1.
