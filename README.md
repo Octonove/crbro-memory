@@ -16,6 +16,7 @@ Free and open source (MIT). All 23 tools included — no license, no account, no
 
 - **🧬 Biological Architecture** — Knowledge organized as neurons (cortex), connections (synapses), and session memory (hippocampus)
 - **🔍 Fact-Level Search** — Powered by [Orama](https://orama.com/). Every fact is indexed on its own, so a topic with hundreds of facts stays as findable as one with three. Each result comes back with the exact line that matched, when it was recorded, a `confidence` label (`weak` = little of the question was covered) and, for the top results, the topic's next best lines. A short bilingual synonym table widens the question without inventing terms *(v1.13+)*
+- **🧭 Semantic layer, opt-in** — Two commands and one env var add a local embedding model (`multilingual-e5-small`, int8) fused with the keyword engine: paraphrases the words do not cover start to land. Measured +8 points of recall@1 on the blind benchmark; ~500 MB on disk, never installed or loaded unless you ask *(v1.14+)*
 - **🔥 Heat Scores** — Automatic relevance tracking based on frequency, recency, and connectivity. Topics written in the same session are linked at consolidation, so the graph fills itself in *(v1.13+)*
 - **✏️ Correctable** — Knowledge can be superseded or retracted, not just piled up. A memory that only appends keeps serving yesterday's answer with today's confidence
 - **🔐 Credential-aware** — API keys, tokens and passwords are replaced with a marker before they touch the disk. The sentence around them survives; the secret does not — and `crbro_secret` puts the real value in your operating system's own keychain, so refusing it does not leave you with nowhere to put it
@@ -38,6 +39,7 @@ Every number below comes from a deterministic benchmark in [`benchmarks/`](bench
 | What | Result | The honest part |
 |------|--------|-----------------|
 | **Retrieval** (48 blind paraphrased queries, written by someone who never saw the stored text) | recall@1 **71%** · recall@3 **77%** · MRR 0.74 — and **79% / 85%** counting the neuron's `also_matched` lines | Was 56% / 69% in 1.12. Of the 13 misses, 8 were the *right neuron answering with the wrong line* (its name chunk, or a sibling fact) — fixed in the engine; the rest are vocabulary gaps, which a short bilingual synonym table now closes in part. A naive substring search scores 38% / 58%. Still no semantic model: the remaining misses are listed in the benchmark output |
+| **Retrieval with the opt-in semantic layer** (same 48 queries, `CRBRO_SEMANTIC=1`) | recall@1 **79%** · recall@3 **83%** · MRR 0.81 — **88% / 92%** counting `also_matched` | Vectors from `multilingual-e5-small` (int8) fused with BM25 by reciprocal rank. Alone, the model scores 60% / 83%; fused, it adds 8 points at recall@1 and no distractor reaches a real hit's score (0 of 14; 12 return something, 11 of them labelled `weak`). The cosine floor under which a vector-only candidate is dropped (0.84) was picked on this same set — a tuned number, not a blind one. Costs ~500 MB on disk, a one-time embedding pass (~18 ms per line) and ~13 s of model load per process. Off by default *(v1.14+)* |
 | **Retrieval — false confidence** (14 questions about things that are NOT stored) | 11 return *something*; **2** at a real hit's score; **10 of 11** labelled `weak` | A keyword memory answers almost anything. Every result now carries `confidence`, and the label catches nearly every distractor — at the price of also calling 18 of 48 real hits weak. Weak means "little of the question was covered", not "wrong" |
 | **Secret redaction** (20 credentials in adversarial disguises, 19 near-miss innocents) | **100%** caught · **0%** false positives | 100% on *this frozen set* — a floor, not a security proof. The set grows as new evasion shapes appear; four of its entries were misses in the first run and were fixed, not hidden |
 | **Cost** (what CRBRO adds to a session) | ~**750 tokens** at boot · **~5.4k tokens** of tool definitions · **<1 ms** local recall over 300 facts | The boot block is paid once. The 23 tool definitions are paid on every request by clients that load all tools (Claude Desktop, Cursor); Claude Code defers them and pays only for the ones it uses. 1.12 measured 6.3k and did not say so |
@@ -267,8 +269,23 @@ npx crbro-memory init     # Initialize brain + detect IDEs
 npx crbro-memory status   # Show brain status
 npx crbro-memory reindex  # Rebuild the search index
 npx crbro-memory eval     # Measure retrieval quality against your own query set
+npx crbro-memory semantic install | build | status   # The opt-in semantic layer (below)
 npx crbro-memory --help   # Help
 ```
+
+### Semantic search (opt-in)
+
+The keyword engine has no synonyms, and the blind benchmark shows exactly where that bites: after the 1.13 ranking fixes, the misses left are paraphrases — *"where are the sites hosted"* for a fact about a Hetzner VPS. A small embedding model closes part of that gap. It is opt-in and stays so: the runtime (transformers.js + onnxruntime) is ~380 MB, the model 118 MB, and a cold load takes ~13 s per process — none of which most users should pay by default.
+
+```bash
+npx crbro-memory semantic install     # once per machine → ~/.crbro/.semantic
+# then add CRBRO_SEMANTIC=1 to the crbro server's env in your MCP client config
+npx crbro-memory semantic build       # once: embeds every line of the brain (~18 ms each)
+```
+
+From then on every new line is embedded when it is saved (ids are content hashes, so nothing is embedded twice), the model warms in the background after boot, and `crbro_recall` fuses both rankings by reciprocal rank. Results the vectors ranked carry `semantic_score`; a vector-only match is `strong` from cosine 0.86. Set `CRBRO_SEMANTIC=0` (or just unset it) and the layer disappears: no vectors are read, no model is loaded, recall is the 1.13 engine byte for byte.
+
+What it buys on the frozen benchmark, and what it does not, is in the table above and in [`benchmarks/README.md`](benchmarks/README.md) — including the fact that the 0.84 cosine floor was chosen on that same set. One limit worth knowing before you install 500 MB: the model does not understand the question. Queries that share no concrete word with the stored line ("which machine serves the pages" for a fact about a Hetzner VPS) land in a flat 0.80–0.84 cosine band with near-random ordering — measured, and the reason the floor exists. What it adds is tolerance to vocabulary variation and to entities, which is where the benchmark gain comes from.
 
 ### Measuring retrieval
 
