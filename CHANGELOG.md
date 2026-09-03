@@ -2,6 +2,16 @@
 
 All notable changes to CRBRO.
 
+## [Unreleased]
+
+- Lockfile-only security refresh: `npm audit` reported 9 advisories (6 of
+  them in the production tree) in the express chain that the MCP SDK pulls in
+  — qs, postcss, vite, nanoid. `npm audit fix` clears all 9 within the
+  declared ranges, so no dependency range moved and 193 tests still pass.
+  It surfaced in a registry build log, not in ours: our CI never ran audit.
+  Nothing to republish — the npm tarball ships no lockfile, so anyone
+  installing crbro-memory already resolves the fixed versions.
+
 ## [1.16.0] — 2026-09-03
 
 ### Semantic recall, installed by default
