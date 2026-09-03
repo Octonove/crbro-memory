@@ -68,10 +68,11 @@ la tabla. Por eso el script mide con y sin (`CRBRO_SYNONYMS=0`).
 **Lo que le faltaba al motor léxico:** los 8 fallos que quedaban (con
 also_matched) eran sinónimos que ninguna tabla razonable cubre — «alojadas» →
 un VPS de Hetzner, «seguridad» → Wordfence, «proveedor de email» → Mailchimp.
-Eso solo lo cierra un modelo semántico, y el que se descartó en 1.4 por «472
-MB» era el fp32: el int8 de `multilingual-e5-small` pesa 118 MB. Desde 1.14
-existe como **capa opcional** (`CRBRO_SEMANTIC=1` + `npx crbro-memory
-semantic install`); sin activarla, el motor es el de 1.13 byte a byte.
+Dos caminos lo atacan, y los dos están medidos más abajo: un modelo semántico
+**opcional** (1.14: `CRBRO_SEMANTIC=1` + `npx crbro-memory semantic
+install`; sin activarla, el motor es el de 1.13 byte a byte) y, mejor y
+gratis, que el propio modelo que guarda escriba esas palabras al guardar
+(1.15, «La IA en el bucle»).
 
 ## Retrieval con la capa semántica (1.14, `CRBRO_SEMANTIC=1`)
 
@@ -153,6 +154,60 @@ carga en frío por proceso (se calienta en segundo plano tras el boot), 20–45 
 por línea nueva al guardar según su longitud (el cerebro de referencia, 5.129
 chunks y 3.984 líneas sin cabeceras, tardó 3 minutos en total), y unas decenas
 de ms por consulta. Por eso es opcional y va a seguir siéndolo.
+
+## La IA en el bucle (1.15, informativo, no pre-registrado)
+
+La pregunta de Antonio fue la buena: ¿por qué no usar directamente la IA para
+los casos difíciles? Quien guarda y quien pregunta es un modelo de lenguaje, y
+un modelo sabe los sinónimos que un índice de palabras no sabe. 1.15 le da dos
+sitios donde ponerlos, sin disco ni RAM:
+
+- **Palabras clave al guardar** (`keywords` en `crbro_learn`): 2-5 palabras
+  con las que una pregunta futura podría referirse al hecho y que el texto no
+  contiene («Hetzner» → hosting, alojamiento, servidor). Se indexan con la
+  línea, nunca se muestran, y viajan por los espacios compartidos.
+- **Varias formulaciones al buscar** (`queries` en `crbro_recall`): 2-4
+  reformulaciones buscadas junto a la original y fusionadas por rango
+  recíproco (`searchMany`).
+
+**Cómo se midió sin hacer trampa:** las palabras clave las escribió un modelo
+(Claude Sonnet) que vio SOLO los 48 textos, sin etiquetas ni consultas
+(`blind-keys.json`, 5 por hecho de media); las reformulaciones las escribió
+otra instancia que vio SOLO las 62 consultas, sin los hechos
+(`blind-alts.json`, 3 por consulta). Mismo examen, mismos distractores. Se
+reproduce con `CRBRO_BENCH_KEYS=benchmarks/retrieval/blind-keys.json` y/o
+`CRBRO_BENCH_ALTS=benchmarks/retrieval/blind-alts.json`.
+
+| configuración | recall@1 | recall@3 | MRR | con also_matched @1 / @3 | distractores confiados |
+|---|--:|--:|--:|--:|--:|
+| motor léxico 1.13/1.14 (referencia) | 71% | 77% | 0.744 | 79% / 85% | 2 / 14 |
+| + reformulaciones | 71% | 79% | 0.758 | 79% / 90% | 1 / 14 |
+| + palabras clave | **83%** | **90%** | 0.866 | 85% / 94% | 1 / 14 |
+| + palabras clave + reformulaciones | 85% | 90% | 0.877 | 92% / 98% | 1 / 14 |
+| capa semántica sola (1.14) | 79% | 83% | 0.813 | 88% / 92% | 0 / 14 |
+| semántica + reformulaciones | 81% | 85% | 0.841 | 90% / 94% | 1 / 14 |
+| semántica + palabras clave | 85% | 88% | 0.865 | 90% / 94% | 0 / 14 |
+| **semántica + palabras clave + reformulaciones** | **90%** | **92%** | **0.911** | **96% / 98%** | 1 / 14 |
+
+Lectura honesta:
+
+- La palanca grande son las **palabras clave al guardar**: +12 puntos a la
+  primera y +13 en el top 3 sobre el motor léxico, sin un solo byte de disco
+  ni de RAM. Cierran justo los huecos que ningún modelo de embeddings cerró
+  (alojadas → hosting, pruebo → entorno de pruebas, suscripciones de IA).
+- Las **reformulaciones** solas apenas mueven el motor léxico (+0 / +2):
+  quien reformula a ciegas no adivina «Hetzner». Suman cuando ya hay
+  vocabulario que enganchar. Con la fusión casi todo distractor devuelve algo
+  (14/14), marcado `weak` (14/14 con todo activado).
+- Con todo activado siguen sin aparecer entre los 10 primeros 3 consultas:
+  «formulario de contacto web de reformas» (la neurona acertada contesta con
+  otra línea; con also_matched sí aparece), «posición de la keyword principal
+  de octonove» y «política de copias de seguridad de las webs».
+- Advertencia de siempre: 48 consultas, el mismo conjunto desde 1.12, cada
+  punto son dos consultas. Y las palabras clave del cerebro real las escribirá
+  el modelo en uso al guardar, siguiendo la descripción de la herramienta:
+  esta medición dice lo que pasa cuando lo hace con criterio, no garantiza
+  que lo haga siempre.
 
 ## Security — el filtro de redacción
 

@@ -26,6 +26,14 @@ export interface Fact {
   superseded_by?: string;    // id of the fact that replaced this one
   revised?: string;          // ISO date of the status change
   revision_note?: string;    // why it stopped being true
+  /**
+   * Aliases a future question may use that the text does not contain:
+   * synonyms, the other language, the generic name of the product named.
+   * Written by the caller at save time (a language model knows them),
+   * indexed with the line, never displayed. The cheapest fix there is for
+   * vocabulary gaps, and the one no embedding model replaces.
+   */
+  keys?: string[];
 }
 
 export interface Decision {

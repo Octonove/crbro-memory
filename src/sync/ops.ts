@@ -42,6 +42,8 @@ export interface FactOp extends OpBase {
   text: string;
   conf: number;
   src?: string;
+  /** Aliases indexed with the fact (1.15). Merged, never replaced, on the receiving side. */
+  keys?: string[];
 }
 
 /**

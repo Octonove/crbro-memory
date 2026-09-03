@@ -76,7 +76,7 @@ export type Indexer = (neuron: Neuron) => Promise<void> | void;
 export type Emitter = (
   neuronId: string,
   change:
-    | { kind: 'fact'; text: string; fid: string; conf: number; at: string; src?: string }
+    | { kind: 'fact'; text: string; fid: string; conf: number; at: string; src?: string; keys?: string[] }
     | { kind: 'status'; fid: string; to: 'superseded' | 'retracted'; at: string; why?: string }
     | { kind: 'decision'; text: string; why?: string; at: string }
     | { kind: 'pattern'; text: string; at: string }
@@ -86,6 +86,20 @@ export type Emitter = (
     | { kind: 'error_purge'; key: string; at: string }
     | { kind: 'debt_purge'; key: string; at: string }
 ) => Promise<void> | void;
+
+/**
+ * Aliases a future question may use, as stored: trimmed, lower-cased, at
+ * most 40 characters each, unique, at most eight. Order is kept.
+ */
+export function normalizeKeys(keys?: string[]): string[] {
+  const out: string[] = [];
+  for (const k of keys || []) {
+    const v = String(k || '').trim().toLowerCase().slice(0, 40);
+    if (v && !out.includes(v)) out.push(v);
+    if (out.length >= 8) break;
+  }
+  return out;
+}
 
 export class Cortex {
   /**
@@ -303,6 +317,8 @@ export class Cortex {
       domain?: string;
       rationale?: string;
       neuronType?: NeuronType;
+      /** Facts only: words a future question may use that the text does not contain. Indexed, never displayed. */
+      keys?: string[];
       /** Write to this exact neuron and skip name resolution entirely. */
       neuronId?: string;
       /** Who is writing: 'session' (default), 'miner', 'manual'. */
@@ -385,9 +401,22 @@ export class Cortex {
         switch (type) {
           case 'fact': {
             const id = factId(content);
-            const isDuplicate = n.facts.some(
+            const keys = normalizeKeys(options?.keys);
+            const existente = n.facts.find(
               f => f.text.toLowerCase() === content.toLowerCase()
             );
+            const isDuplicate = existente !== undefined;
+            if (existente && keys.length) {
+              // The same line again, with aliases: merge them, no sibling.
+              // The indexer re-indexes the neuron afterwards, keys included.
+              const merged = normalizeKeys([...(existente.keys || []), ...keys]);
+              if (merged.length !== (existente.keys || []).length) {
+                existente.keys = merged;
+                this.tally.topics.add(n.id);
+                emitir = { kind: 'fact' as const, text: existente.text, fid: existente.id || id,
+                           conf: existente.confidence ?? 1, at: existente.added, src: existente.source, keys: merged };
+              }
+            }
             if (!isDuplicate) {
               if (options?.supersedes?.length) {
                 const retirado = this.retire(n, options.supersedes, id, 'superseded');
@@ -408,11 +437,12 @@ export class Cortex {
                 status: 'active',
               };
               if (options?.supersedes?.length) fact.supersedes = options.supersedes;
+              if (keys.length) fact.keys = keys;
               n.facts.push(fact);
               this.tally.facts++;
               this.tally.topics.add(n.id);
               emitir = { kind: 'fact' as const, text: content, fid: id,
-                         conf: fact.confidence, at: fact.added, src: fact.source };
+                         conf: fact.confidence, at: fact.added, src: fact.source, keys: fact.keys };
             }
             break;
           }

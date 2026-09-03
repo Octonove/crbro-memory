@@ -2,7 +2,41 @@
 
 All notable changes to CRBRO.
 
-## [Unreleased]
+## [1.15.0] — 2026-09-03
+
+### The model in the loop
+
+Antonio asked the right question: why not use the model itself for the hard
+cases? The caller of this memory is a language model at both ends — it saves,
+and it asks — and it knows the synonyms a keyword index does not. 1.15 gives
+it two places to put them, at zero disk and zero RAM:
+
+- `crbro_learn` takes `keywords`: 2-5 words a future question may use that
+  the text does not contain — synonyms, the other language, the generic name
+  of the product named. Stored on the fact (`keys`), indexed with the line,
+  never displayed, merged when the same line is saved again, carried through
+  team spaces.
+- `crbro_recall` takes `queries`: alternative phrasings searched together
+  with `query` and fused by reciprocal rank (`SearchEngine.searchMany`). One
+  phrasing behaves exactly as before.
+- Boot's `memory_discipline` says both, so a fresh session does it unprompted.
+
+Measured blind on the frozen set: the keywords were written by a model that
+saw only the 48 fact texts, the rewrites by one that saw only the 62 queries.
+Both files ship in `benchmarks/retrieval/`, so the runs reproduce.
+
+| | recall@1 | recall@3 | with `also_matched` |
+|---|--:|--:|--:|
+| 1.14 keyword engine | 71% | 77% | 79% / 85% |
+| + keywords | **83%** | **90%** | 85% / 94% |
+| + keywords + rewrites | 85% | 90% | 92% / 98% |
+| + keywords + rewrites + semantic layer | **90%** | **92%** | **96% / 98%** |
+
+Rewrites alone barely move the keyword engine (71% / 79%): a blind rewrite
+does not guess "Hetzner". Keywords at save time do, which is why they are the
+lever — and why no embedding model was ever going to replace them.
+
+### Also
 
 - `CRBRO_SEMANTIC_MODEL` / `CRBRO_SEMANTIC_DTYPE` select the embedding model
   (any e5-family model transformers.js can load). The vector width is read
@@ -14,6 +48,10 @@ All notable changes to CRBRO.
   reproduces the model-only column.
 - The RAM of the semantic layer is now documented: ~0.5 GB with the default
   model, measured, not estimated.
+- The cost benchmark no longer counts the semantic runtime and models as
+  brain size: 36.9 MB of brain, not 1.4 GB.
+- 7 new tests (192 total). `INDEX_VERSION` 4: the search index is rebuilt
+  once on the first start after upgrading.
 
 ## [1.14.0] — 2026-09-03
 

@@ -152,6 +152,7 @@ export function applyOps(
         existing.id = existing.id || fo.fid;
         existing.added = earliest(existing.added, fo.at);
         existing.confidence = Math.max(existing.confidence ?? 1, fo.conf ?? 1);
+        if (fo.keys?.length) existing.keys = [...new Set([...(existing.keys || []), ...fo.keys])].slice(0, 8);
         continue;
       }
       const fact: Fact = {
@@ -162,6 +163,7 @@ export function applyOps(
         id: fo.fid,
         status: 'active',
       };
+      if (fo.keys?.length) fact.keys = fo.keys.slice(0, 8);
       neuron.facts.push(fact);
       byFid.set(fo.fid, fact);
       byText.set(normalizeText(fo.text), fact);

@@ -42,10 +42,24 @@ const engine = new SearchEngine(brain);
 await engine.init();
 cortex.setIndexer(n => engine.indexNeuron(n));
 
+// ─── IA en el bucle (informativo, NO pre-registrado; 1.15) ──────────
+// CRBRO_BENCH_KEYS=<json>: palabras clave por hecho ({id: orden del fixture, keys}).
+// CRBRO_BENCH_ALTS=<json>: reformulaciones por consulta ({id: q<i>|d<i>, alts}),
+// buscadas junto a la original con searchMany. Cada archivo lo escribe un
+// modelo que NO ha visto la otra mitad del examen; el script no juzga eso.
+const KEYS = process.env.CRBRO_BENCH_KEYS
+  ? new Map(JSON.parse(readFileSync(process.env.CRBRO_BENCH_KEYS, 'utf8')).map(e => [e.id, e.keys])) : null;
+const ALTS = process.env.CRBRO_BENCH_ALTS
+  ? new Map(JSON.parse(readFileSync(process.env.CRBRO_BENCH_ALTS, 'utf8')).map(e => [e.id, e.alts])) : null;
+const buscar = (q, id, opts) => (ALTS && ALTS.get(id)) ? engine.searchMany([q, ...ALTS.get(id)], opts) : engine.search(q, opts);
+
 const textoPorEtiqueta = new Map();
+let indice = 0;
 for (const n of fixture.neurons) {
   for (const f of n.facts) {
-    await cortex.learn(n.name, 'fact', f.text, { domain: n.domain });
+    const keys = KEYS ? (KEYS.get(indice) || []) : undefined;
+    await cortex.learn(n.name, 'fact', f.text, { domain: n.domain, keys });
+    indice++;
     textoPorEtiqueta.set(f.label, { text: f.text, neuron: n.name });
   }
 }
@@ -69,9 +83,9 @@ const res = { motor: { at1: 0, at3: 0, mrr: 0 }, control: { at1: 0, at3: 0 }, fa
               conAlso: { at1: 0, at3: 0 }, top1Strong: 0 };
 const scoresReales = [];
 
-for (const q of qs.queries) {
+for (const [qi, q] of qs.queries.entries()) {
   const esperado = textoPorEtiqueta.get(q.expect_label);
-  const hits = await engine.search(q.query, { limit: 10 });
+  const hits = await buscar(q.query, 'q' + qi, { limit: 10 });
   if (hits[0]) scoresReales.push(hits[0].relevance_score);
   if (hits[0] && hits[0].confidence === 'strong') res.top1Strong++;
 
@@ -97,8 +111,8 @@ for (const q of qs.queries) {
 scoresReales.sort((a, b) => a - b);
 const p25 = scoresReales[Math.floor(scoresReales.length * 0.25)] || 0;
 let distConAlgo = 0, distConfiados = 0, distWeak = 0;
-for (const d of qs.distractors) {
-  const hits = await engine.search(d, { limit: 3 });
+for (const [di, d] of qs.distractors.entries()) {
+  const hits = await buscar(d, 'd' + di, { limit: 3 });
   if (hits.length > 0) {
     distConAlgo++;
     if (hits[0].relevance_score >= p25) distConfiados++;
@@ -133,6 +147,7 @@ const out = {
     reales_top1_strong: `${res.top1Strong}/${N}`,
     distractores_marcados_weak: `${distWeak}/${distConAlgo}`,
   },
+  ia_en_el_bucle_1_15: { keywords: KEYS ? 'on' : 'off', alternativas: ALTS ? 'on' : 'off' },
   fallos: res.fallos,
 };
 
@@ -145,6 +160,7 @@ if (process.argv.includes('--json')) {
   console.log(`  control       recall@1 ${out.control_subcadena['recall@1'].padStart(4)} · recall@3 ${out.control_subcadena['recall@3'].padStart(4)}   (subcadena ingenua)`);
   console.log(`  distractores  ${distConAlgo}/${D} devuelven algo · ${distConfiados}/${D} con score de nivel "acierto"`);
   console.log(`  [1.13, informativo] sinónimos ${out.informativo_1_13.sinonimos} · con also_matched recall@1 ${out.informativo_1_13['con_also_matched recall@1']} · recall@3 ${out.informativo_1_13['con_also_matched recall@3']} · top-1 reales "strong" ${out.informativo_1_13.reales_top1_strong} · distractores marcados "weak" ${out.informativo_1_13.distractores_marcados_weak}`);
+  if (KEYS || ALTS) console.log(`  [1.15, IA en el bucle] keywords ${KEYS ? 'on' : 'off'} · alternativas ${ALTS ? 'on' : 'off'}`);
   if (res.fallos.length) {
     console.log(`  no encontradas en top-10 (${res.fallos.length}):`);
     for (const f of res.fallos.slice(0, 10)) console.log(`    · «${f.query}» → ${f.label}`);
