@@ -277,6 +277,7 @@ export class Cortex {
         tags: [],
         errors: [],
         debts: [],
+        entry_dates: {},
       };
     });
 
@@ -369,6 +370,13 @@ export class Cortex {
     // From here on we work on a fresh read inside the lock. Mutating the copy
     // fetched a moment ago and saving it over the top is exactly how a
     // concurrent writer's facts disappeared.
+    // Patterns, preferences, errors and debts are plain strings; their date
+    // lives in the entry_dates sidecar, keyed by content hash.
+    const fechar = (n: Neuron, text: string) => {
+      if (!n.entry_dates) n.entry_dates = {};
+      n.entry_dates[entryId(text)] = now();
+    };
+
     const actualizada = await updateJSON<Neuron>(
       this.brain.paths.neuron(neuron.id),
       current => {
@@ -424,18 +432,23 @@ export class Cortex {
           case 'pattern': {
             if (!n.patterns.includes(content)) {
               n.patterns.push(content);
+              fechar(n, content);
               emitir = { kind: 'pattern' as const, text: content, at: now() };
             }
             break;
           }
           case 'preference': {
-            if (!n.preferences.includes(content)) n.preferences.push(content);
+            if (!n.preferences.includes(content)) {
+              n.preferences.push(content);
+              fechar(n, content);
+            }
             break;
           }
           case 'error': {
             if (!n.errors) n.errors = [];
             if (!n.errors.includes(content)) {
               n.errors.push(content);
+              fechar(n, content);
               this.tally.topics.add(n.id);
               emitir = { kind: 'error' as const, text: content, at: now() };
             }
@@ -445,6 +458,7 @@ export class Cortex {
             if (!n.debts) n.debts = [];
             if (!n.debts.includes(content)) {
               n.debts.push(content);
+              fechar(n, content);
               this.tally.topics.add(n.id);
               emitir = { kind: 'debt' as const, text: content, at: now() };
             }
@@ -771,6 +785,11 @@ export class Cortex {
       const antes =
         current.facts.length + current.decisions.length +
         current.patterns.length + current.preferences.length;
+      // Dated entries before the removal, so their dates can go with them.
+      const fechadasAntes = [
+        ...current.patterns, ...current.preferences,
+        ...(current.errors || []), ...(current.debts || []),
+      ];
 
       current.facts = current.facts.filter(f => {
         const fid = (f.id || factId(f.text)).toLowerCase();
@@ -810,6 +829,18 @@ export class Cortex {
         current.patterns.length + current.preferences.length
       ) + (erroresAntes - (current.errors || []).length) + (deudasAntes - (current.debts || []).length) + mapaBorrado;
       if (removed === 0) return null;
+
+      // Drop the dates of what left, so the sidecar never outlives its entry.
+      if (current.entry_dates) {
+        const quedan = new Set([
+          ...current.patterns, ...current.preferences,
+          ...(current.errors || []), ...(current.debts || []),
+        ].map(entryId));
+        for (const t of fechadasAntes) {
+          const k = entryId(t);
+          if (!quedan.has(k)) delete current.entry_dates[k];
+        }
+      }
       current.last_accessed = now();
       return current;
     });

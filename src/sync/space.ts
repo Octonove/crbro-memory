@@ -185,17 +185,20 @@ function neuronOps(neuron: Neuron, id: Identity): Op[] {
     ops.push({ v: OPS_VERSION, op: 'decision', nid: neuron.id, by: id.author,
       at: d.date || at, did: entryId(d.text), text: d.text, why: d.rationale });
   }
+  // Dated entries carry their own date in `at`, so the team sees when a
+  // pattern, error or debt was really recorded, not when it was shared.
+  const fecha = (text: string) => neuron.entry_dates?.[entryId(text)] || at;
   for (const p of neuron.patterns || []) {
-    if (p) ops.push({ v: OPS_VERSION, op: 'pattern', nid: neuron.id, by: id.author, at, text: p });
+    if (p) ops.push({ v: OPS_VERSION, op: 'pattern', nid: neuron.id, by: id.author, at: fecha(p), text: p });
   }
   for (const t of neuron.tags || []) {
     if (t) ops.push({ v: OPS_VERSION, op: 'tag', nid: neuron.id, by: id.author, at, text: t });
   }
   for (const e of neuron.errors || []) {
-    if (e) ops.push({ v: OPS_VERSION, op: 'error', nid: neuron.id, by: id.author, at, text: e });
+    if (e) ops.push({ v: OPS_VERSION, op: 'error', nid: neuron.id, by: id.author, at: fecha(e), text: e });
   }
   for (const d of neuron.debts || []) {
-    if (d) ops.push({ v: OPS_VERSION, op: 'debt', nid: neuron.id, by: id.author, at, text: d });
+    if (d) ops.push({ v: OPS_VERSION, op: 'debt', nid: neuron.id, by: id.author, at: fecha(d), text: d });
   }
   if (neuron.map && neuron.map.text) {
     ops.push({ v: OPS_VERSION, op: 'map', nid: neuron.id, by: id.author,

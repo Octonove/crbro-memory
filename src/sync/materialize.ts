@@ -88,7 +88,7 @@ export function applyOps(
   // reported rather than resolved. Overwriting someone's local name because a
   // teammate spelled it differently is not a merge, it is a stomp.
   const neuron: Neuron = base
-    ? { ...base, facts: [...base.facts], decisions: [...base.decisions], patterns: [...base.patterns], preferences: [...base.preferences], tags: [...base.tags], connections: [...base.connections], errors: [...(base.errors || [])], debts: [...(base.debts || [])], map: base.map ? { ...base.map } : undefined }
+    ? { ...base, facts: [...base.facts], decisions: [...base.decisions], patterns: [...base.patterns], preferences: [...base.preferences], tags: [...base.tags], connections: [...base.connections], errors: [...(base.errors || [])], debts: [...(base.debts || [])], entry_dates: { ...(base.entry_dates || {}) }, map: base.map ? { ...base.map } : undefined }
     : {
         id,
         name: neuronOp && neuronOp.op === 'neuron' ? neuronOp.name : id,
@@ -107,7 +107,17 @@ export function applyOps(
         tags: [],
         errors: [],
         debts: [],
+        entry_dates: {},
       };
+
+  // The date of a pattern, error or debt travels in the op's `at`. Keep the
+  // earliest, like facts do: provenance says who knew it first.
+  const fechar = (text: string, at: string) => {
+    if (!at) return;
+    if (!neuron.entry_dates) neuron.entry_dates = {};
+    const k = entryId(text);
+    neuron.entry_dates[k] = earliest(neuron.entry_dates[k] || '', at);
+  };
 
   if (base && neuronOp && neuronOp.op === 'neuron') {
     if (neuronOp.name && base.name && normalizeText(neuronOp.name) !== normalizeText(base.name)) {
@@ -206,6 +216,7 @@ export function applyOps(
         neuron.patterns.push(op.text);
         report.patterns_added++;
       }
+      fechar(op.text, op.at);
     } else if (op.op === 'tag') {
       if (!neuron.tags.some(t => normalizeText(t) === normalizeText(op.text))) {
         neuron.tags.push(op.text);
@@ -217,12 +228,14 @@ export function applyOps(
         neuron.errors.push(op.text);
         report.errors_added++;
       }
+      fechar(op.text, op.at);
     } else if (op.op === 'debt') {
       if (!neuron.debts) neuron.debts = [];
       if (!neuron.debts.some(d => normalizeText(d) === normalizeText(op.text))) {
         neuron.debts.push(op.text);
         report.debts_added++;
       }
+      fechar(op.text, op.at);
     }
   }
 
@@ -301,6 +314,21 @@ export function applyOps(
   neuron.tags.sort();
   if (neuron.errors) neuron.errors.sort();
   if (neuron.debts) neuron.debts.sort();
+
+  // The sidecar too: only dates of entries that still exist, keys in a fixed
+  // order — a purged error takes its date with it, and two machines holding
+  // the same knowledge still write byte-identical files.
+  if (neuron.entry_dates) {
+    const vivos = new Set([
+      ...neuron.patterns, ...neuron.preferences,
+      ...(neuron.errors || []), ...(neuron.debts || []),
+    ].map(entryId));
+    const ordenado: Record<string, string> = {};
+    for (const k of Object.keys(neuron.entry_dates).sort()) {
+      if (vivos.has(k)) ordenado[k] = neuron.entry_dates[k];
+    }
+    neuron.entry_dates = ordenado;
+  }
 
   report.authors = [...new Set(ops.map(o => o.by).filter(Boolean))].sort();
 

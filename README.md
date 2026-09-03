@@ -15,15 +15,16 @@ Free and open source (MIT). All 23 tools included — no license, no account, no
 ## Features
 
 - **🧬 Biological Architecture** — Knowledge organized as neurons (cortex), connections (synapses), and session memory (hippocampus)
-- **🔍 Fact-Level Search** — Powered by [Orama](https://orama.com/). Every fact is indexed on its own, so a topic with hundreds of facts stays as findable as one with three, and each result comes back with the exact fact that matched and the date it was recorded
-- **🔥 Heat Scores** — Automatic relevance tracking based on frequency, recency, and connectivity
+- **🔍 Fact-Level Search** — Powered by [Orama](https://orama.com/). Every fact is indexed on its own, so a topic with hundreds of facts stays as findable as one with three. Each result comes back with the exact line that matched, when it was recorded, a `confidence` label (`weak` = little of the question was covered) and, for the top results, the topic's next best lines. A short bilingual synonym table widens the question without inventing terms *(v1.13+)*
+- **🔥 Heat Scores** — Automatic relevance tracking based on frequency, recency, and connectivity. Topics written in the same session are linked at consolidation, so the graph fills itself in *(v1.13+)*
 - **✏️ Correctable** — Knowledge can be superseded or retracted, not just piled up. A memory that only appends keeps serving yesterday's answer with today's confidence
 - **🔐 Credential-aware** — API keys, tokens and passwords are replaced with a marker before they touch the disk. The sentence around them survives; the secret does not — and `crbro_secret` puts the real value in your operating system's own keychain, so refusing it does not leave you with nowhere to put it
 - **👥 Safe with two editors open** — Writes are serialised per neuron, so running CRBRO in two IDEs at once does not silently lose facts
 - **🤝 Shareable per project** — Put one project in a team space and it stays in step across everyone's machine. Everything else in your brain never leaves it
 - **🗺️ Living Maps** — Each topic can carry one always-current map of how its system works (`crbro_map`), replaced whole on every change — plus a global map of clusters and cross-domain bridges
-- **📓 Error Ledger** — `type: "error"` stores each real mistake WITH its correction, on the topic where it happened, so the same error is not made twice
+- **📓 Error Ledger** — `type: "error"` stores each real mistake WITH its correction, on the topic where it happened, so the same error is not made twice. Dated since 1.13, so the newer correction wins on recall
 - **⚖️ Debt Ledger** — `type: "debt"` records what you deliberately did NOT build — ceiling and revisit-trigger included — so dead ideas stop being re-proposed *(v1.11+)*
+- **🏷️ Honest tool definitions** — Every tool carries MCP annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`), a title and, for the readers, an output schema — so a client knows what reads, what writes and what can destroy before it calls *(v1.13+)*
 - **🛡️ Subagent Hook (opt-in)** — `npx crbro-memory install-hooks --inject` wires a Claude Code hook that hands your behavioral protocols to spawned subagents. Injection is off by default since 1.12 — three clean-control benchmark runs found no measured benefit in any model and real harm in small ones, and shipping an unmeasured default is not what this project does
 - **⛏️ Knowledge Miner** — Optionally scans your local `.md`/`.txt` notes and feeds them into the brain
 - **🔒 Fully Local** — Runs on Node.js alone: no Python, no Docker, no databases, no external services. Your memory never leaves your machine
@@ -36,9 +37,10 @@ Every number below comes from a deterministic benchmark in [`benchmarks/`](bench
 
 | What | Result | The honest part |
 |------|--------|-----------------|
-| **Retrieval** (48 blind paraphrased queries, written by someone who never saw the stored text) | recall@1 **56%** · recall@3 **69%** · MRR 0.63 | A naive substring search scores 38%/58% on the same set. The gap to 100% is the documented price of shipping no semantic model (the 472 MB download was rejected) — the misses are true synonym gaps, listed in the benchmark output |
+| **Retrieval** (48 blind paraphrased queries, written by someone who never saw the stored text) | recall@1 **71%** · recall@3 **77%** · MRR 0.74 — and **79% / 85%** counting the neuron's `also_matched` lines | Was 56% / 69% in 1.12. Of the 13 misses, 8 were the *right neuron answering with the wrong line* (its name chunk, or a sibling fact) — fixed in the engine; the rest are vocabulary gaps, which a short bilingual synonym table now closes in part. A naive substring search scores 38% / 58%. Still no semantic model: the remaining misses are listed in the benchmark output |
+| **Retrieval — false confidence** (14 questions about things that are NOT stored) | 11 return *something*; **2** at a real hit's score; **10 of 11** labelled `weak` | A keyword memory answers almost anything. Every result now carries `confidence`, and the label catches nearly every distractor — at the price of also calling 18 of 48 real hits weak. Weak means "little of the question was covered", not "wrong" |
 | **Secret redaction** (20 credentials in adversarial disguises, 19 near-miss innocents) | **100%** caught · **0%** false positives | 100% on *this frozen set* — a floor, not a security proof. The set grows as new evasion shapes appear; four of its entries were misses in the first run and were fixed, not hidden |
-| **Cost** (what CRBRO adds to a session) | ~**753 tokens** at boot · **<1 ms** local recall over 300 facts | The context block is the product's whole token footprint; there is no per-message overhead |
+| **Cost** (what CRBRO adds to a session) | ~**750 tokens** at boot · **~5.4k tokens** of tool definitions · **<1 ms** local recall over 300 facts | The boot block is paid once. The 23 tool definitions are paid on every request by clients that load all tools (Claude Desktop, Cursor); Claude Code defers them and pays only for the ones it uses. 1.12 measured 6.3k and did not say so |
 
 What these benchmarks deliberately do **not** claim — human productivity, "it knows you", comparisons against other memory systems — is written down in [`benchmarks/LIMITS.md`](benchmarks/LIMITS.md).
 
@@ -87,6 +89,11 @@ claude mcp add --scope user crbro -- npx -y crbro-memory
 }
 ```
 
+**Docker** (the brain lives in `/root/.crbro`; mount a volume to keep it):
+```bash
+docker build -t crbro-memory . && docker run -i -v crbro-brain:/root/.crbro crbro-memory
+```
+
 ### 3. Start using it
 
 Your AI will now have access to 23 memory tools. Start any session with `crbro_boot`.
@@ -107,10 +114,10 @@ Session context never reaches Task-spawned subagents, so this hook can inject th
 |------|-------------|
 | `crbro_boot` | Boot the brain at session start — loads hot topics and context |
 | `crbro_status` | Brain status — neurons, synapses, sessions count |
-| `crbro_learn` | Store a fact, decision, pattern, or preference |
+| `crbro_learn` | Store a fact, decision, pattern, preference, error or debt |
 | `crbro_neuron` | Read a specific neuron (topic) with all its knowledge |
 | `crbro_neurons` | List neurons with optional filters (domain, type, heat) |
-| `crbro_recall` | Search every stored fact, not just topic names — returns the fact that matched |
+| `crbro_recall` | Search every stored line, not just topic names — returns what matched, how confidently, and the topic's next best lines |
 | `crbro_connect` | Create or strengthen a connection between neurons |
 | `crbro_connections` | Get all connections for a neuron |
 | `crbro_session_log` | Log a session summary |
@@ -127,7 +134,7 @@ Session context never reaches Task-spawned subagents, so this hook can inject th
 | `crbro_share` | Put one project into a space, after showing exactly what would be sent |
 | `crbro_sync` | Exchange notes with teammates now, instead of waiting for the next session |
 | `crbro_maintenance` | Brain maintenance — heat, pruning, integrity, index rebuild |
-| `crbro_consolidate` | End-of-session consolidation |
+| `crbro_consolidate` | End-of-session consolidation — logs the session and links the topics it wrote |
 
 ## Credentials
 

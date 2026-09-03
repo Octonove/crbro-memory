@@ -73,6 +73,16 @@ export interface Neuron {
    */
   debts?: string[];
   /**
+   * When each pattern, preference, error and debt was recorded, keyed by
+   * entryId(text) — the same content hash the sync purge ops already use.
+   * A sidecar on purpose, not a change of element type: every reader of
+   * those arrays keeps working, the ops format is untouched, and a brain
+   * written before 1.13 is still valid — its entries simply carry no date.
+   * Before this, recall answered `matched_added: ""` for every error and
+   * debt, so "prefer the more recent" could not apply to the error ledger.
+   */
+  entry_dates?: Record<string, string>;
+  /**
    * The living map of the system: where it lives, what serves what, which
    * pieces talk to each other, the traps. One document, replaced whole on
    * every update — never appended — so it cannot drift into versions.
@@ -227,4 +237,20 @@ export interface SearchResult {
   heat: number;
   /** The neuron keeps a system map — read it with crbro_map before working on this system. */
   has_map?: boolean;
+  /** How many of the query's terms the matching chunk covered, out of how many. */
+  matched_terms?: number;
+  query_terms?: number;
+  /**
+   * strong = the chunk covers at least half the query (two terms or more when
+   * the query has several); weak = a thin overlap that may well be unrelated.
+   * A keyword memory returns *something* for most questions; this says how
+   * much to trust it.
+   */
+  confidence?: 'strong' | 'weak';
+  /**
+   * The next best live chunks of the same neuron, for the top results only —
+   * one neuron can answer with more than one line, and the line you need is
+   * not always the one that scored highest.
+   */
+  also_matched?: Array<{ text: string; kind: string; added: string }>;
 }

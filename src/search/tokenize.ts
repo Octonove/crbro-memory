@@ -76,17 +76,31 @@ export function queryTerms(query: string): string[] {
   return fallback;
 }
 
+import { SYNONYMS } from './synonyms.js';
+
+/** The synonym table is on unless CRBRO_SYNONYMS=0 — the benchmark runs both. */
+export function synonymsEnabled(): boolean {
+  return process.env.CRBRO_SYNONYMS !== '0';
+}
+
 /**
- * Singular and plural of the same word, so a query about "facturas" still
- * finds the fact that says "factura".
+ * Other spellings of the same query term: singular/plural, and the curated
+ * bilingual synonyms in synonyms.ts. Every variant counts as the SAME term,
+ * so coverage stays honest — a question about "facturas" does not score
+ * twice for also matching "factura", and "alojamiento" scores exactly like
+ * "hosting" would have.
  *
- * Deliberately NOT a stemmer and NOT a synonym table. A stemmer applied to
- * Spanish mangles the very common -ción family; a synonym table is guesswork
- * that quietly pulls in wrong results. Number agreement is mechanical, covers
- * a large share of real misses, and cannot invent a meaning that was not there.
+ * Deliberately NOT a stemmer: applied to Spanish it mangles the very common
+ * -ción family. And the synonym table is a fixed list, not an inference —
+ * it can widen the spelling of a term that was asked for, never add one
+ * that was not. Measured on the blind retrieval benchmark in benchmarks/;
+ * the honest caveat about who wrote the table is recorded there.
  */
 export function variants(term: string): string[] {
   const out = new Set<string>([term]);
+  if (synonymsEnabled()) {
+    for (const s of SYNONYMS[term] || []) out.add(s);
+  }
   if (term.length < 4) return [...out];
 
   // Plural -> singular

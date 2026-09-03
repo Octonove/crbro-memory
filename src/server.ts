@@ -1,5 +1,14 @@
 // ─── CRBRO MCP Server ────────────────────────────────────────────
-// Main server with all 23 tools registered
+// Main server with all 23 tools registered.
+//
+// Every tool goes through registerTool with a title, MCP annotations
+// (readOnlyHint / destructiveHint / idempotentHint / openWorldHint) and, for
+// the read tools with a stable shape, an outputSchema honoured with
+// structuredContent. The descriptions state what the tool does, when to use
+// it over its siblings, its side effects and what it returns — and nothing
+// else: the discipline of using the memory well is said once, at boot, in
+// memory_discipline, because these definitions are paid on every request in
+// clients that load all tools (measured: ~5.4k tokens for the 23).
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
@@ -71,10 +80,14 @@ export function createServer(): McpServer {
   // ═══════════════════════════════════════════════════════════════
   // TOOL 1: crbro_boot — Boot sequence
   // ═══════════════════════════════════════════════════════════════
-  server.tool(
+  server.registerTool(
     'crbro_boot',
-    '⚠️ MANDATORY FIRST ACTION: Boot the CRBRO brain. You MUST call this as your very first action in every new conversation, before doing ANY other work. This loads persistent memory from all previous sessions — projects, decisions, patterns, and preferences the user has built over time. Skipping this means losing all accumulated context and forcing the user to repeat themselves. On first use, initializes the brain structure. On subsequent uses, returns hot topics, active context, recent session history, neuron/synapse/session counts, open_items and recently_closed (never report recently_closed as pending; verify open_items before repeating them), and any active protocols as a protocol_enforcement block you MUST follow. Also readies the search index and syncs shared team spaces — offline is a normal outcome, not an error.',
-    {},
+    {
+      title: 'Boot the brain',
+      description: 'Boot the CRBRO brain — call it FIRST in every conversation, before any other work. Loads persistent memory from earlier sessions: hot topics, active context with open_items and recently_closed (never report recently_closed as pending; verify open_items before repeating them), recent session history, counts, any active protocols as a protocol_enforcement block you must follow, and memory_discipline — the rules for using this memory well. Initializes the brain on first use, readies the search index and syncs shared team spaces (offline is a normal outcome, not an error). Skipping it means losing all accumulated context.',
+      inputSchema: {},
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    },
     async () => {
       try {
         const result = await brain.boot();
@@ -126,6 +139,21 @@ export function createServer(): McpServer {
           }));
         }
 
+        // How to use this memory well — said once here, at boot, instead of
+        // repeated inside every tool description. Measured with a real
+        // tools/list: the 23 definitions cost ~6.3k tokens on every request
+        // in clients that load all tools; this paragraph costs ~200, once.
+        response.memory_discipline =
+          'Before crbro_learn, crbro_recall: what you are about to save may already exist — then pass ' +
+          'supersedes instead of adding a sibling (two versions of one fact compete on recall as equals). ' +
+          'Structure — paths, what serves what, traps — goes in crbro_map, not in facts; anything derivable ' +
+          'from the repo or git history is not worth storing. Write facts dense and self-contained: they are ' +
+          'recalled without this conversation. type:error keeps a mistake with its fix; type:debt keeps a ' +
+          'deliberate deferral with its ceiling and revisit trigger. Credentials never go in the brain: ' +
+          'crbro_secret, then record only the NAME. Recall results carry confidence — "weak" means the match ' +
+          'covers little of the question, verify before relying on it — and when two facts disagree, prefer ' +
+          'the more recent. Call crbro_consolidate before the conversation ends; it logs the session too.';
+
         return {
           content: [{
             type: 'text' as const,
@@ -147,27 +175,40 @@ export function createServer(): McpServer {
   // ═══════════════════════════════════════════════════════════════
   // TOOL 2: crbro_status — Brain status
   // ═══════════════════════════════════════════════════════════════
-  server.tool(
+  server.registerTool(
     'crbro_status',
-    'Read-only snapshot: CRBRO version, brain format, neuron/synapse/session totals, brain path, last boot/consolidation. Loads no memory — that is crbro_boot.',
-    {},
+    {
+      title: 'Brain status',
+      description: 'Read-only snapshot: CRBRO version, brain format, neuron/synapse/session totals, brain path, last boot and last consolidation. Loads no memory — that is crbro_boot.',
+      inputSchema: {},
+      outputSchema: {
+        crbro_version: z.string(),
+        brain_format: z.string().optional(),
+        total_neurons: z.number(),
+        total_synapses: z.number(),
+        total_sessions: z.number(),
+        brain_path: z.string().optional(),
+        last_boot: z.string().nullable().optional(),
+        last_consolidation: z.string().nullable().optional(),
+      },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
     async () => {
       try {
         const manifest = await brain.getManifest();
+        const payload = {
+          crbro_version: runningVersion(),
+          brain_format: manifest.version,
+          total_neurons: manifest.total_neurons,
+          total_synapses: manifest.total_synapses,
+          total_sessions: manifest.total_sessions,
+          brain_path: manifest.brain_path,
+          last_boot: manifest.last_boot,
+          last_consolidation: manifest.last_consolidation,
+        };
         return {
-          content: [{
-            type: 'text' as const,
-            text: JSON.stringify({
-              crbro_version: runningVersion(),
-              brain_format: manifest.version,
-              total_neurons: manifest.total_neurons,
-              total_synapses: manifest.total_synapses,
-              total_sessions: manifest.total_sessions,
-              brain_path: manifest.brain_path,
-              last_boot: manifest.last_boot,
-              last_consolidation: manifest.last_consolidation,
-            }, null, 2),
-          }],
+          content: [{ type: 'text' as const, text: JSON.stringify(payload, null, 2) }],
+          structuredContent: payload,
         };
       } catch (err) {
         return {
@@ -184,18 +225,22 @@ export function createServer(): McpServer {
   // ═══════════════════════════════════════════════════════════════
   // TOOL 3: crbro_learn — Add knowledge to the brain
   // ═══════════════════════════════════════════════════════════════
-  server.tool(
+  server.registerTool(
     'crbro_learn',
-    'Teach the brain a fact, decision, pattern, preference, error or debt about a topic. If the neuron (topic) does not exist, it will be created automatically; pass `neuron_id` from a crbro_recall result to target an exact neuron and skip name matching. A fact already stored verbatim is skipped silently; decisions always append. Use this to store knowledge that should persist across sessions. BEFORE saving, walk the ladder: does this already exist (crbro_recall first)? does it update something (pass `supersedes`, do not add a sibling)? is it structure rather than an event (crbro_map, not a fact)? is it derivable from the repo or git history (then do not store it)? and would it survive losing half its words (then cut them - every word should carry weight)? Type `error` is for a mistake you made and how it was corrected - store both halves in one entry, and check for them with crbro_recall before repeating a task where you have slipped before. Type `debt` is the twin for deliberate deferrals - what was skipped on purpose, its ceiling, and when to revisit; before re-proposing or re-discussing something, recall may surface that it was already deferred with a reason. Type `preference` never leaves this machine - it is excluded from sharing and sync. Anything that looks like a credential is replaced with a marker before it reaches disk (the sentence around it is kept) and reported in `redacted` - store the value with crbro_secret and record only its name. Returns neuron_id, action (created/updated), superseded count and running totals. If the new fact closely resembles an active one, the response warns with `near_duplicates` - it is stored anyway, but retire the old telling or two versions keep coming back on recall as equals. A `supersedes` target matching no active fact is reported in `supersedes_unmatched` - the old version is still live; retire it with crbro_revise.',
     {
-      topic: z.string().describe('The topic name (e.g., "OctoChat", "Firebase", "SEO Strategy")'),
-      type: z.enum(['fact', 'decision', 'pattern', 'preference', 'error', 'debt']).describe('Type of knowledge to store. `error` = a mistake plus its correction, kept as a ledger you can check before repeating the task. `debt` = a deliberate deferral: what was NOT done on purpose, its ceiling, and the condition to revisit — write all three in one entry, e.g. "DEFERRED: protecting the PDFs. CEILING: anyone can download the lead magnets without signing up. REVISIT WHEN: the signup flow works." When someone re-proposes a dead idea, recall serves the decision with its date and trigger.'),
-      content: z.string().describe('The knowledge content to remember. Write it dense and self-contained - it will be recalled without this conversation as context. Credential-like values are redacted to a marker before touching disk.'),
-      confidence: z.number().min(0).max(1).optional().describe('Confidence level 0.0-1.0 (default 1.0)'),
-      domain: z.string().optional().describe('Domain category (e.g., "proyectos-web", "infraestructura"). Applied when the neuron is created; on an existing neuron it only replaces the default "general".'),
-      rationale: z.string().optional().describe('Why the decision was taken. Stored and indexed with the decision text; ignored for other types.'),
-      neuron_id: z.string().optional().describe('Exact neuron ID to write to (e.g. "project_octochat"). Pass the neuron_id you got back from crbro_recall: it skips name matching entirely and guarantees the knowledge lands where you mean.'),
-      supersedes: z.array(z.string()).optional().describe('Facts this one replaces: their ids, or their exact text. They stop showing up in recall but stay in the neuron file. A target matching no active fact comes back in supersedes_unmatched and stays live.'),
+      title: 'Learn something',
+      description: 'Store a fact, decision, pattern, preference, error or debt on a topic. The neuron is created if it does not exist; pass neuron_id (from crbro_recall) to target an exact one and skip name matching. Recall first: to replace an outdated fact pass its id in supersedes rather than adding a sibling. A fact stored verbatim before is skipped silently; decisions always append; preferences never leave this machine. Credential-like values are replaced with a marker before touching disk and listed in redacted — store the value with crbro_secret and record only its name. Returns neuron_id, action (created|updated), superseded count, near_duplicates (stored anyway; retire the old telling), supersedes_unmatched (those targets are still live — retire them with crbro_revise) and running totals.',
+      inputSchema: {
+        topic: z.string().describe('Topic name, e.g. "OctoChat", "Firebase", "SEO Strategy".'),
+        type: z.enum(['fact', 'decision', 'pattern', 'preference', 'error', 'debt']).describe('error = a mistake plus its correction, in one entry. debt = a deliberate deferral: what was NOT done on purpose, its ceiling, and the revisit condition, e.g. "DEFERRED: protecting the PDFs. CEILING: anyone can download them without signing up. REVISIT WHEN: the signup flow works."'),
+        content: z.string().describe('The knowledge itself. Dense and self-contained: it is recalled without this conversation as context.'),
+        confidence: z.number().min(0).max(1).optional().describe('0.0-1.0, default 1.0. Facts only.'),
+        domain: z.string().optional().describe('Domain, e.g. "proyectos-web". Applied when the neuron is created; on an existing neuron it only replaces the default "general".'),
+        rationale: z.string().optional().describe('Why the decision was taken. Stored and indexed with it; ignored for other types.'),
+        neuron_id: z.string().optional().describe('Exact neuron id from crbro_recall, e.g. "project_octochat". Skips name matching entirely.'),
+        supersedes: z.array(z.string()).optional().describe('Facts this one replaces: their ids or exact text. They leave recall but stay in the file. Unmatched targets are reported and stay live.'),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     },
     async (args) => {
       try {        const result = await cortex.learn(args.topic, args.type, args.content, {
@@ -274,14 +319,18 @@ export function createServer(): McpServer {
   // ═══════════════════════════════════════════════════════════════
   // TOOL 4: crbro_neuron — Read a specific neuron
   // ═══════════════════════════════════════════════════════════════
-  server.tool(
+  server.registerTool(
     'crbro_neuron',
-    'Read a specific neuron by ID or name. Returns its facts (newest first; superseded and retracted hidden unless include_superseded), decisions, patterns, preferences, errors, debts, connections, heat and system map. Reading bumps access stats. Big neurons are paginated - page through them with offset instead of trying to pull everything at once.',
     {
-      id: z.string().describe('Neuron ID (e.g., "project_octochat") or name (e.g., "OctoChat")'),
-      limit: z.number().optional().describe('How many facts to return (default 40, max 200)'),
-      offset: z.number().optional().describe('Skip this many facts. Facts come newest first.'),
-      include_superseded: z.boolean().optional().describe('Include facts marked superseded or retracted (default false)'),
+      title: 'Read a neuron',
+      description: 'Read one neuron by id or name: facts newest first (superseded and retracted hidden unless include_superseded), decisions, patterns, preferences, errors, debts, entry dates, connections, heat and system map. Reading bumps its access stats. Big neurons are paged — use offset rather than pulling everything at once. To find the right neuron first, use crbro_recall.',
+      inputSchema: {
+        id: z.string().describe('Neuron id (e.g. "project_octochat") or name (e.g. "OctoChat").'),
+        limit: z.number().optional().describe('Facts to return: default 40, max 200.'),
+        offset: z.number().optional().describe('Facts to skip. Facts come newest first.'),
+        include_superseded: z.boolean().optional().describe('Also return superseded and retracted facts (default false).'),
+      },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     async (args) => {
       try {        // Try by ID first, then by name
@@ -349,14 +398,25 @@ export function createServer(): McpServer {
   // ═══════════════════════════════════════════════════════════════
   // TOOL 5: crbro_neurons — List neurons
   // ═══════════════════════════════════════════════════════════════
-  server.tool(
+  server.registerTool(
     'crbro_neurons',
-    'List neurons, hottest first, filtered by domain/type/min_heat. Each row: id, name, domain, type, heat, last_accessed, facts_count. To search content, use crbro_recall.',
     {
-      domain: z.string().optional().describe('Filter by domain (e.g., "proyectos-web")'),
-      type: z.enum(['project', 'tech', 'lang', 'person', 'domain', 'process', 'protocol']).optional().describe('Filter by neuron type'),
-      min_heat: z.number().optional().describe('Minimum heat score (0.0-1.0). Heat blends access frequency, recency and connectivity; recently touched neurons run hot.'),
-      limit: z.number().optional().describe('Max results (default 50)'),
+      title: 'List neurons',
+      description: 'List neurons, hottest first, filtered by domain, type or min_heat. Read-only. Each row: id, name, domain, type, heat, last_accessed, facts_count. To search content rather than list topics, use crbro_recall.',
+      inputSchema: {
+        domain: z.string().optional().describe('Only this domain, e.g. "proyectos-web".'),
+        type: z.enum(['project', 'tech', 'lang', 'person', 'domain', 'process', 'protocol']).optional().describe('Only this neuron type.'),
+        min_heat: z.number().optional().describe('Minimum heat, 0.0-1.0. Heat blends access frequency, recency and connectivity.'),
+        limit: z.number().optional().describe('Max rows (default 50).'),
+      },
+      outputSchema: {
+        total: z.number(),
+        neurons: z.array(z.object({
+          id: z.string(), name: z.string(), domain: z.string(), type: z.string(),
+          heat: z.number(), last_accessed: z.string(), facts_count: z.number(),
+        }).loose()),
+      },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     async (args) => {
       try {        const neurons = await cortex.list({
@@ -366,14 +426,10 @@ export function createServer(): McpServer {
           limit: args.limit,
         });
 
+        const payload = { total: neurons.length, neurons };
         return {
-          content: [{
-            type: 'text' as const,
-            text: JSON.stringify({
-              total: neurons.length,
-              neurons,
-            }, null, 2),
-          }],
+          content: [{ type: 'text' as const, text: JSON.stringify(payload, null, 2) }],
+          structuredContent: payload,
         };
       } catch (err) {
         return {
@@ -390,13 +446,31 @@ export function createServer(): McpServer {
   // ═══════════════════════════════════════════════════════════════
   // TOOL 6: crbro_recall — Search the brain
   // ═══════════════════════════════════════════════════════════════
-  server.tool(
+  server.registerTool(
     'crbro_recall',
-    'Search the brain for knowledge saved in earlier sessions. Searches the full text of every fact, decision, pattern, preference, error, debt and system map, not just topic names, and each result carries the exact chunk that matched (matching_content, matched_kind) plus the date it was recorded (matched_added). One result per neuron, its best chunk; superseded and retracted facts never surface. Call this before asking the user something they may already have told you, and before assuming a past decision - and before crbro_learn, to catch what already exists. When results disagree, prefer the more recent. If nothing matches, retry with fewer, more distinctive words - names, ids, filenames - rather than a full sentence. A result with has_map: true belongs to a neuron that keeps a system map - read it with crbro_map before touching that system. If a result looks right, pass its neuron_id back to crbro_learn so new knowledge lands in the same place.',
     {
-      query: z.string().describe('What to search for (e.g., "Firebase authentication setup"). Fewer, distinctive terms - names, ids, filenames - beat full sentences.'),
-      domain: z.string().optional().describe('Only return results whose neuron is in this domain (exact match, e.g. "proyectos-web")'),
-      limit: z.number().optional().describe('Max neurons returned (default 10) - each result is one neuron with its best-matching chunk.'),
+      title: 'Recall',
+      description: 'Search everything saved in earlier sessions — the full text of facts, decisions, patterns, preferences, errors, debts and system maps, not just topic names. Read-only. One result per neuron: its best matching chunk (matching_content, matched_kind, matched_added), a confidence label (weak = the match covers little of the question; verify before relying on it) and, for the top results, also_matched — the neuron\'s next best lines. Superseded and retracted facts never surface. Call it before asking the user something they may already have told you, and before crbro_learn. If nothing matches, retry with fewer, more distinctive words (names, ids, filenames). has_map:true means the neuron keeps a system map — read it with crbro_map before touching that system.',
+      inputSchema: {
+        query: z.string().describe('What to look for, e.g. "Firebase authentication setup". Fewer, distinctive terms beat full sentences.'),
+        domain: z.string().optional().describe('Only neurons in this domain (exact match, e.g. "proyectos-web").'),
+        limit: z.number().optional().describe('Max neurons returned (default 10).'),
+      },
+      outputSchema: {
+        query: z.string(),
+        total_results: z.number(),
+        results: z.array(z.object({
+          neuron_id: z.string(), name: z.string(), domain: z.string(),
+          relevance_score: z.number(), matching_content: z.string(),
+          matched_kind: z.string().optional(), matched_added: z.string().optional(),
+          heat: z.number(), has_map: z.boolean().optional(),
+          matched_terms: z.number().optional(), query_terms: z.number().optional(),
+          confidence: z.enum(['strong', 'weak']).optional(),
+          also_matched: z.array(z.object({ text: z.string(), kind: z.string(), added: z.string() })).optional(),
+        }).loose()),
+        hint: z.string(),
+      },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     async (args) => {
       try {        const results = await searchEngine.search(args.query, {
@@ -404,18 +478,17 @@ export function createServer(): McpServer {
           limit: args.limit,
         });
 
+        const payload = {
+          query: args.query,
+          total_results: results.length,
+          results,
+          hint: results.length === 0
+            ? 'Nothing matched. Try fewer, more distinctive words - names, ids, filenames - rather than a full sentence.'
+            : 'matching_content is the chunk that matched; matched_added is when it was recorded; confidence "weak" means little of the question was covered - verify before relying on it. Prefer recent facts when two disagree. has_map: true means the neuron holds a system map - read it with crbro_map before working on that system.',
+        };
         return {
-          content: [{
-            type: 'text' as const,
-            text: JSON.stringify({
-              query: args.query,
-              total_results: results.length,
-              results,
-              hint: results.length === 0
-                ? 'Nothing matched. Try fewer, more distinctive words - names, ids, filenames - rather than a full sentence.'
-                : 'matching_content is the chunk that matched; matched_added is when it was recorded. Prefer recent facts when two disagree. Results with has_map: true belong to neurons holding a system map - read it with crbro_map before working on that system.',
-            }, null, 2),
-          }],
+          content: [{ type: 'text' as const, text: JSON.stringify(payload, null, 2) }],
+          structuredContent: payload,
         };
       } catch (err) {
         return {
@@ -432,14 +505,18 @@ export function createServer(): McpServer {
   // ═══════════════════════════════════════════════════════════════
   // TOOL 7: crbro_connect — Create/strengthen a synapse
   // ═══════════════════════════════════════════════════════════════
-  server.tool(
+  server.registerTool(
     'crbro_connect',
-    'Create or strengthen the undirected synapse between two neurons — created at strength 0.5, +0.1 per repeat call (cap 1.0). Idle synapses decay and crbro_maintenance prunes the weak. Returns synapse_id, action (created|strengthened) and strength.',
     {
-      from: z.string().describe('Source neuron ID (e.g. "project_octochat"). Not validated: use an exact id from crbro_recall or crbro_neurons, or the synapse points at nothing.'),
-      to: z.string().describe('Target neuron ID. Order does not matter — (a,b) and (b,a) address the same synapse.'),
-      type: z.enum(['dependency', 'causal', 'temporal', 'conceptual', 'hierarchy', 'alternative']).describe('Relationship kind. Used only when the synapse is created — a strengthening call keeps the existing type.'),
-      context: z.string().optional().describe('One-line description of the relationship. On strengthen it replaces the stored text; omit to keep it.'),
+      title: 'Connect two neurons',
+      description: 'Create or strengthen the undirected synapse between two neurons: created at strength 0.5, +0.1 per repeat call (cap 1.0). Idle synapses decay and crbro_maintenance prunes the weak. Returns synapse_id, action (created|strengthened) and strength. Neurons written in the same session are linked automatically by crbro_consolidate; use this for relationships that are not just co-occurrence.',
+      inputSchema: {
+        from: z.string().describe('Source neuron id, e.g. "project_octochat". Not validated: use an exact id from crbro_recall or crbro_neurons, or the synapse points at nothing.'),
+        to: z.string().describe('Target neuron id. Order does not matter — (a,b) and (b,a) are the same synapse.'),
+        type: z.enum(['dependency', 'causal', 'temporal', 'conceptual', 'hierarchy', 'alternative']).describe('Relationship kind. Used only on creation; a strengthening call keeps the existing type.'),
+        context: z.string().optional().describe('One line on the relationship. On strengthen it replaces the stored text; omit to keep it.'),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     },
     async (args) => {
       try {        const result = await synapses.connect(args.from, args.to, args.type, args.context);
@@ -472,25 +549,32 @@ export function createServer(): McpServer {
   // ═══════════════════════════════════════════════════════════════
   // TOOL 8: crbro_connections — Get neuron connections
   // ═══════════════════════════════════════════════════════════════
-  server.tool(
+  server.registerTool(
     'crbro_connections',
-    'List every synapse touching one neuron, strongest first — target_id, target_name, type, strength and context per entry. Unknown or unconnected ids return an empty list, not an error.',
     {
-      neuron_id: z.string().describe('Exact neuron ID (e.g. "project_octochat"). Names are not resolved here — get the id from crbro_recall or crbro_neurons.'),
-      min_strength: z.number().optional().describe('Drop connections weaker than this (0.0-1.0). Omit for all; 0 acts as no filter.'),
+      title: 'Neuron connections',
+      description: 'List every synapse touching one neuron, strongest first — target_id, target_name, type, strength and context per entry. Read-only; an unknown or unconnected id returns an empty list, not an error.',
+      inputSchema: {
+        neuron_id: z.string().describe('Exact neuron id, e.g. "project_octochat". Names are not resolved here — get the id from crbro_recall or crbro_neurons.'),
+        min_strength: z.number().optional().describe('Drop connections weaker than this (0.0-1.0). Omit for all; 0 is no filter.'),
+      },
+      outputSchema: {
+        neuron_id: z.string(),
+        total_connections: z.number(),
+        connections: z.array(z.object({
+          target_id: z.string(), target_name: z.string(), type: z.string(),
+          strength: z.number(), context: z.string(),
+        }).loose()),
+      },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     async (args) => {
       try {        const connections = await synapses.getConnections(args.neuron_id, args.min_strength);
 
+        const payload = { neuron_id: args.neuron_id, total_connections: connections.length, connections };
         return {
-          content: [{
-            type: 'text' as const,
-            text: JSON.stringify({
-              neuron_id: args.neuron_id,
-              total_connections: connections.length,
-              connections,
-            }, null, 2),
-          }],
+          content: [{ type: 'text' as const, text: JSON.stringify(payload, null, 2) }],
+          structuredContent: payload,
         };
       } catch (err) {
         return {
@@ -507,14 +591,18 @@ export function createServer(): McpServer {
   // ═══════════════════════════════════════════════════════════════
   // TOOL 9: crbro_session_log — Log a session
   // ═══════════════════════════════════════════════════════════════
-  server.tool(
+  server.registerTool(
     'crbro_session_log',
-    'Log a session summary to the hippocampus — one entry per calendar day; a same-day call appends to it. Call at the end of a work session to record what was done (crbro_consolidate logs one itself). Also replaces the active topics with topics_touched.',
     {
-      summary: z.string().describe('Summary of what happened in this session. If today already has an entry, this text is appended to it.'),
-      topics_touched: z.array(z.string()).describe('Neuron IDs that were relevant. Merged (deduplicated) into the day entry; becomes the new active-topics list.'),
-      key_facts_added: z.number().optional().describe('Number of new facts stored. Summed into the day total on same-day calls.'),
-      decisions_made: z.number().optional().describe('Number of decisions recorded. Summed into the day total on same-day calls.'),
+      title: 'Log a session',
+      description: 'Log a session summary to the hippocampus — one entry per calendar day; a same-day call appends to it. Also replaces the active-topics list with topics_touched. Normally unnecessary: crbro_consolidate logs the session itself.',
+      inputSchema: {
+        summary: z.string().describe('What happened in this session. Appended if today already has an entry.'),
+        topics_touched: z.array(z.string()).describe('Relevant neuron ids. Merged (deduplicated) into the day entry; becomes the active-topics list.'),
+        key_facts_added: z.number().optional().describe('New facts stored. Summed into the day total on same-day calls.'),
+        decisions_made: z.number().optional().describe('Decisions recorded. Summed into the day total on same-day calls.'),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     },
     async (args) => {
       try {        const session = await hippocampus.logSession({
@@ -554,23 +642,31 @@ export function createServer(): McpServer {
   // ═══════════════════════════════════════════════════════════════
   // TOOL 10: crbro_sessions — List recent sessions
   // ═══════════════════════════════════════════════════════════════
-  server.tool(
+  server.registerTool(
     'crbro_sessions',
-    'List recent session logs from the hippocampus, newest first — one per day: date, merged summary, topics_touched neuron ids, fact/decision counters. Read them before asking the user what was already done.',
     {
-      limit: z.number().optional().describe('How many day logs to return, newest first (default 10)'),
+      title: 'Recent sessions',
+      description: 'List recent session logs, newest first, one per day: date, merged summary, topics_touched neuron ids, fact/decision counters. Read-only. Read them before asking the user what was already done; crbro_boot already returns the last one.',
+      inputSchema: {
+        limit: z.number().optional().describe('Day logs to return, newest first (default 10).'),
+      },
+      outputSchema: {
+        total: z.number(),
+        sessions: z.array(z.object({
+          session_id: z.string().optional(), date: z.string().optional(), summary: z.string().optional(),
+          topics_touched: z.array(z.string()).optional(),
+          key_facts_added: z.number().optional(), decisions_made: z.number().optional(),
+        }).loose()),
+      },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     async (args) => {
       try {        const sessions = await hippocampus.listSessions(args.limit);
 
+        const payload = { total: sessions.length, sessions };
         return {
-          content: [{
-            type: 'text' as const,
-            text: JSON.stringify({
-              total: sessions.length,
-              sessions,
-            }, null, 2),
-          }],
+          content: [{ type: 'text' as const, text: JSON.stringify(payload, null, 2) }],
+          structuredContent: payload,
         };
       } catch (err) {
         return {
@@ -587,13 +683,17 @@ export function createServer(): McpServer {
   // ═══════════════════════════════════════════════════════════════
   // TOOL 11: crbro_context — Active context
   // ═══════════════════════════════════════════════════════════════
-  server.tool(
+  server.registerTool(
     'crbro_context',
-    'Read or update the active working context: current topics, open items and last session. Every call returns the full state plus `resolved`, the items it closed; call with no arguments just to read. Close items as soon as they are done - an item left open here gets repeated back to the user in later sessions long after it was finished.',
     {
-      set_topics: z.array(z.string()).optional().describe('Replace the whole active-topics list with these neuron IDs (no merge). crbro_session_log also overwrites it.'),
-      add_pending: z.string().optional().describe('Add an open item. Write it so it can be checked later, not as a vague reminder. Identical text is deduplicated, so re-adding is a safe no-op.'),
-      resolve_pending: z.string().optional().describe('Close an open item: its id (e.g. "p_ab12cd"), or enough of its text to identify it (8+ chars, case-insensitive substring either way — several items can close at once). Matches move to recently_closed, newest first, capped at 15. An empty `resolved` in the reply means nothing matched and the item is still open.'),
+      title: 'Working context',
+      description: 'Read or update the working context: active topics, open items, last session. Call with no arguments to read; every call returns the full state plus resolved, the items it closed. Close items as soon as they are done — an item left open is repeated back to the user in later sessions long after it was finished.',
+      inputSchema: {
+        set_topics: z.array(z.string()).optional().describe('Replace the whole active-topics list with these neuron ids (no merge). crbro_session_log also overwrites it.'),
+        add_pending: z.string().optional().describe('Add an open item, written so it can be checked later. Identical text is deduplicated, so re-adding is a safe no-op.'),
+        resolve_pending: z.string().optional().describe('Close an open item by id (e.g. "p_ab12cd") or by 8+ characters of its text (case-insensitive substring; several items can close at once). Matches move to recently_closed, newest first, capped at 15. An empty resolved in the reply means nothing matched.'),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     async (args) => {
       try {        const ctx = await prefrontal.updateContext({
@@ -623,20 +723,29 @@ export function createServer(): McpServer {
   // ═══════════════════════════════════════════════════════════════
   // TOOL 12: crbro_hot_topics — Hot topics
   // ═══════════════════════════════════════════════════════════════
-  server.tool(
+  server.registerTool(
     'crbro_hot_topics',
-    'Get the hottest topics — neurons with the highest heat scores (based on frequency, recency, and connectivity). Served from a cache rebuilt at consolidate and maintenance — last_recalculated dates it. crbro_boot already returns this list.',
     {
-      limit: z.number().optional().describe('Number of topics to return (default 15; the cache never holds more than 20)'),
+      title: 'Hot topics',
+      description: 'The hottest neurons by heat (access frequency, recency, connectivity). Read-only, served from a cache rebuilt at consolidate and maintenance — last_recalculated says when. crbro_boot already returns this list.',
+      inputSchema: {
+        limit: z.number().optional().describe('Topics to return (default 15; the cache never holds more than 20).'),
+      },
+      outputSchema: {
+        topics: z.array(z.object({
+          id: z.string(), name: z.string(), heat: z.number(), last_access: z.string(), domain: z.string(),
+        }).loose()),
+        last_recalculated: z.string().optional(),
+      },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     async (args) => {
       try {        const hotTopics = await prefrontal.getHotTopics(args.limit);
 
+        const payload = { ...hotTopics };
         return {
-          content: [{
-            type: 'text' as const,
-            text: JSON.stringify(hotTopics, null, 2),
-          }],
+          content: [{ type: 'text' as const, text: JSON.stringify(payload, null, 2) }],
+          structuredContent: payload,
         };
       } catch (err) {
         return {
@@ -653,11 +762,15 @@ export function createServer(): McpServer {
   // ═══════════════════════════════════════════════════════════════
   // TOOL 13: crbro_global_map — Global neural map
   // ═══════════════════════════════════════════════════════════════
-  server.tool(
+  server.registerTool(
     'crbro_global_map',
-    'View the global neural map — one cluster per domain (node ids, top neurons, heat) plus bridges where connections cross domains, served from a cache stamped last_rebuilt. For one system\'s internals use crbro_map instead.',
     {
-      rebuild: z.boolean().optional().describe('true = rescan every neuron and rewrite the cached map (slower on big brains). Default: serve the cache, building only if missing — it can lag recent learning; crbro_maintenance also rebuilds it.'),
+      title: 'Global map',
+      description: 'The global map: one cluster per domain (node ids, top neurons, heat) and bridges where synapses cross domains, served from a cache stamped last_rebuilt. Read-only unless rebuild:true, which rescans every neuron and rewrites that cache (derived data, no knowledge is touched). For one system\'s internals use crbro_map instead.',
+      inputSchema: {
+        rebuild: z.boolean().optional().describe('true = rescan every neuron and rewrite the cached map (slower on big brains). Default: serve the cache, building it only if missing — it can lag recent learning; crbro_maintenance also rebuilds it.'),
+      },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     async (args) => {
       try {
@@ -690,13 +803,17 @@ export function createServer(): McpServer {
   // ═══════════════════════════════════════════════════════════════
   // TOOL 14: crbro_maintenance — Run maintenance
   // ═══════════════════════════════════════════════════════════════
-  server.tool(
+  server.registerTool(
     'crbro_maintenance',
-    'Run brain maintenance: recalculate heat, prune weak synapses, check integrity and rebuild the search index. Returns a report (counts, integrity_issues, notes) and flags debts that never named a revisit trigger. Archiving cold neurons is OFF unless you ask for it - on a mature brain most neurons look cold, and archived ones stop being searchable. For session close use crbro_consolidate, not this.',
     {
-      dry_run: z.boolean().optional().describe('If true, report what would happen without acting: no heat recalc, archiving, purge, lock sweep, synapse pruning or index rebuild. Counts, debts and integrity checks still run.'),
-      archive: z.boolean().optional().describe('Also move cold neurons (heat < 0.05, untouched 90+ days) out of the cortex. Off by default. Run with dry_run first and read archivable_neurons before turning this on. Restore by moving the file from archives/ back into cortex/.'),
-      purge_boilerplate: z.boolean().optional().describe('Also delete contentless facts left by early versions of the miner ("Referenced in: file.md"). Off by default; every run reports how many there are. Neurons left empty are kept - review them with crbro_neurons.'),
+      title: 'Brain maintenance',
+      description: 'Run brain maintenance: recalculate heat, prune weak synapses, check integrity and rebuild the search index. Returns a report (counts, integrity_issues, notes) and flags debts that never named a revisit trigger. dry_run:true reports without writing anything. Archiving cold neurons and purging miner boilerplate are OFF unless asked — on a mature brain most neurons look cold, and archived ones stop being searchable. For session close use crbro_consolidate, not this.',
+      inputSchema: {
+        dry_run: z.boolean().optional().describe('true = report only: no heat recalc, archiving, purge, lock sweep, pruning or index rebuild. Counts, debts and integrity checks still run.'),
+        archive: z.boolean().optional().describe('Also move cold neurons (heat < 0.05, untouched 90+ days) out of the cortex. Off by default; run dry_run first and read archivable_neurons. Restore by moving the file from archives/ back into cortex/.'),
+        purge_boilerplate: z.boolean().optional().describe('Also delete contentless facts left by early miner versions ("Referenced in: file.md"). Off by default; every run reports how many there are. Neurons left empty are kept.'),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
     },
     async (args) => {
       try {
@@ -726,11 +843,15 @@ export function createServer(): McpServer {
   // ═══════════════════════════════════════════════════════════════
   // TOOL 15: crbro_consolidate — End-of-session consolidation
   // ═══════════════════════════════════════════════════════════════
-  server.tool(
+  server.registerTool(
     'crbro_consolidate',
-    '⚠️ CALL BEFORE SESSION ENDS: Consolidate the brain at end of session. You MUST call this before the conversation ends if ANY significant work was done (code changes, decisions made, new information learned). This persists all new knowledge, logs the session summary, recalculates topic heat scores, and updates the manifest. Also flushes pending index writes and syncs shared team spaces (offline is normal; notes go out next time). Returns this session\'s real write counts (facts_saved, decisions_saved, topics_touched) and per-space sync state. Failing to consolidate means this entire session\'s knowledge is permanently lost. Always provide a meaningful summary of what was accomplished: it doubles as the session log (no separate crbro_session_log needed).',
     {
-      summary: z.string().describe('What was accomplished this session: concrete work, decisions, outcomes. Stored verbatim as the session log that later sessions read.'),
+      title: 'Consolidate the session',
+      description: 'Call before the conversation ends whenever significant work was done. Persists pending knowledge and index writes, logs the session from summary (no separate crbro_session_log needed), recalculates heat, links the neurons written this session with weak temporal synapses (synapses_updated), updates the manifest and syncs shared team spaces (offline is normal; notes go out next time). Returns the session\'s real write counts — facts_saved, decisions_saved, topics_touched — and per-space sync state. Not consolidating loses the session\'s knowledge.',
+      inputSchema: {
+        summary: z.string().describe('What was accomplished: concrete work, decisions, outcomes. Stored verbatim as the session log later sessions read.'),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },
     async (args) => {
       try {        const result = await maintenance.consolidate(args.summary);
@@ -767,13 +888,17 @@ export function createServer(): McpServer {
   // ═══════════════════════════════════════════════════════════════
   // TOOL: crbro_map — The living map of a system
   // ═══════════════════════════════════════════════════════════════
-  server.tool(
+  server.registerTool(
     'crbro_map',
-    'Read or replace the system map of a neuron. A map is ONE living document answering: where does this system live, what serves what, which pieces talk to each other, and what are the traps that cost hours. Read it BEFORE working on a system you have touched in past sessions - it is the difference between continuing and re-discovering. After building or changing a system, rewrite the whole map so it stays true: pass `content` and it replaces the previous version entirely (append-only maps rot). Without `content` it returns the current map (or map:null if none exists yet). Reading never creates a neuron; writing does, if it is missing. Writing an empty string clears the map. Credentials are redacted on write and listed in `redacted`. Atomic facts belong in crbro_learn - the map is the prose reference around them.',
     {
-      neuron: z.string().describe('Neuron ID or name (e.g. "project_octochat" or "OctoChat")'),
-      content: z.string().optional().describe('The new map, replacing the old one whole. Omit to read. Write it as the reference you will need next time: paths, ids, what-serves-what, gotchas. An empty string clears the map.'),
-      domain: z.string().optional().describe('Domain for the neuron if it has to be created (e.g. "proyectos-web"). Ignored when the neuron already exists.'),
+      title: 'System map',
+      description: 'Read or replace a neuron\'s system map: ONE living document — where the system lives, what serves what, which pieces talk to each other, the traps that cost hours. Read it before working on a system touched in past sessions; after changing the system, rewrite the whole map — content replaces the previous version entirely (append-only maps rot). Omit content to read (map:null if none yet); an empty string clears it. Reading never creates a neuron, writing does. Credentials are redacted on write and listed in redacted. Atomic facts belong in crbro_learn — the map is the prose reference around them.',
+      inputSchema: {
+        neuron: z.string().describe('Neuron id or name, e.g. "project_octochat" or "OctoChat".'),
+        content: z.string().optional().describe('The new map, replacing the old one whole; omit to read. Write the reference you will need next time: paths, ids, what-serves-what, gotchas. An empty string clears the map.'),
+        domain: z.string().optional().describe('Domain if the neuron has to be created, e.g. "proyectos-web". Ignored when it exists.'),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
     },
     async (args) => {
       try {
@@ -855,14 +980,18 @@ export function createServer(): McpServer {
   // ═══════════════════════════════════════════════════════════════
   // TOOL 16: crbro_revise — Retire knowledge that stopped being true
   // ═══════════════════════════════════════════════════════════════
-  server.tool(
+  server.registerTool(
     'crbro_revise',
-    'Mark stored facts as no longer current. Use this the moment you discover something you saved is out of date or was wrong: a memory that only ever appends keeps serving the old version alongside the new one, with equal confidence. Superseded facts disappear from crbro_recall but stay in the neuron file, so nothing is lost and the correction is auditable. Matches by fact id or exact text; anything reported in `unmatched` is STILL LIVE - fix and re-run. If a replacement fact exists, crbro_learn with `supersedes` does both in one call. To delete outright, use crbro_forget.',
     {
-      neuron: z.string().describe('Neuron ID or name holding the facts (e.g. "project_octochat")'),
-      facts: z.array(z.string()).describe('Which facts to retire: their ids (from crbro_recall), or their exact text (matched trimmed, case-insensitive). Already-retired facts never match.'),
-      status: z.enum(['superseded', 'retracted']).optional().describe('"superseded" = there is a newer truth (default). "retracted" = it was never true.'),
-      note: z.string().optional().describe('Why it stopped being true. Worth writing: the next reader will wonder.'),
+      title: 'Revise facts',
+      description: 'Mark stored facts as no longer current — the moment you find something saved is out of date or was wrong, since a memory that only appends keeps serving the old version with equal confidence. Superseded facts leave crbro_recall but stay in the neuron file, so the correction is auditable. Matches by fact id or exact text; anything reported in unmatched is STILL LIVE — fix and re-run. If a replacement fact exists, crbro_learn with supersedes does both in one call. To delete outright, use crbro_forget.',
+      inputSchema: {
+        neuron: z.string().describe('Neuron id or name holding the facts, e.g. "project_octochat".'),
+        facts: z.array(z.string()).describe('Facts to retire: their ids (from crbro_recall) or exact text (trimmed, case-insensitive). Already-retired facts never match.'),
+        status: z.enum(['superseded', 'retracted']).optional().describe('superseded = there is a newer truth (default); retracted = it was never true.'),
+        note: z.string().optional().describe('Why it stopped being true. The next reader will wonder.'),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     async (args) => {
       try {
@@ -912,31 +1041,45 @@ export function createServer(): McpServer {
   // ═══════════════════════════════════════════════════════════════
   // TOOL 17: crbro_audit — What should not be in the brain
   // ═══════════════════════════════════════════════════════════════
-  server.tool(
+  server.registerTool(
     'crbro_audit',
-    'Check the brain for credentials that were stored before they could be filtered out — API keys, tokens, passwords. Read-only: scans every field of every neuron (facts, decisions, patterns, preferences, errors, debts, system map) and reports where they sit and what kind, never the values themselves. Findings are also in the search index, so recall can return them: remove with crbro_forget, then rotate the credential. Run it once after upgrading, and any time you suspect a secret was pasted into a conversation.',
-    {},
+    {
+      title: 'Audit for credentials',
+      description: 'Read-only scan of every field of every neuron (facts, decisions, patterns, preferences, errors, debts, system map) for credentials stored before the filter caught them — API keys, tokens, passwords. Reports where they sit and what kind, never the values. Findings are in the search index too, so recall can return them: remove with crbro_forget, then rotate the credential. Run it after upgrading and whenever a secret may have been pasted into a conversation.',
+      inputSchema: {},
+      outputSchema: {
+        neurons_affected: z.number(),
+        facts_affected: z.number(),
+        findings: z.array(z.object({
+          neuron_id: z.string(), name: z.string(), kinds: z.array(z.string()),
+          facts: z.number(), decisions: z.number(), patterns: z.number(), preferences: z.number(),
+          errors: z.number(), debts: z.number(), map: z.number(),
+        }).loose()),
+        message: z.string(),
+        note: z.string().optional(),
+      },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
     async () => {
       try {
         const hallazgos = await cortex.auditSecrets();
         const total = hallazgos.reduce(
-          (n, h) => n + h.facts + h.decisions + h.patterns + h.preferences, 0);
+          (n, h) => n + h.facts + h.decisions + h.patterns + h.preferences + h.errors + h.debts + h.map, 0);
 
+        const payload = {
+          neurons_affected: hallazgos.length,
+          facts_affected: total,
+          findings: hallazgos,
+          message: hallazgos.length === 0
+            ? 'No credentials found in the brain.'
+            : `${total} entr(y/ies) across ${hallazgos.length} neuron(s) contain something that looks like a credential. ` +
+              'They are also inside the search index, so recall can return them. ' +
+              'Remove them with crbro_forget, then rotate the credentials — assume they are compromised.',
+          note: 'Values are never shown here, by design.',
+        };
         return {
-          content: [{
-            type: 'text' as const,
-            text: JSON.stringify({
-              neurons_affected: hallazgos.length,
-              facts_affected: total,
-              findings: hallazgos,
-              message: hallazgos.length === 0
-                ? 'No credentials found in the brain.'
-                : `${total} fact(s) across ${hallazgos.length} neuron(s) contain something that looks like a credential. ` +
-                  'They are also inside the search index, so recall can return them. ' +
-                  'Remove them with crbro_forget, then rotate the credentials — assume they are compromised.',
-              note: 'Values are never shown here, by design.',
-            }, null, 2),
-          }],
+          content: [{ type: 'text' as const, text: JSON.stringify(payload, null, 2) }],
+          structuredContent: payload,
         };
       } catch (err) {
         return {
@@ -953,15 +1096,19 @@ export function createServer(): McpServer {
   // ═══════════════════════════════════════════════════════════════
   // TOOL 22: crbro_secret — Credentials, brokered to the OS keychain
   // ═══════════════════════════════════════════════════════════════
-  server.tool(
+  server.registerTool(
     'crbro_secret',
-    'Store and read credentials in the operating system own keychain — macOS Keychain, the Linux Secret Service, or DPAPI on Windows. CRBRO keeps no copy and invents no crypto: it brokers access to the store the machine already has, outside the brain, where no sync and no team space can reach it. Use it the moment the user hands you a credential: store it here, then record only the NAME with crbro_learn, never the value. Use get when a task needs one, and do not print the value back to the user unless they asked for that specific secret. Names are SCREAMING_SNAKE_CASE, e.g. WORDPRESS_APP_PASSWORD; set updates an existing name in place and rejects other spellings and empty values. On get, an environment variable of the same name wins over the store, and a missing secret returns found:false, not an error. list returns names, never values. A machine with no store is a normal status answer, not a failure — credentials can still be passed as environment variables.',
     {
-      action: z.enum(['get', 'set', 'list', 'remove', 'status'])
-        .describe('get = read one (an environment variable of the same name wins), set = store or update one, list = names only, remove = delete one, status = which keychain this machine offers, or why none'),
-      name: z.string().optional().describe('Secret name in SCREAMING_SNAKE_CASE, e.g. WORDPRESS_APP_PASSWORD. Required for get, set and remove.'),
-      value: z.string().optional().describe('The credential itself, non-empty. Only for set.'),
-      description: z.string().optional().describe('What it is for, e.g. "WordPress example.com - REST API". Only for set.'),
+      title: 'Keychain secret',
+      description: 'Credentials, brokered to the operating system\'s own keychain (macOS Keychain, Linux Secret Service, Windows DPAPI): CRBRO keeps no copy and invents no crypto, and no sync or team space can reach the store. The moment the user hands you a credential: set it here, then record only the NAME with crbro_learn. get returns the value for the task at hand — an environment variable of the same name wins, a missing secret returns found:false, not an error — and it must not be printed back unless the user asked for that secret. list returns names only; remove deletes one; status says which store this machine has. Names are SCREAMING_SNAKE_CASE; set updates an existing name in place and rejects empty values. A machine with no store is a normal status answer, not a failure — environment variables still work.',
+      inputSchema: {
+        action: z.enum(['get', 'set', 'list', 'remove', 'status'])
+          .describe('get = read one, set = store or update one, list = names only, remove = delete one, status = which keychain this machine offers, or why none.'),
+        name: z.string().optional().describe('SCREAMING_SNAKE_CASE, e.g. WORDPRESS_APP_PASSWORD. Required for get, set and remove.'),
+        value: z.string().optional().describe('The credential itself, non-empty. Only for set.'),
+        description: z.string().optional().describe('What it is for, e.g. "WordPress example.com - REST API". Only for set.'),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
     },
     async (args) => {
       try {
@@ -1044,12 +1191,16 @@ export function createServer(): McpServer {
   // ═══════════════════════════════════════════════════════════════
   // TOOL 18: crbro_forget — Remove knowledge for good
   // ═══════════════════════════════════════════════════════════════
-  server.tool(
+  server.registerTool(
     'crbro_forget',
-    'Permanently remove entries from a neuron. This is for things that must not exist at all — a credential, personal data, something stored by mistake. It removes facts, decisions, patterns, preferences, errors and debts matched by id or exact text (trimmed, case-insensitive), and the system map when given its exact full text (or clear the map with crbro_map and empty content). For knowledge that merely stopped being true, use crbro_revise instead, which keeps the history. The whole neuron is copied to .quarantine/ before anything is removed, so a mistake can be undone by hand — the response returns the backup path and the removed count, and the search index is updated so recall stops returning the entries; nothing matched returns removed: 0, not an error. On shared neurons the removal travels: facts retract, errors and debts are purged, a cleared map stays cleared. If a removed entry was a credential, have the user rotate it — it existed on disk and in the index. Always tell the user what you are about to remove and get their agreement first.',
     {
-      neuron: z.string().describe('Neuron ID or name holding the entries'),
-      facts: z.array(z.string()).describe('What to remove: fact ids, or the exact text of a fact, decision, pattern, preference, error or debt. Passing the exact full text of the map removes it.'),
+      title: 'Forget for good',
+      description: 'Permanently remove entries from a neuron — for what must not exist at all: a credential, personal data, something stored by mistake. Matches facts, decisions, patterns, preferences, errors and debts by id or exact text (trimmed, case-insensitive), and the system map by its exact full text. Destructive, with a net: the whole neuron is copied to .quarantine/ first (backup path returned) and the search index is updated; nothing matched returns removed:0, not an error. On shared neurons the removal travels. For knowledge that merely stopped being true use crbro_revise, which keeps the history. Tell the user what will be removed and get their agreement first; a removed credential must still be rotated — it existed on disk and in the index.',
+      inputSchema: {
+        neuron: z.string().describe('Neuron id or name holding the entries.'),
+        facts: z.array(z.string()).describe('Fact ids, or the exact text of a fact, decision, pattern, preference, error or debt. The exact full text of the map removes the map.'),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
     },
     async (args) => {
       try {
@@ -1093,15 +1244,19 @@ export function createServer(): McpServer {
   // ═══════════════════════════════════════════════════════════════
   // TOOL 19: crbro_space — Join a team's shared memory
   // ═══════════════════════════════════════════════════════════════
-  server.tool(
+  server.registerTool(
     'crbro_space',
-    'Set up shared memory with teammates. A space is a private git repository holding notes about the projects you choose to share — nothing else from your brain goes near it. One person runs create with the repository URL; everyone else runs join with the same URL. After that it syncs by itself at the start and end of every session. Joining shares nothing by itself: put each project in with crbro_share. create and join need name, remote and author, and reply ok:false with the reason when git is missing or the push or clone fails.',
     {
-      action: z.enum(['create', 'join', 'status']).describe('create = start a new space and push it, join = clone one a teammate created, status = your identity and the spaces you are in'),
-      name: z.string().optional().describe('Short name for the space, e.g. "equipo". Same on everyone\'s machine. Required for create and join.'),
-      remote: z.string().optional().describe('Git URL of a private repository — EMPTY for create, the same URL the creator used for join. E.g. git@github.com:acme/team-memory.git. Required for both.'),
-      author: z.string().optional().describe('How your notes are signed, e.g. "ana". Lowercase, no spaces. Required for create and join.'),
-      branch: z.string().optional().describe('Branch to use (default "main")'),
+      title: 'Team space',
+      description: 'Shared memory with teammates. A space is a private git repository holding notes about the projects you choose to share — nothing else from your brain goes near it. One person runs create with the repository URL; everyone else runs join with the same URL; afterwards it syncs by itself at boot and consolidate. Joining shares nothing by itself: put each project in with crbro_share. status lists your identity and spaces. create and join need name, remote and author, and reply ok:false with the reason when git is missing or the push/clone fails.',
+      inputSchema: {
+        action: z.enum(['create', 'join', 'status']).describe('create = start a new space and push it, join = clone one a teammate created, status = your identity and the spaces you are in.'),
+        name: z.string().optional().describe('Short name, e.g. "equipo" — the same on everyone\'s machine. Required for create and join.'),
+        remote: z.string().optional().describe('Git URL of a private repository — EMPTY for create, the same URL the creator used for join. E.g. git@github.com:acme/team-memory.git.'),
+        author: z.string().optional().describe('How your notes are signed, e.g. "ana". Lowercase, no spaces. Required for create and join.'),
+        branch: z.string().optional().describe('Branch to use (default "main").'),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     },
     async (args) => {
       try {
@@ -1170,13 +1325,17 @@ export function createServer(): McpServer {
   // ═══════════════════════════════════════════════════════════════
   // TOOL 20: crbro_share — Put one project into a space
   // ═══════════════════════════════════════════════════════════════
-  server.tool(
+  server.registerTool(
     'crbro_share',
-    'Share one neuron with a team space. Always run it without a token first: it reports exactly what would be sent — ops_to_emit, skipped_preferences (preferences never leave this machine) — and refuses outright if it finds a credential — it will not redact and send anyway; crbro_forget it and rotate it. Show the user that report and get their agreement before confirming, then call again with the confirm_token; a stale token is refused. Entries go out on the next crbro_sync or consolidate. Once shared, everything you learn about that project flows to the team automatically; everything else in your brain stays private.',
     {
-      neuron: z.string().describe('Neuron ID or name to share'),
-      space: z.string().describe('Name of the space, as created or joined with crbro_space'),
-      confirm: z.string().optional().describe('The confirm_token from the dry run — only returned when no credential was found. Omit it the first time.'),
+      title: 'Share a project',
+      description: 'Share one neuron with a team space. Always call it without confirm first: the dry run reports exactly what would be sent — ops_to_emit, skipped_preferences (preferences never leave this machine) — and refuses outright if it finds a credential (it will not redact and send anyway: crbro_forget it and rotate it). Show the user that report and get their agreement, then call again with the confirm_token; a stale token is refused. Entries go out on the next crbro_sync or consolidate, and from then on everything learned about that project flows to the team. Sharing cannot be undone.',
+      inputSchema: {
+        neuron: z.string().describe('Neuron id or name to share.'),
+        space: z.string().describe('Space name, as created or joined with crbro_space.'),
+        confirm: z.string().optional().describe('The confirm_token from the dry run — returned only when no credential was found. Omit the first time.'),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     },
     async (args) => {
       try {
@@ -1222,11 +1381,15 @@ export function createServer(): McpServer {
   // ═══════════════════════════════════════════════════════════════
   // TOOL 21: crbro_sync — Exchange notes with the team now
   // ═══════════════════════════════════════════════════════════════
-  server.tool(
+  server.registerTool(
     'crbro_sync',
-    'Exchange notes with your team right now, instead of waiting for the next boot or consolidate — both sync on their own; use this mid-session, e.g. after crbro_share. Pulls what everyone else recorded and sends yours, reporting per space: state, neurons updated, new facts, teammates seen, pushed. Being offline is a normal answer, not a failure: your memory works either way and pending notes go out next time.',
     {
-      space: z.string().optional().describe('Name of one space; state comes back "not_joined" if you are not in it. Omit to sync all of them.'),
+      title: 'Sync with the team',
+      description: 'Exchange notes with the team right now instead of waiting for the next boot or consolidate, which sync on their own — use it mid-session, e.g. right after crbro_share. Pulls what everyone else recorded and pushes yours, reporting per space: state, neurons updated, new facts, teammates seen, pushed. Being offline is a normal answer, not a failure: local memory works either way and pending notes go out next time.',
+      inputSchema: {
+        space: z.string().optional().describe('One space; state comes back "not_joined" if you are not in it. Omit to sync all of them.'),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },
     async (args) => {
       try {

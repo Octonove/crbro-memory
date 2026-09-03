@@ -183,7 +183,9 @@ export class Maintenance {
     decisions_saved: number;
     topics_touched: number;
     total_neurons: number;
+    /** Synapses created or strengthened by THIS consolidation (implicit links). */
     synapses_updated: number;
+    total_synapses: number;
     session_logged: boolean;
   }> {
     // Persist search index
@@ -191,13 +193,38 @@ export class Maintenance {
 
     // Log session
     const neuronCount = await this.cortex.count();
-    const synapseCount = await this.synapses.count();
 
     // Real numbers, not the neuron count. `facts_saved` used to return the
     // total number of neurons, so it answered the same figure whether the
     // session had stored one fact or thirty — and it is the only number the
     // assistant sees when closing a session.
     const escrito = this.cortex.sessionTally();
+
+    // Implicit synapses: neurons written in the same session are related by
+    // that alone. Until 1.13 only crbro_connect created synapses, and nobody
+    // calls it — the reference brain had 14 synapses for 1,145 neurons, so
+    // the connectivity share of heat (25%) weighed nothing and the global map
+    // had no bridges. Links start weak (0.3), typed temporal, and never
+    // overwrite a context somebody wrote by hand; decay and pruning apply.
+    // Capped at six topics (15 pairs) so a sprawling session cannot wire
+    // everything to everything.
+    let synapsesTouched = 0;
+    const topicos = escrito.topics.slice(0, 6);
+    for (let i = 0; i < topicos.length; i++) {
+      for (let j = i + 1; j < topicos.length; j++) {
+        try {
+          await this.synapses.connect(
+            topicos[i], topicos[j], 'temporal',
+            `written in the same session (${today()})`,
+            { initialStrength: 0.3, keepExistingContext: true },
+          );
+          synapsesTouched++;
+        } catch {
+          // A missing neuron must not break the consolidation.
+        }
+      }
+    }
+    const synapseCount = await this.synapses.count();
 
     await this.hippocampus.logSession({
       summary,
@@ -226,7 +253,8 @@ export class Maintenance {
       decisions_saved: escrito.decisions,
       topics_touched: escrito.topics.length,
       total_neurons: neuronCount,
-      synapses_updated: synapseCount,
+      synapses_updated: synapsesTouched,
+      total_synapses: synapseCount,
       session_logged: true,
     };
   }
