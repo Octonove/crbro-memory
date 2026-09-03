@@ -8,7 +8,7 @@
 
 ![CRBRO demo](docs/demo.gif)
 
-Free and open source (MIT). All 22 tools included — no license, no account, no tiers.
+Free and open source (MIT). All 23 tools included — no license, no account, no tiers.
 
 > ⭐ **If CRBRO gives your AI a memory worth keeping, a star on GitHub is the best way to support it.**
 

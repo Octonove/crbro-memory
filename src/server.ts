@@ -1,5 +1,5 @@
 // ─── CRBRO MCP Server ────────────────────────────────────────────
-// Main server with all 22 tools registered
+// Main server with all 23 tools registered
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
