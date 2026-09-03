@@ -26,8 +26,9 @@ benchmark prints identical numbers with the variable unset).
   package; the vectors live next to the search index (`.search/vectors.f32`
   + `vectors.meta.json`, float32, keyed by chunk id).
 - Ids are content hashes, so re-indexing a neuron embeds only its new lines
-  (~18 ms each on a laptop). `semantic build` embeds the whole brain once —
-  the 5,124-chunk reference brain takes about a minute and a half.
+  (20–45 ms each on a laptop, by length). `semantic build` embeds the whole
+  brain once — the reference brain (5,129 chunks, 3,984 non-header lines)
+  took three minutes, model load included.
 - Fusion is reciprocal-rank (`RRF_K` 60): rank-based, so the two score scales
   never have to agree. Vector-only candidates below a cosine floor are
   dropped; headers are never surfaced by vector alone; a vector-only match
