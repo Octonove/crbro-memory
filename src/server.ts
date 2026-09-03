@@ -22,6 +22,7 @@ import { HeatEngine } from './engine/heat.js';
 import { Hippocampus } from './engine/hippocampus.js';
 import { Prefrontal } from './engine/prefrontal.js';
 import { SearchEngine } from './search/index.js';
+import { semanticStatus } from './search/semantic.js';
 import { Maintenance } from './engine/maintenance.js';
 import {
   createSpace, joinSpace, listSpaces, readSpace, prepareShare, commitShare,
@@ -143,6 +144,15 @@ export function createServer(): McpServer {
         // repeated inside every tool description. Measured with a real
         // tools/list: the 23 definitions cost ~6.3k tokens on every request
         // in clients that load all tools; this paragraph costs ~200, once.
+        // Semantic recall is installed by init since 1.16; say so once when
+        // it is missing, so the agent can offer the one command that fixes it.
+        const sem = semanticStatus();
+        if (!sem.installed && sem.mode !== 'disabled') {
+          (response as Record<string, unknown>).semantic_hint =
+            'Semantic recall is not installed on this machine: run once npx crbro-memory init (about 500 MB). ' +
+            'Until then recall is keyword-only; keywords at save time still work.';
+        }
+
         response.memory_discipline =
           'Before crbro_learn, crbro_recall: what you are about to save may already exist — then pass ' +
           'supersedes instead of adding a sibling (two versions of one fact compete on recall as equals). ' +
@@ -192,6 +202,7 @@ export function createServer(): McpServer {
         brain_path: z.string().optional(),
         last_boot: z.string().nullable().optional(),
         last_consolidation: z.string().nullable().optional(),
+        semantic: z.object({ installed: z.boolean(), enabled: z.boolean(), mode: z.string(), model_downloaded: z.boolean(), home: z.string(), model: z.string() }).optional(),
       },
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
@@ -207,6 +218,7 @@ export function createServer(): McpServer {
           brain_path: manifest.brain_path,
           last_boot: manifest.last_boot,
           last_consolidation: manifest.last_consolidation,
+          semantic: semanticStatus(),
         };
         return {
           content: [{ type: 'text' as const, text: JSON.stringify(payload, null, 2) }],

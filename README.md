@@ -17,7 +17,7 @@ Free and open source (MIT). All 23 tools included — no license, no account, no
 - **🧬 Biological Architecture** — Knowledge organized as neurons (cortex), connections (synapses), and session memory (hippocampus)
 - **🔍 Fact-Level Search** — Powered by [Orama](https://orama.com/). Every fact is indexed on its own, so a topic with hundreds of facts stays as findable as one with three. Each result comes back with the exact line that matched, when it was recorded, a `confidence` label (`weak` = little of the question was covered) and, for the top results, the topic's next best lines. A short bilingual synonym table widens the question without inventing terms *(v1.13+)*
 - **🗣️ The model in the loop** — Two levers no embedding model replaces, measured blind: keywords written at save time (the caller knows the synonyms: a line about Hetzner gets *hosting, alojamiento, servidor*) and several phrasings searched at once, fused by rank. Zero disk, zero RAM; numbers in the table below *(v1.15+)*
-- **🧭 Semantic layer, opt-in** — Two commands and one env var add a local embedding model (`multilingual-e5-small`, int8) fused with the keyword engine: paraphrases the words do not cover start to land. Measured +8 points of recall@1 on the blind benchmark; ~500 MB on disk, never installed or loaded unless you ask *(v1.14+)*
+- **🧭 Semantic recall** — `npx crbro-memory init` installs a local embedding model (`multilingual-e5-small`, int8) fused with the keyword engine, so paraphrases the words do not cover start to land. Measured: +8 points of recall@1 over the keyword engine, +2 to +5 on top of save-time keywords. Costs ~500 MB on disk once per machine and ~0.5 GB of RAM while a server runs; `init --no-semantic` skips it, `CRBRO_SEMANTIC=0` turns it off *(v1.14+, installed by default since v1.16)*
 - **🔥 Heat Scores** — Automatic relevance tracking based on frequency, recency, and connectivity. Topics written in the same session are linked at consolidation, so the graph fills itself in *(v1.13+)*
 - **✏️ Correctable** — Knowledge can be superseded or retracted, not just piled up. A memory that only appends keeps serving yesterday's answer with today's confidence
 - **🔐 Credential-aware** — API keys, tokens and passwords are replaced with a marker before they touch the disk. The sentence around them survives; the secret does not — and `crbro_secret` puts the real value in your operating system's own keychain, so refusing it does not leave you with nowhere to put it
@@ -29,7 +29,7 @@ Free and open source (MIT). All 23 tools included — no license, no account, no
 - **🏷️ Honest tool definitions** — Every tool carries MCP annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`), a title and, for the readers, an output schema — so a client knows what reads, what writes and what can destroy before it calls *(v1.13+)*
 - **🛡️ Subagent Hook (opt-in)** — `npx crbro-memory install-hooks --inject` wires a Claude Code hook that hands your behavioral protocols to spawned subagents. Injection is off by default since 1.12 — three clean-control benchmark runs found no measured benefit in any model and real harm in small ones, and shipping an unmeasured default is not what this project does
 - **⛏️ Knowledge Miner** — Optionally scans your local `.md`/`.txt` notes and feeds them into the brain
-- **🔒 Fully Local** — Runs on Node.js alone: no Python, no Docker, no databases, no external services. Your memory never leaves your machine
+- **🔒 Fully Local** — Runs on Node.js alone: no Python, no Docker, no databases, no external services. Your memory never leaves your machine. The one download is the embedding model at `init`, from Hugging Face, once per machine; nothing calls out afterwards
 - **💾 File-Based** — All data stored as readable JSON files in `~/.crbro/` — inspectable, diffable, and versionable with git
 - **🔌 MCP Native** — Works with Claude Desktop, Claude Code, Cursor, Windsurf, and any MCP-compatible client
 
@@ -40,7 +40,7 @@ Every number below comes from a deterministic benchmark in [`benchmarks/`](bench
 | What | Result | The honest part |
 |------|--------|-----------------|
 | **Retrieval** (48 blind paraphrased queries, written by someone who never saw the stored text) | recall@1 **71%** · recall@3 **77%** · MRR 0.74 — and **79% / 85%** counting the neuron's `also_matched` lines | Was 56% / 69% in 1.12. Of the 13 misses, 8 were the *right neuron answering with the wrong line* (its name chunk, or a sibling fact) — fixed in the engine; the rest are vocabulary gaps, which a short bilingual synonym table now closes in part. A naive substring search scores 38% / 58%. Still no semantic model: the remaining misses are listed in the benchmark output |
-| **Retrieval with the opt-in semantic layer** (same 48 queries, `CRBRO_SEMANTIC=1`) | recall@1 **79%** · recall@3 **83%** · MRR 0.81 — **88% / 92%** counting `also_matched` | Vectors from `multilingual-e5-small` (int8) fused with BM25 by reciprocal rank. Alone, the model scores 60% / 83%; fused, it adds 8 points at recall@1 and no distractor reaches a real hit's score (0 of 14; 12 return something, 11 of them labelled `weak`). The cosine floor under which a vector-only candidate is dropped (0.84) was picked on this same set — a tuned number, not a blind one. Costs ~500 MB on disk, ~0.5 GB of RAM while the server runs, a one-time embedding pass (~3 min for a 4k-line brain) and ~13 s of model load per process. Off by default *(v1.14+)* |
+| **Retrieval with the semantic layer** (same 48 queries) | recall@1 **79%** · recall@3 **83%** · MRR 0.81 — **88% / 92%** counting `also_matched` | Vectors from `multilingual-e5-small` (int8) fused with BM25 by reciprocal rank. Alone, the model scores 60% / 83%; fused, it adds 8 points at recall@1 and no distractor reaches a real hit's score (0 of 14; 12 return something, 11 of them labelled `weak`). The cosine floor under which a vector-only candidate is dropped (0.84) was picked on this same set — a tuned number, not a blind one. Costs ~500 MB on disk, ~0.5 GB of RAM while the server runs, a one-time embedding pass (~3 min for a 4k-line brain) and ~13 s of model load per process. Installed by `init` since 1.16; `CRBRO_SEMANTIC=0` turns it off *(v1.14+)* |
 | **Retrieval with the model in the loop** (same 48 queries; keywords and rewrites written blind by a model that saw only one half of the test) | keywords alone: recall@1 **83%** · recall@3 **90%** — everything on (keywords + rewrites + semantic layer): **90% / 92%**, and **96% / 98%** counting `also_matched` | The biggest lever costs nothing: 2-5 keywords written when a fact is saved close exactly the gaps no embedding model closed. Rewrites alone barely move the keyword engine (71% → 71% / 79%); they add up on top of keywords. Every configuration and the three questions still missed are in [`benchmarks/README.md`](benchmarks/README.md) *(v1.15+)* |
 | **Retrieval — false confidence** (14 questions about things that are NOT stored) | 11 return *something*; **2** at a real hit's score; **10 of 11** labelled `weak` | A keyword memory answers almost anything. Every result now carries `confidence`, and the label catches nearly every distractor — at the price of also calling 18 of 48 real hits weak. Weak means "little of the question was covered", not "wrong" |
 | **Secret redaction** (20 credentials in adversarial disguises, 19 near-miss innocents) | **100%** caught · **0%** false positives | 100% on *this frozen set* — a floor, not a security proof. The set grows as new evasion shapes appear; four of its entries were misses in the first run and were fixed, not hidden |
@@ -51,6 +51,8 @@ What these benchmarks deliberately do **not** claim — human productivity, "it 
 ## Quick Start
 
 ### 1. Initialize
+
+Creates the brain in `~/.crbro/` and, since 1.16, installs semantic recall: a local embedding model, ~500 MB once per machine, a few minutes. Add `--no-semantic` to skip it.
 
 ```bash
 npx crbro-memory init
@@ -93,7 +95,7 @@ claude mcp add --scope user crbro -- npx -y crbro-memory
 }
 ```
 
-**Docker** (the brain lives in `/root/.crbro`; mount a volume to keep it):
+**Docker** (the brain lives in `/root/.crbro`; mount a volume to keep it. The image carries no semantic runtime, so recall is keyword-only there):
 ```bash
 docker build -t crbro-memory . && docker run -i -v crbro-brain:/root/.crbro crbro-memory
 ```
@@ -271,21 +273,21 @@ npx crbro-memory init     # Initialize brain + detect IDEs
 npx crbro-memory status   # Show brain status
 npx crbro-memory reindex  # Rebuild the search index
 npx crbro-memory eval     # Measure retrieval quality against your own query set
-npx crbro-memory semantic install | build | status   # The opt-in semantic layer (below)
+npx crbro-memory semantic status | install | build   # Semantic recall (installed by init; below)
 npx crbro-memory --help   # Help
 ```
 
-### Semantic search (opt-in)
+### Semantic recall
 
-The keyword engine has no synonyms, and the blind benchmark shows exactly where that bites: after the 1.13 ranking fixes, the misses left are paraphrases — *"where are the sites hosted"* for a fact about a Hetzner VPS. A small embedding model closes part of that gap. It is opt-in and stays so: the runtime (transformers.js + onnxruntime) is ~380 MB, the model 118 MB, and a cold load takes ~13 s per process — none of which most users should pay by default.
+The keyword engine has no synonyms, and the blind benchmark shows exactly where that bites: paraphrases — *"where are the sites hosted"* for a fact about a Hetzner VPS. Keywords written at save time close most of that gap for free (above); a small embedding model closes a little more. Since 1.16 `npx crbro-memory init` installs it by default, once per machine, and the layer is on wherever its runtime is present. What it costs, measured: ~500 MB on disk (runtime ~380 MB + model 118 MB), ~0.5 GB of RAM while a server runs, ~13 s of model load per process (in the background) and a one-time embedding pass. Skip it with `init --no-semantic`; turn it off any time with `CRBRO_SEMANTIC=0` in the server's env.
 
 ```bash
-npx crbro-memory semantic install     # once per machine → ~/.crbro/.semantic
-# then add CRBRO_SEMANTIC=1 to the crbro server's env in your MCP client config
-npx crbro-memory semantic build       # once: embeds every line of the brain (a 4k-line brain: ~3 min)
+npx crbro-memory init                 # installs it (skip with --no-semantic)
+npx crbro-memory semantic status      # runtime, model, on or off, and why
+npx crbro-memory semantic build       # embed an existing brain once (a 4k-line brain: ~3 min)
 ```
 
-From then on every new line is embedded when it is saved (ids are content hashes, so nothing is embedded twice), the model warms in the background after boot, and `crbro_recall` fuses both rankings by reciprocal rank. Results the vectors ranked carry `semantic_score`; a vector-only match is `strong` from cosine 0.86. Set `CRBRO_SEMANTIC=0` (or just unset it) and the layer disappears: no vectors are read, no model is loaded, recall is the 1.13 engine byte for byte.
+Every new line is embedded when it is saved (ids are content hashes, so nothing is embedded twice), the model warms in the background after boot, and `crbro_recall` fuses both rankings by reciprocal rank. Results the vectors ranked carry `semantic_score`; a vector-only match is `strong` from cosine 0.86. With `CRBRO_SEMANTIC=0`, or without the runtime, no vectors are read and no model is loaded: recall is the keyword engine byte for byte.
 
 The model is `multilingual-e5-small` and stays so on purpose. `CRBRO_SEMANTIC_MODEL` accepts any e5-family model, and `e5-base` and `e5-large` were measured on the same benchmark: the large one is the better model alone (71% vs 63% recall@1) but fused with the keyword engine it scores the same or worse (75% / 85% vs 79% / 83%) for 4× the disk, 1.2 GB of RAM and 6× the time per line. The table is in [`benchmarks/README.md`](benchmarks/README.md).
 

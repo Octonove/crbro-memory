@@ -121,6 +121,8 @@ export class SearchEngine {
   private semantic: SemanticIndex | null = null;
   /** Chunks inserted since the last embedding pass: id → text. */
   private pendingEmbed = new Map<string, string>();
+  /** The background embedding job of the last rebuild, if any. */
+  private embedding: Promise<void> | null = null;
 
   constructor(private brain: Brain) {
     if (semanticEnabled()) {
@@ -148,8 +150,9 @@ export class SearchEngine {
     if (this.semantic) {
       await this.semantic.load();
       // Warm the model off the critical path: boot returns at once and the
-      // first recall waits only for what is left of the ~13 s cold load.
-      if (this.semantic.count() > 0) this.semantic.warm();
+      // first recall (or the first save) waits only for what is left of the
+      // ~13 s cold load.
+      this.semantic.warm();
     }
     const indexPath = this.brain.paths.chunksIndex();
 
@@ -214,7 +217,10 @@ export class SearchEngine {
       }
     }
 
-    await this.flushEmbeddings();
+    // Embeddings off the critical path: a rebuild after an upgrade must not
+    // hold boot for minutes on a big brain. Recall serves what is embedded so
+    // far; the vectors go to disk with the next index write.
+    this.embedding = this.flushEmbeddings().then(() => this.markDirty()).catch(() => undefined);
     await this.persist();
     await this.dropLegacyIndex();
     return this.docCount;
@@ -232,6 +238,11 @@ export class SearchEngine {
     // Ids are content hashes: only the neuron's NEW lines get embedded.
     await this.flushEmbeddings();
     this.markDirty();
+  }
+
+  /** Wait for the background embedding job of a rebuild, if one is running. */
+  async awaitEmbeddings(): Promise<void> {
+    if (this.embedding) await this.embedding;
   }
 
   /** Write the index to disk now. */

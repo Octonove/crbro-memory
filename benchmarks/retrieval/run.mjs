@@ -23,6 +23,11 @@ import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
+// The pre-registered arm is the keyword engine. Since 1.16 the semantic layer
+// switches itself on wherever the runtime is installed, so the benchmark pins
+// it OFF unless asked for (CRBRO_SEMANTIC=1).
+process.env.CRBRO_SEMANTIC ??= '0';
+
 const HERE = dirname(fileURLToPath(import.meta.url));
 const DIST = join(HERE, '..', '..', 'dist');
 

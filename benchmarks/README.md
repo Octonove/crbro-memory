@@ -69,10 +69,9 @@ la tabla. Por eso el script mide con y sin (`CRBRO_SYNONYMS=0`).
 also_matched) eran sinónimos que ninguna tabla razonable cubre — «alojadas» →
 un VPS de Hetzner, «seguridad» → Wordfence, «proveedor de email» → Mailchimp.
 Dos caminos lo atacan, y los dos están medidos más abajo: un modelo semántico
-**opcional** (1.14: `CRBRO_SEMANTIC=1` + `npx crbro-memory semantic
-install`; sin activarla, el motor es el de 1.13 byte a byte) y, mejor y
-gratis, que el propio modelo que guarda escriba esas palabras al guardar
-(1.15, «La IA en el bucle»).
+(1.14, opcional hasta 1.15; desde 1.16 lo instala `init` por defecto y se
+apaga con `CRBRO_SEMANTIC=0`) y, mejor y gratis, que el propio modelo que
+guarda escriba esas palabras al guardar (1.15, «La IA en el bucle»).
 
 ## Retrieval con la capa semántica (1.14, `CRBRO_SEMANTIC=1`)
 
@@ -153,7 +152,11 @@ de RAM mientras el servidor corre con el modelo cargado, ~13 s de
 carga en frío por proceso (se calienta en segundo plano tras el boot), 20–45 ms
 por línea nueva al guardar según su longitud (el cerebro de referencia, 5.129
 chunks y 3.984 líneas sin cabeceras, tardó 3 minutos en total), y unas decenas
-de ms por consulta. Por eso es opcional y va a seguir siéndolo.
+de ms por consulta. Hasta 1.15 eso la hacía opcional. Desde 1.16 la instala
+`init` por defecto, a petición del autor (que funcione lo mejor posible de
+serie), y se desactiva con `init --no-semantic` o `CRBRO_SEMANTIC=0`. El
+benchmark la mide apagada salvo que se pida (`CRBRO_SEMANTIC=1`), para que
+los números pre-registrados del motor léxico sigan siendo comparables.
 
 ## La IA en el bucle (1.15, informativo, no pre-registrado)
 
