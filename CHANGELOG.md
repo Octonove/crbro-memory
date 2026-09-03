@@ -2,6 +2,87 @@
 
 All notable changes to CRBRO.
 
+## [1.13.0] — 2026-09-03
+
+### Retrieval — the right neuron now answers with the right line
+
+The blind benchmark had 13 misses. Reading them one by one: only 5 were
+vocabulary gaps. 3 were the neuron's *header* chunk (its name, boosted ×2)
+speaking for the neuron, and 5 were the right neuron answering with a sibling
+fact. Fixes, each measured on the frozen set and each in its own commit:
+
+- **The header never wins** while a live content chunk matched. It still
+  ranks the neuron; it no longer *is* the answer. 56% → 60% recall@1.
+- **`also_matched`** on the top three results: the neuron's next best lines,
+  so one topic can answer with more than one sentence. Fact-level recall@3
+  73% → 79% when they count.
+- **A bilingual synonym table** (`src/search/synonyms.ts`, ~180 everyday
+  agency/dev pairs, ES↔EN). A synonym counts as the *same* query term, so
+  coverage stays honest. 60% → **71%** recall@1, 73% → **77%** recall@3,
+  MRR 0.676 → **0.744**; distractors scoring like a real hit 4 → 2. Off with
+  `CRBRO_SYNONYMS=0`. The caveat is in `benchmarks/README.md`: the table was
+  written by someone who had seen the benchmark's misses, so it is a
+  vocabulary table, not a blind result — the overfit pairs were left out on
+  purpose, and it is measured both ways.
+- **`confidence` on every result** — `strong` when the line covers at least
+  half the question (two terms or more), `weak` otherwise. Labels 10 of the
+  11 distractors that return something as weak; also calls 18 of 48 real
+  hits weak, which is the price and is published. `matched_terms` and
+  `query_terms` come with it.
+
+### Dated errors, debts, patterns and preferences
+
+`type:error` and `type:debt` were bare strings, so recall answered
+`matched_added: ""` for every one of them and "prefer the more recent" could
+not apply to the one ledger where it matters most. A sidecar `entry_dates`
+(keyed by the same content hash the purge ops use) dates them now — the
+arrays, the team-log format and brains written before 1.13 are untouched.
+Dates travel through spaces in the op's `at`; the earliest wins, like facts.
+
+### Implicit synapses
+
+The reference brain had **14 synapses for 1,145 neurons**: only
+`crbro_connect` created them and nobody calls it, so the connectivity share
+of heat (25%) weighed nothing and the global map had no bridges. Consolidate
+now links the neurons written in the same session — strength 0.3, type
+`temporal`, capped at six topics, never overwriting a context somebody wrote
+by hand. `synapses_updated` finally means what it says (it used to be the
+total count); `total_synapses` is reported alongside.
+
+### Tool definitions a client can read
+
+- Every tool is registered with a **title** and **MCP annotations**
+  (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`).
+  Nine tools are read-only; four can destroy (`maintenance` with archive or
+  purge, `map` which replaces whole, `secret` remove, `forget`).
+- The seven readers with a stable shape declare an **outputSchema** and
+  return `structuredContent` (`status`, `neurons`, `recall`, `connections`,
+  `sessions`, `hot_topics`, `audit`).
+- Descriptions rewritten to say what the tool does, when to use it over its
+  siblings, its side effects and what it returns — and nothing else. The
+  discipline of using the memory well moved to **`memory_discipline`**,
+  returned once by `crbro_boot`, instead of being repeated in every
+  definition. Measured with a real `tools/list`: 25.1k → **21.7k characters**
+  of description + input schema (~5.4k tokens), paid on every request by
+  clients that load all tools. The README now says so; 1.12 measured 6.3k
+  and did not.
+- Glama's four Behavior 2/5 scores (`status`, `context`, `global_map`,
+  `sessions`) were all "does not say whether it reads or writes". They do now,
+  in both the prose and the annotations.
+
+### Housekeeping
+
+- `Dockerfile` + `.dockerignore`, so a registry that builds servers in a
+  sandbox (Glama) does not have to infer one.
+- GitHub Releases created for every tag since 1.9.0; Glama listed "no stable
+  releases" and still showed v1.4.0 because the repo had tags but no
+  releases.
+- The retrieval benchmark prints an extra, clearly labelled *informative*
+  line for the 1.13 features (also_matched, confidence, synonyms on/off);
+  the pre-registered metrics are untouched.
+- 25 new tests (180 total): ranking rules, dated entries end to end, implicit
+  synapses, and the tool definitions as a real MCP client sees them.
+
 ## [1.12.0] — 2026-08-24
 
 ### Changed — subagent injection is now opt-in, because we measured it

@@ -16,7 +16,13 @@ export class Synapses {
     fromId: string,
     toId: string,
     type: SynapseType,
-    context?: string
+    context?: string,
+    options?: {
+      /** Strength when the synapse is created (default 0.5). Implicit links start weaker. */
+      initialStrength?: number;
+      /** On strengthen, keep whatever context is already there instead of replacing it. */
+      keepExistingContext?: boolean;
+    }
   ): Promise<{ synapse: Synapse; action: 'created' | 'strengthened' }> {
     const id = synapseId(fromId, toId);
     let synapse = await readJSON<Synapse>(this.brain.paths.synapse(id));
@@ -27,7 +33,7 @@ export class Synapses {
       synapse.strength = Math.min(1.0, synapse.strength + 0.1);
       synapse.co_access_count += 1;
       synapse.last_co_access = now();
-      if (context) {
+      if (context && !(options?.keepExistingContext && synapse.context)) {
         synapse.context = context;
       }
       action = 'strengthened';
@@ -36,7 +42,7 @@ export class Synapses {
       synapse = {
         id,
         nodes: [fromId, toId],
-        strength: 0.5,
+        strength: options?.initialStrength ?? 0.5,
         type,
         context: context || '',
         co_access_count: 1,

@@ -62,13 +62,18 @@ function substringSearch(q) {
 }
 
 // ─── Medición ──────────────────────────────────────────────────────
-const res = { motor: { at1: 0, at3: 0, mrr: 0 }, control: { at1: 0, at3: 0 }, fallos: [] };
+const res = { motor: { at1: 0, at3: 0, mrr: 0 }, control: { at1: 0, at3: 0 }, fallos: [],
+              // Informativo, NO pre-registrado (añadido en 1.13 junto a las
+              // funciones que mide): el hecho esperado entre matching_content
+              // y also_matched, y cuántos top-1 reales salen marcados "strong".
+              conAlso: { at1: 0, at3: 0 }, top1Strong: 0 };
 const scoresReales = [];
 
 for (const q of qs.queries) {
   const esperado = textoPorEtiqueta.get(q.expect_label);
   const hits = await engine.search(q.query, { limit: 10 });
   if (hits[0]) scoresReales.push(hits[0].relevance_score);
+  if (hits[0] && hits[0].confidence === 'strong') res.top1Strong++;
 
   // Acierto a nivel de HECHO: el chunk devuelto es el texto esperado.
   const pos = hits.findIndex(h => h.matching_content === esperado.text);
@@ -76,6 +81,11 @@ for (const q of qs.queries) {
   if (pos >= 0 && pos < 3) res.motor.at3++;
   if (pos >= 0) res.motor.mrr += 1 / (pos + 1);
   else res.fallos.push({ query: q.query, label: q.expect_label });
+
+  const posAlso = hits.findIndex(h => h.matching_content === esperado.text
+    || (h.also_matched || []).some(a => a.text === esperado.text));
+  if (posAlso === 0) res.conAlso.at1++;
+  if (posAlso >= 0 && posAlso < 3) res.conAlso.at3++;
 
   const c = substringSearch(q.query);
   const posC = c.findIndex(d => d.text === esperado.text);
@@ -86,12 +96,13 @@ for (const q of qs.queries) {
 // ─── Distractores: el precio de responder cuando no hay nada ───────
 scoresReales.sort((a, b) => a - b);
 const p25 = scoresReales[Math.floor(scoresReales.length * 0.25)] || 0;
-let distConAlgo = 0, distConfiados = 0;
+let distConAlgo = 0, distConfiados = 0, distWeak = 0;
 for (const d of qs.distractors) {
   const hits = await engine.search(d, { limit: 3 });
   if (hits.length > 0) {
     distConAlgo++;
     if (hits[0].relevance_score >= p25) distConfiados++;
+    if (hits[0].confidence === 'weak') distWeak++;
   }
 }
 
@@ -114,6 +125,14 @@ const out = {
     con_confianza_de_acierto: distConfiados,
     nota: 'confianza = score del top-1 >= percentil 25 de los scores de consultas reales',
   },
+  // No pre-registrado — informativo, añadido en 1.13 con las funciones que mide.
+  informativo_1_13: {
+    sinonimos: process.env.CRBRO_SYNONYMS === '0' ? 'off' : 'on',
+    'con_also_matched recall@1': pct(res.conAlso.at1),
+    'con_also_matched recall@3': pct(res.conAlso.at3),
+    reales_top1_strong: `${res.top1Strong}/${N}`,
+    distractores_marcados_weak: `${distWeak}/${distConAlgo}`,
+  },
   fallos: res.fallos,
 };
 
@@ -125,6 +144,7 @@ if (process.argv.includes('--json')) {
   console.log(`  motor BM25    recall@1 ${out.motor['recall@1'].padStart(4)} · recall@3 ${out.motor['recall@3'].padStart(4)} · MRR ${out.motor.mrr}`);
   console.log(`  control       recall@1 ${out.control_subcadena['recall@1'].padStart(4)} · recall@3 ${out.control_subcadena['recall@3'].padStart(4)}   (subcadena ingenua)`);
   console.log(`  distractores  ${distConAlgo}/${D} devuelven algo · ${distConfiados}/${D} con score de nivel "acierto"`);
+  console.log(`  [1.13, informativo] sinónimos ${out.informativo_1_13.sinonimos} · con also_matched recall@1 ${out.informativo_1_13['con_also_matched recall@1']} · recall@3 ${out.informativo_1_13['con_also_matched recall@3']} · top-1 reales "strong" ${out.informativo_1_13.reales_top1_strong} · distractores marcados "weak" ${out.informativo_1_13.distractores_marcados_weak}`);
   if (res.fallos.length) {
     console.log(`  no encontradas en top-10 (${res.fallos.length}):`);
     for (const f of res.fallos.slice(0, 10)) console.log(`    · «${f.query}» → ${f.label}`);
