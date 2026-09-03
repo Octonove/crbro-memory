@@ -31,8 +31,11 @@ import type { Neuron, SearchResult, Fact } from '../types/index.js';
  * matched nothing, so every index built before it carries chunks for facts
  * that were later revised or forgotten. The bump forces those poisoned
  * indexes to rebuild once, which heals them.
+ * v5: retired decisions / patterns / errors / debts (entry_status sidecar,
+ * 2.0) are no longer chunked, so an index built before it must be rebuilt or
+ * it would keep serving entries that were retired.
  */
-export const INDEX_VERSION = 4;   // 4: keys field (1.15)
+export const INDEX_VERSION = 5;   // 4: keys field (1.15) · 5: entry_status (2.0)
 
 /** Weight given to a neuron for each *additional* chunk that matches. */
 const BREADTH_BONUS = 0.05;
@@ -237,6 +240,17 @@ export class SearchEngine {
     await this.insertNeuronChunks(neuron);
     // Ids are content hashes: only the neuron's NEW lines get embedded.
     await this.flushEmbeddings();
+    this.markDirty();
+  }
+
+  /**
+   * Drop every chunk of a neuron that no longer exists (forgotten or merged
+   * away). No-op when the index is not loaded or the neuron has no chunks.
+   */
+  async removeNeuron(neuronId: string): Promise<void> {
+    if (!this.db) return;
+    if (!this.chunksByNeuron.has(neuronId)) return;
+    await this.removeNeuronChunks(neuronId);
     this.markDirty();
   }
 
@@ -575,25 +589,29 @@ export class SearchEngine {
     return top.map(x => x.r);
   }
 
-  /** Does the chunk still describe something the neuron holds as current? */
+  /**
+   * Does the chunk still describe something the neuron holds as current?
+   * A retired entry (entry_status sidecar) counts as dead, exactly like a
+   * superseded fact: it is still in the file, but recall must not serve it.
+   */
   private chunkVive(chunk: ChunkHit, neuron: Neuron): boolean {
     switch (chunk.kind) {
       case 'fact':
         return (neuron.facts || []).some(f => !isRetired(f) && f.text === chunk.text);
       case 'error':
-        return (neuron.errors || []).includes(chunk.text);
+        return (neuron.errors || []).includes(chunk.text) && !entryRetired(neuron, chunk.text);
       case 'debt':
-        return (neuron.debts || []).includes(chunk.text);
+        return (neuron.debts || []).includes(chunk.text) && !entryRetired(neuron, chunk.text);
       case 'map':
         return neuron.map?.text === chunk.text;
       case 'pattern':
-        return (neuron.patterns || []).includes(chunk.text);
+        return (neuron.patterns || []).includes(chunk.text) && !entryRetired(neuron, chunk.text);
       case 'preference':
         return (neuron.preferences || []).includes(chunk.text);
       case 'decision':
         return (neuron.decisions || []).some(d => {
           const texto = d.rationale ? `${d.text} — ${d.rationale}` : d.text;
-          return texto === chunk.text;
+          return texto === chunk.text && !entryRetired(neuron, d.text);
         });
       default:
         // Headers describe the neuron itself; identity, not content.
@@ -692,6 +710,7 @@ export class SearchEngine {
 
     for (const decision of neuron.decisions || []) {
       if (!decision || !decision.text) continue;
+      if (entryRetired(neuron, decision.text)) continue;
       const text = decision.rationale
         ? `${decision.text} — ${decision.rationale}`
         : decision.text;
@@ -710,6 +729,7 @@ export class SearchEngine {
 
     for (const pattern of neuron.patterns || []) {
       if (!pattern) continue;
+      if (entryRetired(neuron, pattern)) continue;
       await this.put({
         ...base,
         id: chunkId(neuron.id, pattern),
@@ -732,6 +752,7 @@ export class SearchEngine {
 
     for (const err of neuron.errors || []) {
       if (!err) continue;
+      if (entryRetired(neuron, err)) continue;
       await this.put({
         ...base,
         id: chunkId(neuron.id, `error:${err}`),
@@ -743,6 +764,7 @@ export class SearchEngine {
 
     for (const debt of neuron.debts || []) {
       if (!debt) continue;
+      if (entryRetired(neuron, debt)) continue;
       await this.put({
         ...base,
         id: chunkId(neuron.id, `debt:${debt}`),
@@ -878,4 +900,12 @@ export class SearchEngine {
 /** A fact that has been superseded or retracted must not surface in recall. */
 function isRetired(fact: Fact): boolean {
   return fact.status === 'superseded' || fact.status === 'retracted';
+}
+
+/**
+ * A decision, pattern, error or debt retired through the entry_status
+ * sidecar (2.0). Keyed by entryId(text), like entry_dates; absent === active.
+ */
+function entryRetired(neuron: Neuron, text: string): boolean {
+  return !!neuron.entry_status?.[entryId(text)];
 }

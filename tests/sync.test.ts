@@ -404,3 +404,38 @@ describe.skipIf(!hayGit)('two brains, one repository', () => {
     expect(deAna!.map?.by).toBe('bruno');
   }, 120_000);
 });
+
+describe('a fact saved before ids existed can still be retired by the team', () => {
+  // Brain format 1.0 facts carry no id. The FactOp for the same sentence lands
+  // on them by text, but the StatusOp that follows only knows the fid — and
+  // until 2.0 nothing registered that fid for the local fact, so the
+  // retirement was dropped on every replay. An upgrading user's oldest facts
+  // were the ones nobody could ever supersede.
+  const texto = 'El legado usa jQuery 1.12 todavia.';
+  const base: any = {
+    id: 'project_legacy', name: 'Legacy', domain: 'general', type: 'project',
+    created: '2026-01-01T00:00:00.000Z', last_accessed: '2026-01-01T00:00:00.000Z', access_count: 0, heat: 0.4,
+    summary: '', facts: [{ text: texto, confidence: 1, added: '2026-01-01T00:00:00.000Z', source: 'manual' }],
+    decisions: [], patterns: [], preferences: [], connections: [], tags: [],
+  };
+  const ops: Op[] = [
+    fact('project_legacy', 'bruno', texto, '2026-08-01T09:00:00Z'),
+    { v: OPS_VERSION, op: 'status', nid: 'project_legacy', by: 'bruno', at: '2026-08-02T09:00:00Z',
+      fid: entryId(texto), to: 'superseded', why: 'migrado' },
+  ];
+
+  it('applies the StatusOp to the id-less local fact', () => {
+    const { neuron, report } = applyOps(structuredClone(base), ops);
+    expect(neuron.facts).toHaveLength(1);
+    expect(neuron.facts[0].id).toBe(entryId(texto));
+    expect(neuron.facts[0].status).toBe('superseded');
+    expect(neuron.facts[0].revision_note).toBe('migrado');
+    expect(report.facts_superseded).toBe(1);
+  });
+
+  it('does so whatever the order and without duplicating the fact', () => {
+    const { neuron } = applyOps(structuredClone(base), [ops[1], ops[0]]);
+    expect(neuron.facts).toHaveLength(1);
+    expect(neuron.facts[0].status).toBe('superseded');
+  });
+});

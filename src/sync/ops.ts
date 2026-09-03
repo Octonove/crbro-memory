@@ -99,13 +99,18 @@ export interface MapOp extends OpBase {
 
 /**
  * An entry was deliberately removed and must not come back from anyone's log.
- * Like retraction, a purge always wins, whatever the replay order. Today only
- * errors need it (facts already have StatusOp; the map clears through an
- * empty-text MapOp winning the LWW).
+ * Like retraction, a purge always wins, whatever the replay order. Errors,
+ * debts, decisions and patterns use it (facts already have StatusOp; the map
+ * clears through an empty-text MapOp winning the LWW).
+ *
+ * `decision` and `pattern` arrived in 2.0 without bumping OPS_VERSION: a 1.x
+ * client reads the line (v ≤ 1) and applyOps ignores a pkind it does not
+ * know, so the removal simply does not reach it — a degradation, never a
+ * corruption.
  */
 export interface PurgeOp extends OpBase {
   op: 'purge';
-  pkind: 'error' | 'debt';
+  pkind: 'error' | 'debt' | 'decision' | 'pattern';
   /** entryId() of the removed text. The text itself does not travel again. */
   key: string;
 }

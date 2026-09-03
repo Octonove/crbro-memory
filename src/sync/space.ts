@@ -283,7 +283,9 @@ export async function commitShare(
   await fs.appendFile(abs, ops.map(encodeOp).join('\n') + '\n', 'utf-8');
 
   // Remember locally that this neuron belongs to a space, so future writes
-  // keep flowing without anyone having to share it again.
+  // keep flowing without anyone having to share it again. A neuron that was
+  // unshared earlier loses its tombstone here, so re-sharing works.
+  await removeUnshared(brain, neuron.id);
   await markShared(brain, neuron.id, spaceName);
 
   return { ok: true, message: `"${neuron.id}" is now shared in "${spaceName}".`, ops: ops.length };
@@ -305,6 +307,122 @@ export async function markShared(brain: Brain, neuronId: string, space: string):
   const m = await sharedMap(brain);
   m[neuronId] = space;
   await writeJSON(sharedMapPath(brain), m);
+}
+
+// ─── Unsharing ───────────────────────────────────────────────────
+//
+// Tombstones live in their own file, not in shared-map.json: the SharedMap
+// type stays a plain id → space dictionary, and a sync that finds the
+// neuron's directory in the space still knows to leave it alone.
+
+function unsharedPath(brain: Brain): string {
+  return path.join(brain.paths.root, 'unshared.json');
+}
+
+/** Neuron ids this machine stopped following. */
+export async function unsharedList(brain: Brain): Promise<string[]> {
+  const raw = await readJSON<unknown>(unsharedPath(brain));
+  return Array.isArray(raw) ? raw.filter((x): x is string => typeof x === 'string') : [];
+}
+
+async function addUnshared(brain: Brain, neuronId: string): Promise<void> {
+  const lista = await unsharedList(brain);
+  if (!lista.includes(neuronId)) lista.push(neuronId);
+  await writeJSON(unsharedPath(brain), lista);
+}
+
+async function removeUnshared(brain: Brain, neuronId: string): Promise<void> {
+  const lista = await unsharedList(brain);
+  if (!lista.includes(neuronId)) return;
+  await writeJSON(unsharedPath(brain), lista.filter(id => id !== neuronId));
+}
+
+/**
+ * Stop following a neuron in its space. Local only: no more notes go out and
+ * the next sync ignores its directory. What was already sent stays in the
+ * remote and in every teammate's brain — a log is append-only by design.
+ * The ref falls back to the literal string as an id, so a neuron that has
+ * already been forgotten can still be unshared.
+ */
+export async function unshareNeuron(
+  brain: Brain,
+  cortex: Cortex,
+  neuronRef: string
+): Promise<{ ok: boolean; neuron_id: string | null; space: string | null; message: string }> {
+  const neuron = (await cortex.peek(neuronRef)) || (await cortex.findByName(neuronRef));
+  const id = neuron?.id || neuronRef;
+
+  const m = await sharedMap(brain);
+  const space = m[id];
+  if (!space) {
+    return { ok: false, neuron_id: id, space: null, message: `"${id}" is not shared in any space.` };
+  }
+
+  delete m[id];
+  await writeJSON(sharedMapPath(brain), m);
+  await addUnshared(brain, id);
+
+  return {
+    ok: true,
+    neuron_id: id,
+    space,
+    message: `"${id}" is no longer followed in "${space}": nothing more goes out and the next sync ` +
+      'ignores it. Notes already sent stay in the remote and in your teammates\' brains.',
+  };
+}
+
+/**
+ * Leave a space: one last sync so pending notes go out, then the local copy
+ * of the space is removed and its neurons stop being followed. The local
+ * neurons and the remote repository are untouched. The ids are NOT
+ * tombstoned — re-joining should follow them again.
+ */
+export async function leaveSpace(
+  brain: Brain,
+  cortex: Cortex,
+  name: string
+): Promise<{ ok: boolean; message: string; synced_before_leaving: SyncReport['state'] | 'skipped'; neurons_unshared: number }> {
+  const cfg = await readSpace(brain, name);
+  if (!cfg) {
+    return { ok: false, message: `You are not in a space called "${name}".`, synced_before_leaving: 'skipped', neurons_unshared: 0 };
+  }
+
+  // Offline or no access are not failures here: the point is to leave, and
+  // what could not be pushed is reported, not blocking.
+  let synced: SyncReport['state'] | 'skipped' = 'skipped';
+  try {
+    synced = (await syncSpaceNow(brain, cortex, name, 10_000)).state;
+  } catch {
+    synced = 'offline';
+  }
+
+  // maxRetries: the space is a git repository, and on Windows its pack files
+  // are read-only; Node retries after fixing the mode, but only if asked.
+  await fs.rm(spaceDir(brain, name), { recursive: true, force: true, maxRetries: 3 });
+
+  const m = await sharedMap(brain);
+  let neurons_unshared = 0;
+  for (const [nid, space] of Object.entries(m)) {
+    if (space === name) {
+      delete m[nid];
+      neurons_unshared++;
+    }
+  }
+  if (neurons_unshared > 0) await writeJSON(sharedMapPath(brain), m);
+
+  const aviso = synced === 'ok'
+    ? 'Your pending notes went out first.'
+    : synced === 'offline' || synced === 'auth'
+    ? `Your pending notes could not be pushed (${synced}); they are gone with the local copy.`
+    : 'No final sync was possible.';
+
+  return {
+    ok: true,
+    message: `Left "${name}". ${aviso} ${neurons_unshared} neuron(s) are no longer followed; ` +
+      'your local copies are untouched and the remote repository was not modified.',
+    synced_before_leaving: synced,
+    neurons_unshared,
+  };
 }
 
 /** Append one note for a neuron that is already shared. Silent if it is not. */
@@ -385,7 +503,11 @@ export async function syncSpaceNow(
       .filter(e => e.isDirectory()).map(e => e.name);
   } catch { /* nothing shared yet */ }
 
+  // Neurons this machine stopped following: no merge, no markShared.
+  const fuera = new Set(await unsharedList(brain));
+
   for (const nid of neuronIds) {
+    if (fuera.has(nid)) continue;
     const ops = await readAllOps(dir, nid);
     if (ops.length === 0) continue;
 
@@ -467,6 +589,12 @@ export function attachSync(brain: Brain, cortex: Cortex): void {
       }
       if (change.kind === 'debt_purge') {
         return [{ ...comun, op: 'purge', pkind: 'debt', key: change.key } as Op];
+      }
+      if (change.kind === 'decision_purge') {
+        return [{ ...comun, op: 'purge', pkind: 'decision', key: change.key } as Op];
+      }
+      if (change.kind === 'pattern_purge') {
+        return [{ ...comun, op: 'purge', pkind: 'pattern', key: change.key } as Op];
       }
       return [{ ...comun, op: 'pattern', text: change.text } as Op];
     });

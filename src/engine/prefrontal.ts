@@ -44,6 +44,10 @@ export class Prefrontal {
 
   /**
    * Update the active context.
+   *
+   * A call with nothing to change is a read: it returns the context and does
+   * NOT touch the file. It used to rewrite last_updated on every read, so the
+   * timestamp said "changed just now" about a context nobody had changed.
    */
   async updateContext(updates: {
     set_topics?: string[];
@@ -58,10 +62,33 @@ export class Prefrontal {
      * they were done.
      */
     resolve_pending?: string;
-  }): Promise<ActiveContext & { resolved?: PendingTask[] }> {
+    /** Drop one open item WITHOUT moving it to recently_closed. Same matcher as resolve_pending. */
+    discard_pending?: string;
+    /** Empty active_topics, pending_tasks and recently_closed. Runs before the other updates. */
+    clear?: boolean;
+  }): Promise<ActiveContext & { resolved: PendingTask[]; discarded: PendingTask[]; written: boolean }> {
     const ctx = await this.getContext();
-    const tasks = ctx.pending_tasks.map(toTask);
+
+    const hayCambio =
+      updates.clear === true ||
+      updates.set_topics !== undefined ||
+      (updates.add_pending !== undefined && updates.add_pending !== '') ||
+      (updates.resolve_pending !== undefined && updates.resolve_pending !== '') ||
+      (updates.discard_pending !== undefined && updates.discard_pending !== '');
+
+    if (!hayCambio) {
+      return { ...ctx, resolved: [], discarded: [], written: false };
+    }
+
+    if (updates.clear) {
+      ctx.active_topics = [];
+      ctx.pending_tasks = [];
+      ctx.recently_closed = [];
+    }
+
+    let tasks = ctx.pending_tasks.map(toTask);
     let resolved: PendingTask[] = [];
+    let discarded: PendingTask[] = [];
 
     if (updates.set_topics) {
       ctx.active_topics = updates.set_topics;
@@ -75,31 +102,50 @@ export class Prefrontal {
       }
     }
 
-    if (updates.resolve_pending) {
-      const needle = updates.resolve_pending.trim();
+    // Id, exact text, or a case-insensitive substring of at least 8 chars in
+    // either direction — the same predicate for resolving and discarding.
+    const matcher = (needleRaw: string) => {
+      const needle = needleRaw.trim();
       const lower = needle.toLowerCase();
-
-      const hit = (t: PendingTask) =>
+      return (t: PendingTask) =>
         t.id === needle ||
         t.text === needle ||
         (lower.length >= 8 &&
           (t.text.toLowerCase().includes(lower) || lower.includes(t.text.toLowerCase())));
+    };
 
+    if (updates.resolve_pending) {
+      const hit = matcher(updates.resolve_pending);
       resolved = tasks.filter(hit).map(t => ({ ...t, closed: now() }));
-      const keep = tasks.filter(t => !hit(t));
+      tasks = tasks.filter(t => !hit(t));
 
       if (resolved.length > 0) {
         ctx.recently_closed = [...resolved, ...(ctx.recently_closed || [])]
           .slice(0, RECENTLY_CLOSED_CAP);
       }
-      ctx.pending_tasks = keep;
-    } else {
-      ctx.pending_tasks = tasks;
     }
 
+    if (updates.discard_pending) {
+      const hit = matcher(updates.discard_pending);
+      discarded = tasks.filter(hit);
+      tasks = tasks.filter(t => !hit(t));
+    }
+
+    ctx.pending_tasks = tasks;
     ctx.last_updated = now();
     await writeJSON(this.brain.paths.activeContext(), ctx);
-    return { ...ctx, resolved };
+    return { ...ctx, resolved, discarded, written: true };
+  }
+
+  /**
+   * Record which session was logged last. Nothing else in the context moves.
+   * Before this, nothing ever wrote last_session, so boot reported null forever.
+   */
+  async setLastSession(sessionId: string): Promise<void> {
+    const ctx = await this.getContext();
+    ctx.last_session = sessionId;
+    ctx.last_updated = now();
+    await writeJSON(this.brain.paths.activeContext(), ctx);
   }
 
   // ─── Hot Topics ─────────────────────────────────────────────────
@@ -121,9 +167,16 @@ export class Prefrontal {
   // ─── Global Map ────────────────────────────────────────────────
 
   /**
-   * Build the global map — clusters of related neurons and bridges between domains.
+   * The global map — clusters of related neurons and bridges between domains.
+   *
+   * Computed live from the cortex and the connections on every call, and
+   * never written to disk. The cached global_map.json it replaces was the one
+   * file a maintenance dry run still rewrote, and it went stale between
+   * rebuilds; a map that is always current costs one pass over the neurons.
+   * `last_rebuilt` keeps its name so the GlobalMap shape does not change: it
+   * is the moment this map was computed.
    */
-  async buildGlobalMap(): Promise<GlobalMap> {
+  async getGlobalMap(): Promise<GlobalMap> {
     const ids = await listJSONFiles(this.brain.paths.cortex);
     const neurons: Neuron[] = [];
 
@@ -158,7 +211,7 @@ export class Prefrontal {
     // Find bridges — neurons that connect different domains
     const bridges: Bridge[] = [];
     for (const neuron of neurons) {
-      if (neuron.connections.length === 0) continue;
+      if (!neuron.connections || neuron.connections.length === 0) continue;
 
       // Get connected neurons' domains
       const connectedDomains: Set<string> = new Set();
@@ -195,27 +248,10 @@ export class Prefrontal {
       }
     }
 
-    const globalMap: GlobalMap = {
+    return {
       last_rebuilt: now(),
       clusters: clusters.sort((a, b) => b.heat - a.heat),
       bridges,
     };
-
-    await writeJSON(this.brain.paths.globalMap(), globalMap);
-    return globalMap;
-  }
-
-  /**
-   * Get the current global map (read from cache, or build if missing).
-   */
-  async getGlobalMap(rebuild: boolean = false): Promise<GlobalMap> {
-    if (rebuild) {
-      return this.buildGlobalMap();
-    }
-
-    const existing = await readJSON<GlobalMap>(this.brain.paths.globalMap());
-    if (existing) return existing;
-
-    return this.buildGlobalMap();
   }
 }
