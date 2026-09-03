@@ -336,7 +336,7 @@ if (command === 'init') {
         process.exit(1);
       }
       console.log('');
-      console.log(`  ✅ Runtime installed. The model (${sem.SEMANTIC_MODEL}, ~118 MB) downloads on first use.`);
+      console.log(`  ✅ Runtime installed. The model (${sem.semanticModel()}, ~118 MB) downloads on first use.`);
       console.log('     1. Add CRBRO_SEMANTIC=1 to the env of the crbro MCP server in your client config.');
       console.log('     2. Run once:  npx crbro-memory semantic build   (embeds the whole brain)');
       console.log('     Recall stays lexical until both are done; new lines are embedded as they are saved.');

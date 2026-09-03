@@ -2,6 +2,19 @@
 
 All notable changes to CRBRO.
 
+## [Unreleased]
+
+- `CRBRO_SEMANTIC_MODEL` / `CRBRO_SEMANTIC_DTYPE` select the embedding model
+  (any e5-family model transformers.js can load). The vector width is read
+  from the model, and stored vectors of another model are ignored, never
+  mixed. Added to measure bigger models — and the measurement says no:
+  e5-base and e5-large score the same or worse than e5-small once fused with
+  BM25 (75 / 85 vs 79 / 83 at recall@1 / @3) for 2–4× the disk, 0.8–1.2 GB
+  of RAM and 2–6× the time per line. `benchmarks/retrieval/models.mjs`
+  reproduces the model-only column.
+- The RAM of the semantic layer is now documented: ~0.5 GB with the default
+  model, measured, not estimated.
+
 ## [1.14.0] — 2026-09-03
 
 ### The semantic layer — opt-in, measured
