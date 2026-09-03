@@ -42,6 +42,13 @@ Verificar después:
 curl "https://registry.modelcontextprotocol.io/v0.1/servers?search=io.github.Octonove/crbro-memory"
 ```
 
+## 3. Sincronizar Glama
+
+Glama rescanea el repo una vez al día o cuando se pulsa **Sync Server** en
+`glama.ai/mcp/servers/Octonove/crbro-memory/admin/repository` (hace falta la
+sesión del maintainer, `glama.json` lo declara). Tras cada release, pulsar y
+comprobar que «Last commit» es el commit del tag; el TDQS se recalcula solo.
+
 ## Reglas que no hay que olvidar
 
 - **El namespace respeta mayúsculas**: es `io.github.Octonove/...` con O mayúscula,

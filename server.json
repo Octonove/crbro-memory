@@ -2,7 +2,7 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.Octonove/crbro-memory",
   "description": "Persistent file-based memory for AI agents: inspectable, versionable, fully local.",
-  "version": "1.15.0",
+  "version": "1.16.0",
   "repository": {
     "url": "https://github.com/Octonove/crbro-memory",
     "source": "github"
@@ -11,7 +11,7 @@
     {
       "registryType": "npm",
       "identifier": "crbro-memory",
-      "version": "1.15.0",
+      "version": "1.16.0",
       "runtimeHint": "npx",
       "transport": {
         "type": "stdio"

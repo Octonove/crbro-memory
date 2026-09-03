@@ -2,6 +2,34 @@
 
 All notable changes to CRBRO.
 
+## [1.16.0] — 2026-09-03
+
+### Semantic recall, installed by default
+
+Until 1.15 the embedding layer was opt-in twice over: install it, then set
+an env var. The author's call for 1.16 is the opposite default — the best
+recall out of the box — so `npx crbro-memory init` now installs the runtime,
+downloads the model and embeds the existing brain (once per machine, about
+500 MB, a few minutes), and the layer is on wherever the runtime is present.
+The costs did not change and are still printed: ~0.5 GB of RAM per running
+server, ~13 s of model load per process in the background, 20–45 ms per
+saved line. Measured on top of save-time keywords it adds 2 to 5 points of
+recall@1; that is what the RAM buys.
+
+- `init --no-semantic` skips the install; `CRBRO_SEMANTIC=0` turns the layer
+  off; `CRBRO_SEMANTIC=1` forces it on. `semantic status` says which, and
+  whether the model is downloaded.
+- `semantic install` now also downloads the model and embeds the brain, so
+  one command leaves recall semantic.
+- A rebuild after an upgrade embeds in the background: boot no longer waits
+  for a big brain to be embedded, recall serves what is embedded so far, and
+  overlapping embedding jobs are serialised.
+- `crbro_boot` says when the layer is not installed (`semantic_hint`);
+  `crbro_status` reports it (`semantic`).
+- The retrieval benchmark and the test suite pin the layer off unless asked,
+  so the pre-registered keyword numbers stay comparable. The Docker image
+  carries no semantic runtime.
+
 ## [1.15.0] — 2026-09-03
 
 ### The model in the loop

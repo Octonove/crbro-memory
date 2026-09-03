@@ -6,17 +6,16 @@
 // fact about Wordfence, "proveedor de email" for one about Mailchimp. No
 // table closes those; an embedding model does.
 //
-// It is OPT-IN and stays that way, for three measured reasons:
-//   - the model is a 118 MB download (Xenova/multilingual-e5-small, int8 —
-//     the 470 MB figure that got it rejected in 1.4 was the fp32 file);
-//   - the runtime (transformers.js + onnxruntime) is ~380 MB of node modules
-//     that most users never need, the loaded model takes ~0.5 GB of RAM,
-//     and a cold load takes ~13 s per process;
-//   - a first pass over the reference brain (5,129 chunks, 3,984 lines) takes
-//     three minutes: 20-45 ms per line by length, plus the model load.
-// So nothing here is installed, downloaded or loaded unless the user runs
-// `npx crbro-memory semantic install` AND sets CRBRO_SEMANTIC=1. Without
-// both, this file is dead code and recall is exactly the 1.13 engine.
+// Costs, measured: the model is a 118 MB download (Xenova/multilingual-e5-small,
+// int8), the runtime (transformers.js + onnxruntime) ~380 MB of node modules,
+// the loaded model ~0.5 GB of RAM, a cold load ~13 s per process, and a first
+// pass over the reference brain (5,129 chunks, 3,984 lines) three minutes.
+// Until 1.15 that made it opt-in. Since 1.16 `npx crbro-memory init` installs
+// it by default (the author's call: the best recall out of the box) and the
+// layer is ON whenever the runtime is present. `init --no-semantic` skips the
+// install; CRBRO_SEMANTIC=0 turns it off; CRBRO_SEMANTIC=1 forces it on.
+// Without the runtime this file is dead code and recall is exactly the
+// keyword engine.
 //
 // Design:
 //   - The runtime lives in ONE machine-level home (~/.crbro/.semantic), not
@@ -31,7 +30,7 @@
 
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
-import { promises as fs } from 'node:fs';
+import { promises as fs, existsSync } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 
@@ -53,9 +52,21 @@ const PASSAGE_PREFIX = 'passage: ';
 /** Longer passages are truncated by the tokenizer anyway; cap the work. */
 const MAX_CHARS = 2000;
 
+/** Off when CRBRO_SEMANTIC says so, forced on when it says so, else on exactly when the runtime is installed. */
 export function semanticEnabled(): boolean {
+  const mode = semanticMode();
+  if (mode === 'disabled') return false;
+  if (mode === 'forced') return true;
+  return resolveRuntime() !== null;
+}
+
+export type SemanticMode = 'auto' | 'forced' | 'disabled';
+
+export function semanticMode(): SemanticMode {
   const v = (process.env.CRBRO_SEMANTIC || '').toLowerCase();
-  return v === '1' || v === 'on' || v === 'true';
+  if (v === '0' || v === 'off' || v === 'false') return 'disabled';
+  if (v === '1' || v === 'on' || v === 'true') return 'forced';
+  return 'auto';
 }
 
 /** Where the runtime and the model cache live. Machine-level, not brain-level. */
@@ -73,10 +84,14 @@ export function resolveRuntime(): string | null {
   }
 }
 
-export function semanticStatus(): { installed: boolean; enabled: boolean; home: string; model: string } {
+export function semanticStatus(): {
+  installed: boolean; enabled: boolean; mode: SemanticMode; model_downloaded: boolean; home: string; model: string;
+} {
   return {
     installed: resolveRuntime() !== null,
     enabled: semanticEnabled(),
+    mode: semanticMode(),
+    model_downloaded: existsSync(path.join(semanticHome(), 'models', ...semanticModel().split('/'))),
     home: semanticHome(),
     model: `${semanticModel()} (${semanticDtype()})`,
   };
@@ -106,6 +121,8 @@ export class SemanticIndex {
   private dirty = false;
   /** Set once the runtime or the model failed to load: never retried in-process. */
   private broken: string | null = null;
+  /** Upserts run one at a time: two overlapping ones would both extend the same array. */
+  private queue: Promise<unknown> = Promise.resolve();
 
   constructor(private dir: string) {}
 
@@ -208,6 +225,12 @@ export class SemanticIndex {
    * an unchanged line is never embedded twice.
    */
   async upsert(entries: Array<{ id: string; text: string }>): Promise<number> {
+    const run = this.queue.then(() => this.upsertNow(entries));
+    this.queue = run.catch(() => undefined);
+    return run;
+  }
+
+  private async upsertNow(entries: Array<{ id: string; text: string }>): Promise<number> {
     const nuevos = entries.filter(e => e.text && !this.pos.has(e.id));
     if (nuevos.length === 0) return 0;
     const vecs = await this.embed(nuevos.map(e => e.text), 'passage');

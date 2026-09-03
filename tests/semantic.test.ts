@@ -1,10 +1,10 @@
 // ─── The opt-in semantic layer (1.14) ────────────────────────────
 //
-// Two contracts. Off — the default — nothing semantic exists: no vectors,
-// no field on the results, the exact 1.13 engine. On, with the runtime
-// installed, the vector index is incremental (content-hash ids), survives a
-// reload, forgets what leaves the index, and adds semantic_score to what it
-// ranked. The model tests are skipped where the runtime is not installed:
+// Two contracts. Off — CRBRO_SEMANTIC=0, or no runtime on the machine —
+// nothing semantic exists: no vectors, no field on the results, the exact
+// keyword engine. On — installed (the default since 1.16) or forced — the
+// vector index is incremental (content-hash ids), survives a reload, forgets
+// what leaves the index, and adds semantic_score to what it ranked. The model tests are skipped where the runtime is not installed:
 // they need `npx crbro-memory semantic install` (~380 MB) and the model
 // (~118 MB), which no test suite should download on its own.
 
@@ -41,8 +41,18 @@ async function engineWith(facts: string[]): Promise<{ engine: SearchEngine; cort
   return { engine, cortex };
 }
 
-describe('off by default', () => {
+describe('off when disabled', () => {
+  it('switches itself on exactly when the runtime is installed', () => {
+    delete process.env.CRBRO_SEMANTIC;
+    expect(semanticEnabled()).toBe(resolveRuntime() !== null);
+    process.env.CRBRO_SEMANTIC = 'off';
+    expect(semanticEnabled()).toBe(false);
+    process.env.CRBRO_SEMANTIC = 'on';
+    expect(semanticEnabled()).toBe(true);
+  });
+
   it('holds no vectors and adds no field', async () => {
+    process.env.CRBRO_SEMANTIC = '0';
     expect(semanticEnabled()).toBe(false);
     const { engine } = await engineWith(['El VPS principal es un CX32 de Hetzner en Falkenstein.']);
     expect(engine.semanticCount()).toBe(0);
