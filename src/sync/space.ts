@@ -173,7 +173,8 @@ function neuronOps(neuron: Neuron, id: Identity): Op[] {
     if (!f.text) continue;
     const fid = f.id || entryId(f.text);
     ops.push({ v: OPS_VERSION, op: 'fact', nid: neuron.id, by: id.author,
-      at: f.added || at, fid, text: f.text, conf: f.confidence ?? 1, src: f.source });
+      at: f.added || at, fid, text: f.text, conf: f.confidence ?? 1, src: f.source,
+      ...(f.keys?.length ? { keys: f.keys } : {}) });
     if (f.status === 'superseded' || f.status === 'retracted') {
       ops.push({ v: OPS_VERSION, op: 'status', nid: neuron.id, by: id.author,
         at: f.revised || at, fid, to: f.status, why: f.revision_note });
@@ -442,7 +443,8 @@ export function attachSync(brain: Brain, cortex: Cortex): void {
       const comun = { v: OPS_VERSION, nid: neuronId, by: id.author, at: change.at };
       if (change.kind === 'fact') {
         return [{ ...comun, op: 'fact', fid: change.fid, text: change.text,
-                  conf: change.conf, src: change.src } as Op];
+                  conf: change.conf, src: change.src,
+                  ...(change.keys?.length ? { keys: change.keys } : {}) } as Op];
       }
       if (change.kind === 'status') {
         return [{ ...comun, op: 'status', fid: change.fid, to: change.to, why: change.why } as Op];

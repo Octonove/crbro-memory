@@ -59,6 +59,9 @@ function dirSize(d) {
   let total = 0;
   try {
     for (const f of readdirSync(d)) {
+      // The opt-in semantic runtime and models live under ~/.crbro/.semantic
+      // (~1 GB when installed). They are not the brain: measured apart.
+      if (f === '.semantic') continue;
       const p = join(d, f);
       const st = statSync(p);
       total += st.isDirectory() ? dirSize(p) : st.size;

@@ -148,7 +148,9 @@ export function createServer(): McpServer {
           'supersedes instead of adding a sibling (two versions of one fact compete on recall as equals). ' +
           'Structure — paths, what serves what, traps — goes in crbro_map, not in facts; anything derivable ' +
           'from the repo or git history is not worth storing. Write facts dense and self-contained: they are ' +
-          'recalled without this conversation. type:error keeps a mistake with its fix; type:debt keeps a ' +
+          'recalled without this conversation, and add keywords: the words a future question may use that ' +
+          'the text lacks. On recall, ask several ways (queries) before concluding a thing is not stored. ' +
+          'type:error keeps a mistake with its fix; type:debt keeps a ' +
           'deliberate deferral with its ceiling and revisit trigger. Credentials never go in the brain: ' +
           'crbro_secret, then record only the NAME. Recall results carry confidence — "weak" means the match ' +
           'covers little of the question, verify before relying on it — and when two facts disagree, prefer ' +
@@ -229,7 +231,7 @@ export function createServer(): McpServer {
     'crbro_learn',
     {
       title: 'Learn something',
-      description: 'Store a fact, decision, pattern, preference, error or debt on a topic. The neuron is created if it does not exist; pass neuron_id (from crbro_recall) to target an exact one and skip name matching. Recall first: to replace an outdated fact pass its id in supersedes rather than adding a sibling. A fact stored verbatim before is skipped silently; decisions always append; preferences never leave this machine. Credential-like values are replaced with a marker before touching disk and listed in redacted — store the value with crbro_secret and record only its name. Returns neuron_id, action (created|updated), superseded count, near_duplicates (stored anyway; retire the old telling), supersedes_unmatched (those targets are still live — retire them with crbro_revise) and running totals.',
+      description: 'Store a fact, decision, pattern, preference, error or debt on a topic. The neuron is created if it does not exist; pass neuron_id (from crbro_recall) to target an exact one and skip name matching. Recall first: to replace an outdated fact pass its id in supersedes rather than adding a sibling. A fact stored verbatim before is skipped silently; decisions always append; preferences never leave this machine. Credential-like values are replaced with a marker before touching disk and listed in redacted — store the value with crbro_secret and record only its name. Add keywords a future question may use that the text lacks (synonyms, the other language, the generic name of the product). Returns neuron_id, action (created|updated), superseded count, near_duplicates (stored anyway; retire the old telling), supersedes_unmatched (those targets are still live — retire them with crbro_revise) and running totals.',
       inputSchema: {
         topic: z.string().describe('Topic name, e.g. "OctoChat", "Firebase", "SEO Strategy".'),
         type: z.enum(['fact', 'decision', 'pattern', 'preference', 'error', 'debt']).describe('error = a mistake plus its correction, in one entry. debt = a deliberate deferral: what was NOT done on purpose, its ceiling, and the revisit condition, e.g. "DEFERRED: protecting the PDFs. CEILING: anyone can download them without signing up. REVISIT WHEN: the signup flow works."'),
@@ -239,6 +241,7 @@ export function createServer(): McpServer {
         rationale: z.string().optional().describe('Why the decision was taken. Stored and indexed with it; ignored for other types.'),
         neuron_id: z.string().optional().describe('Exact neuron id from crbro_recall, e.g. "project_octochat". Skips name matching entirely.'),
         supersedes: z.array(z.string()).optional().describe('Facts this one replaces: their ids or exact text. They leave recall but stay in the file. Unmatched targets are reported and stay live.'),
+        keywords: z.array(z.string()).optional().describe('Facts only. 2-5 words a future question may use that the text does not contain: synonyms, the other language, the generic name of the product named. Indexed with the fact, never shown. The same text again with new keywords merges them.'),
       },
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     },
@@ -249,6 +252,7 @@ export function createServer(): McpServer {
           rationale: args.rationale,
           neuronId: args.neuron_id,
           supersedes: args.supersedes,
+          keys: args.keywords,
         });
         // Indexing happens inside cortex.learn, through the indexer hook.
 
@@ -450,9 +454,10 @@ export function createServer(): McpServer {
     'crbro_recall',
     {
       title: 'Recall',
-      description: 'Search everything saved in earlier sessions — the full text of facts, decisions, patterns, preferences, errors, debts and system maps, not just topic names. Read-only. One result per neuron: its best matching chunk (matching_content, matched_kind, matched_added), a confidence label (weak = the match covers little of the question; verify before relying on it) and, for the top results, also_matched — the neuron\'s next best lines. Superseded and retracted facts never surface. Call it before asking the user something they may already have told you, and before crbro_learn. If nothing matches, retry with fewer, more distinctive words (names, ids, filenames). has_map:true means the neuron keeps a system map — read it with crbro_map before touching that system.',
+      description: 'Search everything saved in earlier sessions — the full text of facts, decisions, patterns, preferences, errors, debts and system maps, not just topic names. Read-only. One result per neuron: its best matching chunk (matching_content, matched_kind, matched_added), a confidence label (weak = the match covers little of the question; verify before relying on it) and, for the top results, also_matched — the neuron\'s next best lines. Superseded and retracted facts never surface. Call it before asking the user something they may already have told you, and before crbro_learn. If nothing matches or all is weak, pass 2-4 alternative phrasings in queries (fused by rank), or retry with fewer, more distinctive words (names, ids, filenames). has_map:true means the neuron keeps a system map — read it with crbro_map before touching that system.',
       inputSchema: {
         query: z.string().describe('What to look for, e.g. "Firebase authentication setup". Fewer, distinctive terms beat full sentences.'),
+        queries: z.array(z.string()).optional().describe('Alternative phrasings of the same question, searched together with query and fused by rank. Use synonyms, the other language and the concrete product name; 2-4 is plenty.'),
         domain: z.string().optional().describe('Only neurons in this domain (exact match, e.g. "proyectos-web").'),
         limit: z.number().optional().describe('Max neurons returned (default 10).'),
       },
@@ -473,7 +478,7 @@ export function createServer(): McpServer {
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     async (args) => {
-      try {        const results = await searchEngine.search(args.query, {
+      try {        const results = await searchEngine.searchMany([args.query, ...(args.queries || [])], {
           domain: args.domain,
           limit: args.limit,
         });

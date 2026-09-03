@@ -32,7 +32,7 @@ import type { Neuron, SearchResult, Fact } from '../types/index.js';
  * that were later revised or forgotten. The bump forces those poisoned
  * indexes to rebuild once, which heals them.
  */
-export const INDEX_VERSION = 3;
+export const INDEX_VERSION = 4;   // 4: keys field (1.15)
 
 /** Weight given to a neuron for each *additional* chunk that matches. */
 const BREADTH_BONUS = 0.05;
@@ -70,6 +70,7 @@ const SCHEMA = {
   neuron: 'string' as const,
   name: 'string' as const,
   text: 'string' as const,
+  keys: 'string' as const,     // aliases a future question may use — facts only (1.15)
   kind: 'string' as const,     // header | fact | decision | pattern | preference
   domain: 'string' as const,
   tags: 'string' as const,
@@ -338,6 +339,63 @@ export class SearchEngine {
   }
 
   /**
+   * Several phrasings of one question, searched together and fused by
+   * reciprocal rank. The caller is a language model: it knows the synonyms a
+   * keyword index does not, and asking three ways costs it nothing. Rank 1
+   * in every list scores 1.0; a neuron seen by one list out of three scores
+   * about a third. One phrasing behaves exactly like search().
+   */
+  async searchMany(
+    queries: string[],
+    options: { domain?: string; limit?: number } = {}
+  ): Promise<SearchResult[]> {
+    const distintas = [...new Set(queries.map(q => (q || '').trim()).filter(Boolean))];
+    if (distintas.length === 0) return [];
+    if (distintas.length === 1) return this.search(distintas[0], options);
+    const limit = options.limit ?? 10;
+    const listas = await Promise.all(
+      distintas.map(q => this.search(q, { ...options, limit: Math.max(limit, 10) * 2 }))
+    );
+    type Also = { text: string; kind: string; added: string };
+    const fused = new Map<string, { score: number; best: SearchResult; bestRank: number; strong: boolean; also: Map<string, Also> }>();
+    const alsoOf = (r: SearchResult): Also => ({ text: r.matching_content, kind: r.matched_kind || '', added: r.matched_added || '' });
+    for (const lista of listas) {
+      lista.forEach((r, i) => {
+        const gain = 1 / (RRF_K + i + 1);
+        let f = fused.get(r.neuron_id);
+        if (!f) {
+          f = { score: gain, best: r, bestRank: i, strong: r.confidence === 'strong', also: new Map() };
+          fused.set(r.neuron_id, f);
+        } else {
+          f.score += gain;
+          f.strong = f.strong || r.confidence === 'strong';
+          if (i < f.bestRank) {
+            // The other list's answer becomes an also_matched line of the winner.
+            if (f.best.matching_content !== r.matching_content) f.also.set(f.best.matching_content, alsoOf(f.best));
+            f.best = r;
+            f.bestRank = i;
+          } else if (r.matching_content !== f.best.matching_content) {
+            f.also.set(r.matching_content, alsoOf(r));
+          }
+        }
+        for (const a of r.also_matched || []) f.also.set(a.text, a);
+      });
+    }
+    const escala = (RRF_K + 1) / listas.length;
+    return [...fused.values()]
+      .sort((a, b) => b.score - a.score)
+      .slice(0, limit)
+      .map(f => {
+        const r: SearchResult = { ...f.best, relevance_score: Math.round(f.score * escala * 1000) / 1000 };
+        r.confidence = f.strong ? 'strong' : 'weak';
+        const also = [...f.also.values()].filter(a => a.text !== r.matching_content).slice(0, 3);
+        if (also.length) r.also_matched = also;
+        else delete r.also_matched;
+        return r;
+      });
+  }
+
+  /**
    * Blend the vector ranking into the lexical one with reciprocal-rank
    * fusion: rank-based, so the two score scales never have to agree. A chunk
    * ranked first by both scores 1.0; one seen by a single list scores about
@@ -544,8 +602,8 @@ export class SearchEngine {
     const run = async (tolerance: number, cual: string = term) => {
       const params: any = {
         term: cual,
-        properties: ['text', 'name', 'tags'],
-        boost: { name: 2, text: 1, tags: 1 },
+        properties: ['text', 'name', 'tags', 'keys'],
+        boost: { name: 2, text: 1, tags: 1, keys: 1 },
         limit: Math.max(this.docCount, 10),
         tolerance,
       };
@@ -591,6 +649,7 @@ export class SearchEngine {
       name: neuron.name || neuron.id,
       domain: neuron.domain || 'general',
       tags,
+      keys: '',
       heat: typeof neuron.heat === 'number' ? neuron.heat : 0,
     };
 
@@ -614,6 +673,7 @@ export class SearchEngine {
         ...base,
         id: chunkId(neuron.id, fact.text),
         text: fact.text,
+        keys: (fact.keys || []).join(' '),
         kind: 'fact',
         added: fact.added || '',
       });
