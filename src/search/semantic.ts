@@ -10,7 +10,8 @@
 //   - the model is a 118 MB download (Xenova/multilingual-e5-small, int8 —
 //     the 470 MB figure that got it rejected in 1.4 was the fp32 file);
 //   - the runtime (transformers.js + onnxruntime) is ~380 MB of node modules
-//     that most users never need, and a cold load takes ~13 s per process;
+//     that most users never need, the loaded model takes ~0.5 GB of RAM,
+//     and a cold load takes ~13 s per process;
 //   - a first pass over the reference brain (5,129 chunks, 3,984 lines) takes
 //     three minutes: 20-45 ms per line by length, plus the model load.
 // So nothing here is installed, downloaded or loaded unless the user runs
@@ -34,9 +35,17 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 
-export const SEMANTIC_MODEL = 'Xenova/multilingual-e5-small';
-export const SEMANTIC_DTYPE = 'q8';
-export const SEMANTIC_DIM = 384;
+/**
+ * The default model, and the one the benchmarks measure. CRBRO_SEMANTIC_MODEL
+ * swaps in another transformers.js feature-extraction model of the e5 family
+ * (same "query: " / "passage: " prefixes, mean pooling). The vector width is
+ * read from the model's first output; stored vectors of a different model are
+ * ignored, never mixed.
+ */
+export const SEMANTIC_MODEL_DEFAULT = 'Xenova/multilingual-e5-small';
+export const SEMANTIC_DTYPE_DEFAULT = 'q8';
+export function semanticModel(): string { return process.env.CRBRO_SEMANTIC_MODEL || SEMANTIC_MODEL_DEFAULT; }
+export function semanticDtype(): string { return process.env.CRBRO_SEMANTIC_DTYPE || SEMANTIC_DTYPE_DEFAULT; }
 const BATCH = 16;
 /** e5 models are trained with these prefixes; without them quality drops. */
 const QUERY_PREFIX = 'query: ';
@@ -69,7 +78,7 @@ export function semanticStatus(): { installed: boolean; enabled: boolean; home: 
     installed: resolveRuntime() !== null,
     enabled: semanticEnabled(),
     home: semanticHome(),
-    model: `${SEMANTIC_MODEL} (${SEMANTIC_DTYPE})`,
+    model: `${semanticModel()} (${semanticDtype()})`,
   };
 }
 
@@ -88,6 +97,8 @@ export interface SemanticHit {
 
 export class SemanticIndex {
   private ids: string[] = [];
+  /** Vector width, read from the first embedding (384 for e5-small). */
+  private dim = 0;
   private pos = new Map<string, number>();
   private vectors = new Float32Array(0);
   private extractor: any = null;
@@ -120,12 +131,13 @@ export class SemanticIndex {
   async load(): Promise<void> {
     try {
       const meta = JSON.parse(await fs.readFile(this.metaPath(), 'utf8')) as Meta;
-      if (meta.model !== SEMANTIC_MODEL || meta.dim !== SEMANTIC_DIM) return;
+      if (meta.model !== semanticModel() || !(meta.dim > 0)) return;
       const buf = await fs.readFile(this.dataPath());
-      const expected = meta.ids.length * SEMANTIC_DIM * 4;
+      const expected = meta.ids.length * meta.dim * 4;
       if (buf.byteLength !== expected) return;
       this.vectors = new Float32Array(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength));
       this.ids = meta.ids;
+      this.dim = meta.dim;
       this.pos = new Map(meta.ids.map((id, i) => [id, i]));
     } catch {
       // No vectors yet, or unreadable: start empty. Embedding is incremental.
@@ -135,7 +147,7 @@ export class SemanticIndex {
   async persist(): Promise<void> {
     if (!this.dirty) return;
     await fs.mkdir(this.dir, { recursive: true });
-    const meta: Meta = { model: SEMANTIC_MODEL, dtype: SEMANTIC_DTYPE, dim: SEMANTIC_DIM, ids: this.ids };
+    const meta: Meta = { model: semanticModel(), dtype: semanticDtype(), dim: this.dim, ids: this.ids };
     const tmpMeta = this.metaPath() + '.tmp';
     const tmpData = this.dataPath() + '.tmp';
     await fs.writeFile(tmpData, Buffer.from(this.vectors.buffer, this.vectors.byteOffset, this.vectors.byteLength));
@@ -161,7 +173,7 @@ export class SemanticIndex {
         tf.env.cacheDir = path.join(semanticHome(), 'models');
         tf.env.allowLocalModels = true;
         tf.env.allowRemoteModels = true;
-        this.extractor = await tf.pipeline('feature-extraction', SEMANTIC_MODEL, { dtype: SEMANTIC_DTYPE });
+        this.extractor = await tf.pipeline('feature-extraction', semanticModel(), { dtype: semanticDtype() });
         return this.extractor;
       })().catch(err => {
         this.broken = this.broken || `semantic model failed to load: ${err instanceof Error ? err.message : String(err)}`;
@@ -181,8 +193,11 @@ export class SemanticIndex {
       const res = await extractor(batch, { pooling: 'mean', normalize: true });
       // res.data is a flat typed array of batch × dim.
       const flat: Float32Array = res.data instanceof Float32Array ? res.data : Float32Array.from(res.data);
+      const dim = flat.length / batch.length;
+      if (!this.dim) this.dim = dim;
+      else if (dim !== this.dim) throw new Error(`semantic model returned ${dim}-wide vectors, the index holds ${this.dim}`);
       for (let j = 0; j < batch.length; j++) {
-        out.push(flat.slice(j * SEMANTIC_DIM, (j + 1) * SEMANTIC_DIM));
+        out.push(flat.slice(j * this.dim, (j + 1) * this.dim));
       }
     }
     return out;
@@ -201,10 +216,10 @@ export class SemanticIndex {
     // swallowed upstream — which is why the first benchmark run showed no
     // change at all. Measure the effect, not the artefact.
     const base = this.ids.length;
-    const grown = new Float32Array((base + nuevos.length) * SEMANTIC_DIM);
+    const grown = new Float32Array((base + nuevos.length) * this.dim);
     grown.set(this.vectors, 0);
     for (let i = 0; i < nuevos.length; i++) {
-      grown.set(vecs[i], (base + i) * SEMANTIC_DIM);
+      grown.set(vecs[i], (base + i) * this.dim);
       this.pos.set(nuevos[i].id, base + i);
       this.ids.push(nuevos[i].id);
     }
@@ -219,11 +234,11 @@ export class SemanticIndex {
     for (const id of ids) if (this.pos.has(id)) gone.add(id);
     if (gone.size === 0) return 0;
     const keepIds: string[] = [];
-    const keep = new Float32Array((this.ids.length - gone.size) * SEMANTIC_DIM);
+    const keep = new Float32Array((this.ids.length - gone.size) * this.dim);
     let k = 0;
     for (let i = 0; i < this.ids.length; i++) {
       if (gone.has(this.ids[i])) continue;
-      keep.set(this.vectors.subarray(i * SEMANTIC_DIM, (i + 1) * SEMANTIC_DIM), k * SEMANTIC_DIM);
+      keep.set(this.vectors.subarray(i * this.dim, (i + 1) * this.dim), k * this.dim);
       keepIds.push(this.ids[i]);
       k++;
     }
@@ -241,8 +256,8 @@ export class SemanticIndex {
     const scores = new Float32Array(this.ids.length);
     for (let i = 0; i < this.ids.length; i++) {
       let dot = 0;
-      const off = i * SEMANTIC_DIM;
-      for (let d = 0; d < SEMANTIC_DIM; d++) dot += q[d] * this.vectors[off + d];
+      const off = i * this.dim;
+      for (let d = 0; d < this.dim; d++) dot += q[d] * this.vectors[off + d];
       scores[i] = dot;
     }
     const idx = Array.from(scores.keys()).sort((a, b) => scores[b] - scores[a]).slice(0, k);

@@ -125,7 +125,30 @@ comprensión de la pregunta. Por eso el suelo existe: por debajo de 0,84 el
 vector no distingue lo relacionado de lo que no lo es, y un fallo léxico debe
 seguir siendo un fallo, no una respuesta segura y equivocada.
 
-**Lo que cuesta:** ~380 MB de runtime + 118 MB de modelo en disco, ~13 s de
+**¿Y un modelo más grande? Medido el 03-09-2026, mismo examen**, con
+`CRBRO_SEMANTIC_MODEL` (en el repo, sin publicar todavía) y
+`node benchmarks/retrieval/models.mjs` para la columna «solo vectores»:
+
+| modelo (int8) | disco | RAM del proceso | ms/línea | solo vectores @1 / @3 | fusión con BM25, mejor suelo | distractores confiados |
+|---|--:|--:|--:|--:|--:|--:|
+| **multilingual-e5-small (defecto)** | 130 MB | +0,5 GB | 3 | 63% / 81% | **79% / 83%** (0,84) | 0 |
+| multilingual-e5-base | 283 MB | +0,8 GB | 7 | 67% / 85% | 75% / 81% (0,82) · 73% / 85% (0,79) | 1 |
+| multilingual-e5-large | 553 MB | +1,2 GB | 20 | 71% / 83% | 75% / 85% (0,83) | 0 |
+
+El grande es mejor modelo a solas (71 frente a 63 a la primera) y aun así la
+fusión con BM25 no mejora: 75 frente a 79 a la primera, 85 frente a 83 en el
+top 3, diferencias de 1 o 2 consultas sobre 48, es decir, ruido. Y falla en
+las mismas preguntas sin vocabulario compartido (alojadas, suscripciones de
+IA, copias de seguridad, pruebo). Por cuatro veces el disco, más del doble
+de RAM y seis veces el tiempo por línea, no merece la pena: el defecto sigue
+siendo el pequeño. Los cosenos de cada modelo viven en una banda distinta,
+por eso cada uno se barrió con su propio suelo. Primera carga con descarga:
+28 s el mediano, 52 s el grande; con el archivo ya en la caché del sistema,
+1 o 2 s cualquiera de los tres (los 13 s del pequeño se midieron en frío de
+verdad, la primera vez).
+
+**Lo que cuesta:** ~380 MB de runtime + 118 MB de modelo en disco, ~0,5 GB
+de RAM mientras el servidor corre con el modelo cargado, ~13 s de
 carga en frío por proceso (se calienta en segundo plano tras el boot), 20–45 ms
 por línea nueva al guardar según su longitud (el cerebro de referencia, 5.129
 chunks y 3.984 líneas sin cabeceras, tardó 3 minutos en total), y unas decenas
