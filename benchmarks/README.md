@@ -65,13 +65,70 @@ es una tabla de vocabulario medida sobre un conjunto que su autor conocía. La
 prueba limpia es la siguiente tanda de consultas nuevas, escritas sin mirar
 la tabla. Por eso el script mide con y sin (`CRBRO_SYNONYMS=0`).
 
-**Lo que sigue faltando:** los 8 fallos que quedan (con also_matched) son
-sinónimos que ninguna tabla razonable cubre — «alojadas» → un VPS de Hetzner,
-«seguridad» → Wordfence, «proveedor de email» → Mailchimp. Eso solo lo cierra
-un modelo semántico, y [seguimos sin cargar uno a sabiendas](LIMITS.md): el
-int8 de `multilingual-e5-small` pesa 118 MB, no los 472 del fp32 que se
-descartó, y sigue siendo una descarga y una latencia que no se imponen por
-defecto.
+**Lo que le faltaba al motor léxico:** los 8 fallos que quedaban (con
+also_matched) eran sinónimos que ninguna tabla razonable cubre — «alojadas» →
+un VPS de Hetzner, «seguridad» → Wordfence, «proveedor de email» → Mailchimp.
+Eso solo lo cierra un modelo semántico, y el que se descartó en 1.4 por «472
+MB» era el fp32: el int8 de `multilingual-e5-small` pesa 118 MB. Desde 1.14
+existe como **capa opcional** (`CRBRO_SEMANTIC=1` + `npx crbro-memory
+semantic install`); sin activarla, el motor es el de 1.13 byte a byte.
+
+## Retrieval con la capa semántica (1.14, `CRBRO_SEMANTIC=1`)
+
+Mismas 48 consultas, mismos 14 distractores. Vectores de
+`Xenova/multilingual-e5-small` (int8) fusionados con BM25 por rango recíproco
+(RRF, k=60). Un candidato que solo trae el vector se descarta por debajo de
+un suelo de coseno, y se marca `strong` a partir de 0.86.
+
+| | recall@1 | recall@3 | MRR | distractores con score de acierto |
+|---|--:|--:|--:|--:|
+| motor léxico 1.13 | 71% | 77% | 0.744 | 2 / 14 |
+| solo vectores | 60% | 83% | — | — |
+| **fusión, suelo 0.84 (defecto)** | **79%** | **83%** | **0.813** | **0 / 14** |
+
+Con `also_matched`: **88% @1 · 92% @3**. Distractores: 12 de 14 devuelven
+algo, 11 de esos 12 marcados `weak`, ninguno con score de acierto. Top-1
+reales marcados `strong`: 35/48.
+
+**El barrido del suelo, sin maquillar** (es el número que decide qué candidato
+puramente semántico se muestra, y se eligió mirando este mismo conjunto):
+
+| suelo | recall@1 | recall@3 | MRR | distractores confiados |
+|--:|--:|--:|--:|--:|
+| 0.80 | 75% | 79% | 0.781 | 2 |
+| 0.83 | 75% | 83% | 0.785 | 0 |
+| **0.84** | **79%** | **83%** | **0.813** | **0** |
+| 0.85 | 69% | 77% | 0.729 | 0 |
+| 0.86 | 77% | 79% | 0.781 | 1 |
+
+La curva no es monótona y 48 consultas son pocas: el 0.84 es un valor
+**ajustado sobre el conjunto de prueba**, no un resultado a ciegas. La razón
+de fondo está en el modelo: e5-small comprime los cosenos de todo, relacionado
+o no, en ~0.82–0.92 (top-1 reales: mínimo 0.833, mediana 0.864; top-1 de
+distractores: mediana 0.832, máximo 0.841), así que el suelo tiene que
+sentarse a milésimas del techo de los distractores. Se puede mover con
+`CRBRO_SEMANTIC_FLOOR`. La prueba limpia es, otra vez, la siguiente tanda de
+consultas nuevas.
+
+**Lo que el modelo NO hace, medido aparte:** paráfrasis abstractas sin
+vocabulario compartido. Con 7 hechos y 8 consultas escritas sin ninguna
+palabra del hecho («qué máquina sirve las páginas» para el VPS de Hetzner,
+«renovación del candado https» para certbot, «resguardo de la información por
+si se pierde» para las copias en B2), todos los cosenos caen en la banda
+0,80–0,84 y el orden es casi aleatorio: la primera consulta pone el formulario
+de contacto por delante del VPS y la segunda pone el blog por delante de
+certbot. Los tres fallos léxicos que la capa recupera en el benchmark
+comparten vocabulario concreto con el hecho («formulario de contacto…»,
+«coste del hosting…», «inversión en ads…»): lo que aporta e5-small aquí es
+tolerancia a variaciones de vocabulario concreto y a entidades, no
+comprensión de la pregunta. Por eso el suelo existe: por debajo de 0,84 el
+vector no distingue lo relacionado de lo que no lo es, y un fallo léxico debe
+seguir siendo un fallo, no una respuesta segura y equivocada.
+
+**Lo que cuesta:** ~380 MB de runtime + 118 MB de modelo en disco, ~13 s de
+carga en frío por proceso (se calienta en segundo plano tras el boot), ~18 ms
+por línea nueva al guardar, y unas decenas de ms por consulta. Por eso es
+opcional y va a seguir siéndolo.
 
 ## Security — el filtro de redacción
 

@@ -247,6 +247,8 @@ export interface SearchResult {
    * much to trust it.
    */
   confidence?: 'strong' | 'weak';
+  /** Cosine similarity from the opt-in semantic layer, when it saw this chunk. */
+  semantic_score?: number;
   /**
    * The next best live chunks of the same neuron, for the top results only —
    * one neuron can answer with more than one line, and the line you need is

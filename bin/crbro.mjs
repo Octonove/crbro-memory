@@ -309,6 +309,75 @@ if (command === 'init') {
     console.log('');
   }).catch(console.error);
 
+} else if (command === 'semantic') {
+  // ─── Opt-in semantic layer: install the runtime, embed the brain, status ─
+  //
+  // Nothing semantic exists until the user runs `semantic install` AND sets
+  // CRBRO_SEMANTIC=1 in the server's env. The runtime (~380 MB with
+  // onnxruntime) and the model (~118 MB) live in ~/.crbro/.semantic, once per
+  // machine, outside the package — most users never need either.
+  const sub = args[1];
+  import('../dist/search/semantic.js').then(async (sem) => {
+    if (sub === 'install') {
+      const { spawnSync } = await import('child_process');
+      const fs = await import('fs');
+      const home = sem.semanticHome();
+      fs.mkdirSync(home, { recursive: true });
+      const pkg = join(home, 'package.json');
+      if (!fs.existsSync(pkg)) {
+        fs.writeFileSync(pkg, JSON.stringify({ name: 'crbro-semantic', private: true }, null, 2));
+      }
+      console.log('');
+      console.log(`  ⬇️  Installing transformers.js into ${home} (~380 MB with onnxruntime)...`);
+      const r = spawnSync('npm', ['install', '--no-audit', '--no-fund', '@huggingface/transformers@3'],
+        { cwd: home, stdio: 'inherit', shell: true });
+      if (r.status !== 0) {
+        console.log('  ❌ npm install failed. Nothing else changed.');
+        process.exit(1);
+      }
+      console.log('');
+      console.log(`  ✅ Runtime installed. The model (${sem.SEMANTIC_MODEL}, ~118 MB) downloads on first use.`);
+      console.log('     1. Add CRBRO_SEMANTIC=1 to the env of the crbro MCP server in your client config.');
+      console.log('     2. Run once:  npx crbro-memory semantic build   (embeds the whole brain)');
+      console.log('     Recall stays lexical until both are done; new lines are embedded as they are saved.');
+      console.log('');
+    } else if (sub === 'build') {
+      process.env.CRBRO_SEMANTIC = '1';
+      const st = sem.semanticStatus();
+      if (!st.installed) {
+        console.log('');
+        console.log('  ❌ Runtime not installed. Run: npx crbro-memory semantic install');
+        console.log('');
+        return;
+      }
+      const [{ Brain }, { SearchEngine }] = await Promise.all([
+        import('../dist/engine/brain.js'),
+        import('../dist/search/index.js'),
+      ]);
+      const brain = new Brain();
+      const engine = new SearchEngine(brain);
+      console.log('');
+      console.log('  🧭 Embedding the brain (first run also downloads the model, ~118 MB)...');
+      const started = Date.now();
+      const n = await engine.rebuild();
+      await engine.persist();
+      const seconds = ((Date.now() - started) / 1000).toFixed(1);
+      console.log(`  ✅ ${n} chunks indexed · ${engine.semanticCount()} vectors stored · ${seconds}s`);
+      console.log('     From now on each new line is embedded when it is saved.');
+      console.log('');
+    } else {
+      const st = sem.semanticStatus();
+      console.log('');
+      console.log('  🧭 CRBRO semantic layer (opt-in)');
+      console.log('  ─────────────────────────────────');
+      console.log(`  Runtime:  ${st.installed ? '✅ installed' : '❌ not installed  →  npx crbro-memory semantic install'}`);
+      console.log(`  Enabled:  ${st.enabled ? '✅ CRBRO_SEMANTIC=1' : '⚪ off  →  set CRBRO_SEMANTIC=1 in the server env'}`);
+      console.log(`  Home:     ${st.home}`);
+      console.log(`  Model:    ${st.model}`);
+      console.log('');
+    }
+  }).catch(console.error);
+
 } else if (command === 'eval') {
   // ─── Measure retrieval quality against a query set ─────────────
   //
@@ -491,6 +560,11 @@ if (command === 'init') {
   console.log('  Search:');
   console.log('    npx crbro-memory reindex          Rebuild the search index');
   console.log('    npx crbro-memory eval             Measure retrieval against .crbro/.eval/queries.json');
+  console.log('');
+  console.log('  Semantic layer (opt-in, ~500 MB on disk, measured in benchmarks/):');
+  console.log('    npx crbro-memory semantic install Install transformers.js into ~/.crbro/.semantic');
+  console.log('    npx crbro-memory semantic build   Embed the whole brain once (needs CRBRO_SEMANTIC=1)');
+  console.log('    npx crbro-memory semantic status  Runtime, model and whether it is enabled');
   console.log('');
   console.log('  Server:');
   console.log('    npx crbro-memory                  Start MCP server (stdio)');

@@ -2,6 +2,70 @@
 
 All notable changes to CRBRO.
 
+## [1.14.0] — 2026-09-03
+
+### The semantic layer — opt-in, measured
+
+After 1.13 the blind retrieval benchmark had 8 misses left (counting
+`also_matched`), every one a paraphrase no synonym table reasonably covers:
+"alojadas" for a Hetzner VPS, "seguridad" for Wordfence, "proveedor de
+email" for Mailchimp. That is what an embedding model is for — and 1.4
+rejected one over a 472 MB download. The number was wrong: that was the
+fp32 file. The int8 build of `Xenova/multilingual-e5-small` is 118 MB.
+
+So it ships, but opt-in, and it stays opt-in for three measured reasons:
+the runtime (transformers.js + onnxruntime) is ~380 MB of node modules,
+the model is 118 MB, and a cold load takes ~13 s per process. Nothing is
+installed, downloaded or loaded unless you run `npx crbro-memory semantic
+install` **and** set `CRBRO_SEMANTIC=1`. Without both, `src/search/semantic.ts`
+is dead code and recall is the 1.13 engine byte for byte (verified: the
+benchmark prints identical numbers with the variable unset).
+
+- `crbro-memory semantic install | build | status`. The runtime and the
+  model live in one machine-level home (`~/.crbro/.semantic`), outside the
+  package; the vectors live next to the search index (`.search/vectors.f32`
+  + `vectors.meta.json`, float32, keyed by chunk id).
+- Ids are content hashes, so re-indexing a neuron embeds only its new lines
+  (~18 ms each on a laptop). `semantic build` embeds the whole brain once —
+  the 5,124-chunk reference brain takes about a minute and a half.
+- Fusion is reciprocal-rank (`RRF_K` 60): rank-based, so the two score scales
+  never have to agree. Vector-only candidates below a cosine floor are
+  dropped; headers are never surfaced by vector alone; a vector-only match
+  is `strong` from cosine 0.86. Results the vectors ranked carry
+  `semantic_score`.
+- The model warms in the background after boot, off the critical path.
+- Every failure — runtime missing, model download failing, a corrupt vector
+  file — degrades to "no semantic layer", never to "no recall".
+
+Measured on the frozen blind set (48 queries, 14 distractors):
+
+| | recall@1 | recall@3 | MRR | distractors at a hit's score |
+|---|--:|--:|--:|--:|
+| 1.13 lexical | 71% | 77% | 0.744 | 2 / 14 |
+| vectors alone | 60% | 83% | — | — |
+| **1.14 fused, floor 0.84** | **79%** | **83%** | **0.813** | **0 / 14** |
+
+With `also_matched`: 88% / 92%. Honest caveats, also in `benchmarks/README.md`:
+the floor (0.84) was chosen by sweeping it on this same set — 0.80 gives
+75/79, 0.85 gives 69/77, 0.86 gives 77/79, so the curve is not monotonic and
+48 queries is a small sample; and e5-small compresses cosines into
+~0.82–0.92 for everything, related or not, which is why the floor sits so
+close to the distractors' ceiling (0.841). And the model does not understand
+the question: queries sharing no concrete word with the stored line land in
+a flat 0.80–0.84 band with near-random ordering (7 lines × 8 such questions,
+measured) — the gain is tolerance to vocabulary variation and entities, not
+paraphrase, which is exactly why the floor exists.
+
+### Also
+
+- `upsert` had an offset bug that threw a `RangeError` swallowed upstream,
+  so the first fused benchmark run showed no change at all. Measure the
+  effect, not the artefact.
+- 5 new tests (185 total); the four that need the model are skipped where
+  the runtime is not installed — no test suite should download 500 MB. Their
+  assertions rest on measured cosines, after a first draft that guessed one
+  and had it backwards.
+
 ## [1.13.0] — 2026-09-03
 
 ### Retrieval — the right neuron now answers with the right line

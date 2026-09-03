@@ -14,11 +14,13 @@
 // search-by-name working). Scoring runs per term and recombines, so a neuron
 // wins by having ONE chunk that covers the query, not by being short.
 
-import { create, insert, search, remove, save, load } from '@orama/orama';
+import { create, insert, search, remove, save, load, getByID } from '@orama/orama';
 import type { AnyOrama, RawData } from '@orama/orama';
+import path from 'node:path';
 import { readJSON, writeJSON, listJSONFiles, fileExists, deleteJSON, fileMtime, newestMtime } from '../utils/fs.js';
 import { chunkId } from '../utils/hash.js';
 import { queryTerms, variants } from './tokenize.js';
+import { SemanticIndex, semanticEnabled, type SemanticHit } from './semantic.js';
 import { entryId } from '../sync/ops.js';
 import type { Brain } from '../engine/brain.js';
 import type { Neuron, SearchResult, Fact } from '../types/index.js';
@@ -42,6 +44,26 @@ const COVERAGE_EXPONENT = 1.5;
 const PERSIST_DEBOUNCE_MS = 5000;
 /** How many of the top results also carry their neuron's next best chunks. */
 const ALSO_MATCHED_RESULTS = 3;
+/** Semantic fusion (opt-in): candidates asked of the vector index per query. */
+const SEMANTIC_CANDIDATES = 40;
+/** Reciprocal-rank fusion constant. 60 is the paper's value; results are not sensitive to it. */
+const RRF_K = 60;
+/**
+ * Below this cosine a vector-only candidate is not surfaced. e5-small
+ * compresses cosines into roughly 0.80-0.92: unrelated text sits at
+ * 0.80-0.84 (distractor top-1 median 0.832, max 0.841 on the benchmark), so
+ * anything under this line would be the false-confidence failure the
+ * retrieval benchmark measures against. Chosen by sweeping the benchmark's
+ * own set — a tuned number, documented as such.
+ */
+const SEMANTIC_FLOOR_DEFAULT = 0.84;
+/** Read at query time, not import time, so a test or a sweep can move it. */
+function semanticFloor(): number {
+  const v = Number(process.env.CRBRO_SEMANTIC_FLOOR);
+  return Number.isFinite(v) && v > 0 && v <= 1 ? v : SEMANTIC_FLOOR_DEFAULT;
+}
+/** At or above this cosine a vector-only match is reported as strong. */
+const SEMANTIC_STRONG = 0.86;
 
 const SCHEMA = {
   id: 'string' as const,       // "<neuron_id>#<hash>"  — must be `id` for Orama
@@ -70,6 +92,8 @@ interface ChunkHit {
   heat: number;
   score: number;
   matched: number;
+  /** Cosine from the semantic layer, when it ranked this chunk. */
+  semantic?: number;
 }
 
 export class SearchEngine {
@@ -88,7 +112,25 @@ export class SearchEngine {
    */
   private chunksByNeuron = new Map<string, Set<string>>();
 
-  constructor(private brain: Brain) {}
+  /**
+   * The opt-in semantic layer: CRBRO_SEMANTIC=1 plus
+   * `npx crbro-memory semantic install`. Null when off — every path below
+   * then behaves exactly as the lexical engine alone.
+   */
+  private semantic: SemanticIndex | null = null;
+  /** Chunks inserted since the last embedding pass: id → text. */
+  private pendingEmbed = new Map<string, string>();
+
+  constructor(private brain: Brain) {
+    if (semanticEnabled()) {
+      this.semantic = new SemanticIndex(path.dirname(brain.paths.chunksIndex()));
+    }
+  }
+
+  /** Vectors held by the semantic layer (0 when it is off). */
+  semanticCount(): number {
+    return this.semantic ? this.semantic.count() : 0;
+  }
 
   // ─── Lifecycle ─────────────────────────────────────────────────
 
@@ -102,6 +144,12 @@ export class SearchEngine {
    * ourselves is the only reliable guard.
    */
   async init(): Promise<void> {
+    if (this.semantic) {
+      await this.semantic.load();
+      // Warm the model off the critical path: boot returns at once and the
+      // first recall waits only for what is left of the ~13 s cold load.
+      if (this.semantic.count() > 0) this.semantic.warm();
+    }
     const indexPath = this.brain.paths.chunksIndex();
 
     if (await fileExists(indexPath)) {
@@ -165,6 +213,7 @@ export class SearchEngine {
       }
     }
 
+    await this.flushEmbeddings();
     await this.persist();
     await this.dropLegacyIndex();
     return this.docCount;
@@ -179,6 +228,8 @@ export class SearchEngine {
 
     await this.removeNeuronChunks(neuron.id);
     await this.insertNeuronChunks(neuron);
+    // Ids are content hashes: only the neuron's NEW lines get embedded.
+    await this.flushEmbeddings();
     this.markDirty();
   }
 
@@ -194,6 +245,9 @@ export class SearchEngine {
     // ~25% of both size and write time for something no human reads.
     await writeJSON(this.brain.paths.chunksIndex(), payload, { pretty: false });
     this.dirty = false;
+    if (this.semantic) {
+      try { await this.semantic.persist(); } catch { /* vectors are derived data; recall survives */ }
+    }
   }
 
   /** Flush if there are unsaved changes. Called on consolidate/shutdown. */
@@ -256,14 +310,24 @@ export class SearchEngine {
       }
     }
 
-    if (perChunk.size === 0) return [];
-
-    // Coverage weighting, then group chunks by neuron, best first.
-    const byNeuron = new Map<string, ChunkHit[]>();
-
+    // Coverage weighting: a chunk matching five of six terms beats a scrap
+    // matching one.
     for (const chunk of perChunk.values()) {
       const coverage = chunk.matched / terms.length;
       chunk.score = chunk.score * Math.pow(coverage, COVERAGE_EXPONENT);
+    }
+
+    // Semantic fusion — only when the opt-in layer is installed, enabled and
+    // holds vectors. Off, this is a no-op and the scores above stand.
+    if (this.semantic && this.semantic.ready() && this.semantic.count() > 0) {
+      await this.fuseSemantic(query, perChunk, options?.domain);
+    }
+
+    if (perChunk.size === 0) return [];
+
+    // Group chunks by neuron, best first.
+    const byNeuron = new Map<string, ChunkHit[]>();
+    for (const chunk of perChunk.values()) {
       const list = byNeuron.get(chunk.neuron);
       if (list) list.push(chunk);
       else byNeuron.set(chunk.neuron, [chunk]);
@@ -271,6 +335,68 @@ export class SearchEngine {
     for (const list of byNeuron.values()) list.sort((a, b) => b.score - a.score);
 
     return this.materializeResults([...byNeuron.values()], limit, terms.length);
+  }
+
+  /**
+   * Blend the vector ranking into the lexical one with reciprocal-rank
+   * fusion: rank-based, so the two score scales never have to agree. A chunk
+   * ranked first by both scores 1.0; one seen by a single list scores about
+   * half. Vector-only candidates below the cosine floor are dropped, and the
+   * header chunks (name + tags) are never surfaced by vector alone.
+   */
+  private async fuseSemantic(
+    query: string,
+    perChunk: Map<string, ChunkHit>,
+    domain?: string
+  ): Promise<void> {
+    let sem: SemanticHit[];
+    try {
+      sem = await this.semantic!.query(query, SEMANTIC_CANDIDATES);
+    } catch {
+      return;   // the semantic layer never breaks recall
+    }
+    const floor = semanticFloor();
+    sem = sem.filter(h => h.score >= floor);
+    if (sem.length === 0) return;
+
+    for (const h of sem) {
+      if (perChunk.has(h.id)) continue;
+      let doc: any;
+      try { doc = await getByID(this.db as AnyOrama, h.id); } catch { doc = undefined; }
+      if (!doc || doc.kind === 'header') continue;
+      if (domain && doc.domain !== domain) continue;
+      perChunk.set(h.id, {
+        neuron: doc.neuron, name: doc.name, domain: doc.domain, text: doc.text,
+        kind: doc.kind, added: doc.added, heat: doc.heat || 0, score: 0, matched: 0,
+      });
+    }
+
+    const lex = [...perChunk.entries()]
+      .filter(([, c]) => c.matched > 0)
+      .sort((a, b) => b[1].score - a[1].score);
+    const lexRank = new Map(lex.map(([id], i) => [id, i + 1]));
+    const semRank = new Map(sem.map((h, i) => [h.id, i + 1]));
+    const semScore = new Map(sem.map(h => [h.id, h.score]));
+    const top = 2 / (RRF_K + 1);
+    for (const [id, chunk] of perChunk) {
+      const l = lexRank.get(id);
+      const s = semRank.get(id);
+      chunk.score = ((l ? 1 / (RRF_K + l) : 0) + (s ? 1 / (RRF_K + s) : 0)) / top;
+      if (s !== undefined) chunk.semantic = semScore.get(id);
+    }
+  }
+
+  /** Embed the chunks inserted since the last pass. Never throws. */
+  private async flushEmbeddings(): Promise<void> {
+    if (!this.semantic || this.pendingEmbed.size === 0) return;
+    const batch = [...this.pendingEmbed].map(([id, text]) => ({ id, text }));
+    this.pendingEmbed.clear();
+    if (!this.semantic.ready()) return;
+    try {
+      await this.semantic.upsert(batch);
+    } catch {
+      // Model missing or failing: recall stays lexical, indexing is unharmed.
+    }
   }
 
   /**
@@ -340,9 +466,10 @@ export class SearchEngine {
       // A keyword engine answers almost any question with something. The
       // label says how much of the question the answer actually covers, so
       // the reader can tell a hit from a coincidence.
-      const strong = queryTermCount <= 1
+      const lexicalStrong = queryTermCount <= 1
         ? elegido.matched >= 1
         : elegido.matched >= 2 && elegido.matched / queryTermCount >= 0.5;
+      const strong = lexicalStrong || (elegido.semantic ?? 0) >= SEMANTIC_STRONG;
 
       resultados.push({
         r: {
@@ -357,6 +484,7 @@ export class SearchEngine {
           matched_terms: elegido.matched,
           query_terms: queryTermCount,
           confidence: strong ? 'strong' : 'weak',
+          ...(elegido.semantic !== undefined ? { semantic_score: elegido.semantic } : {}),
           ...(neuron?.map?.text ? { has_map: true } : {}),
         },
         extra: contenido.filter(c => c !== elegido).slice(0, 2),
@@ -581,6 +709,11 @@ export class SearchEngine {
       this.chunksByNeuron.set(neuron, ids);
     }
     ids.add(String(doc.id));
+    // Headers are name + tags: lexical only, they would only add noise to
+    // the vector index.
+    if (this.semantic && doc.kind !== 'header') {
+      this.pendingEmbed.set(String(doc.id), String(doc.text || ''));
+    }
   }
 
   /**
@@ -605,6 +738,7 @@ export class SearchEngine {
         // Already gone.
       }
     }
+    if (this.semantic) this.semantic.remove(ids);
     this.chunksByNeuron.delete(neuronId);
   }
 
