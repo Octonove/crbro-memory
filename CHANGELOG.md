@@ -2,6 +2,36 @@
 
 All notable changes to CRBRO.
 
+## [2.0.1] — 2026-09-04
+
+### Two annotations that lied, found by the grader
+
+Glama rescanned 2.0.0 and scored the coherence of the surface 5/5 on all
+four dimensions, up from 3.5 — and in the same pass gave two tools a 1/5 on
+Behavioral Transparency for the same reason: a description that contradicts
+its own annotation. It was right, and the annotations were the bug, not the
+prose. Both are fixed here.
+
+- `crbro_inspect` declared `readOnlyHint` while `view=neuron` went through
+  `cortex.get`, which stamps `access_count` and `last_accessed`. A client
+  auto-approves a read-only call; ours wrote to the neuron file. The view now
+  reads through `cortex.peek` and touches nothing, and the payload no longer
+  carries `access_bumped`.
+- `crbro_context` declared `destructiveHint: false` while `clear` empties the
+  whole working context and `discard_pending` drops an item without recording
+  it in `recently_closed`. It now declares `true`, like `crbro_connect` since
+  2.0.
+
+**What this costs.** Heat's frequency term no longer counts reading a neuron
+by id. It never counted `crbro_recall` — the read an agent actually makes —
+so the signal was already inconsistent: heat now reflects writes and
+connectivity, in every path. Hot topics keep working; what changes is that
+looking something up no longer warms it.
+
+2.0.0's per-tool scores were `crbro_context` 3.8 and `crbro_inspect` 4.1,
+the two lowest of the fifteen, against an average of 4.7. The minimum
+carries 40% of the quality term, so these two dragged the whole server.
+
 ## [2.0.0] — 2026-09-03
 
 ### One surface of 15 tools
