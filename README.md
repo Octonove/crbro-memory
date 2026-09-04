@@ -1,16 +1,17 @@
 # 🧠 CRBRO — Persistent Neural Memory for AI
 
 [![npm](https://img.shields.io/npm/v/crbro-memory)](https://www.npmjs.com/package/crbro-memory)
-[![license](https://img.shields.io/github/license/Octonove/crbro-memory)](LICENSE)
+[![license](https://img.shields.io/github/license/Octonove/crbro-memory)](https://github.com/Octonove/crbro-memory/blob/master/LICENSE)
 [![MCP](https://img.shields.io/badge/MCP-Claude%20Code%20%C2%B7%20Claude%20Desktop%20%C2%B7%20Cursor-1E3A5F)](https://modelcontextprotocol.io)
+[![GitHub](https://img.shields.io/github/stars/Octonove/crbro-memory?logo=github&label=source)](https://github.com/Octonove/crbro-memory)
 
 **CRBRO** is a local MCP (Model Context Protocol) server that gives your AI assistant **persistent long-term memory** across sessions. It uses a biological neural architecture — cortex, synapses, hippocampus — to store, connect, and retrieve knowledge automatically.
 
-![CRBRO demo](docs/demo.gif)
+![CRBRO demo](https://raw.githubusercontent.com/Octonove/crbro-memory/master/docs/demo.gif)
 
 Free and open source (MIT). All 15 tools included — no license, no account, no tiers.
 
-> ⭐ **If CRBRO gives your AI a memory worth keeping, a star on GitHub is the best way to support it.**
+> ⭐ **If CRBRO gives your AI a memory worth keeping, a [star on GitHub](https://github.com/Octonove/crbro-memory) is the best way to support it.**
 
 ## Features
 
@@ -36,18 +37,18 @@ Free and open source (MIT). All 15 tools included — no license, no account, no
 
 ## Measured, not promised
 
-Every number below comes from a deterministic benchmark in [`benchmarks/`](benchmarks/) that runs in CI — no API calls, reproducible on your machine with `node benchmarks/<name>/run.mjs`. The unflattering ones are published on purpose.
+Every number below comes from a deterministic benchmark in [`benchmarks/`](https://github.com/Octonove/crbro-memory/tree/master/benchmarks) that runs in CI — no API calls, reproducible on your machine with `node benchmarks/<name>/run.mjs`. The unflattering ones are published on purpose.
 
 | What | Result | The honest part |
 |------|--------|-----------------|
 | **Retrieval** (48 blind paraphrased queries, written by someone who never saw the stored text) | recall@1 **71%** · recall@3 **77%** · MRR 0.74 — and **79% / 85%** counting the neuron's `also_matched` lines | Was 56% / 69% in 1.12. Of the 13 misses, 8 were the *right neuron answering with the wrong line* (its name chunk, or a sibling fact) — fixed in the engine; the rest are vocabulary gaps, which a short bilingual synonym table now closes in part. A naive substring search scores 38% / 58%. Still no semantic model: the remaining misses are listed in the benchmark output |
 | **Retrieval with the semantic layer** (same 48 queries) | recall@1 **79%** · recall@3 **83%** · MRR 0.81 — **88% / 92%** counting `also_matched` | Vectors from `multilingual-e5-small` (int8) fused with BM25 by reciprocal rank. Alone, the model scores 60% / 83%; fused, it adds 8 points at recall@1 and no distractor reaches a real hit's score (0 of 14; 12 return something, 11 of them labelled `weak`). The cosine floor under which a vector-only candidate is dropped (0.84) was picked on this same set — a tuned number, not a blind one. Costs ~500 MB on disk, ~0.5 GB of RAM while the server runs, a one-time embedding pass (~3 min for a 4k-line brain) and ~13 s of model load per process. Installed by `init` since 1.16; `CRBRO_SEMANTIC=0` turns it off *(v1.14+)* |
-| **Retrieval with the model in the loop** (same 48 queries; keywords and rewrites written blind by a model that saw only one half of the test) | keywords alone: recall@1 **83%** · recall@3 **90%** — everything on (keywords + rewrites + semantic layer): **90% / 92%**, and **96% / 98%** counting `also_matched` | The biggest lever costs nothing: 2-5 keywords written when a fact is saved close exactly the gaps no embedding model closed. Rewrites alone barely move the keyword engine (71% → 71% / 79%); they add up on top of keywords. Every configuration and the three questions still missed are in [`benchmarks/README.md`](benchmarks/README.md) *(v1.15+)* |
+| **Retrieval with the model in the loop** (same 48 queries; keywords and rewrites written blind by a model that saw only one half of the test) | keywords alone: recall@1 **83%** · recall@3 **90%** — everything on (keywords + rewrites + semantic layer): **90% / 92%**, and **96% / 98%** counting `also_matched` | The biggest lever costs nothing: 2-5 keywords written when a fact is saved close exactly the gaps no embedding model closed. Rewrites alone barely move the keyword engine (71% → 71% / 79%); they add up on top of keywords. Every configuration and the three questions still missed are in [`benchmarks/README.md`](https://github.com/Octonove/crbro-memory/blob/master/benchmarks/README.md) *(v1.15+)* |
 | **Retrieval — false confidence** (14 questions about things that are NOT stored) | 11 return *something*; **2** at a real hit's score; **10 of 11** labelled `weak` | A keyword memory answers almost anything. Every result now carries `confidence`, and the label catches nearly every distractor — at the price of also calling 18 of 48 real hits weak. Weak means "little of the question was covered", not "wrong" |
 | **Secret redaction** (20 credentials in adversarial disguises, 19 near-miss innocents) | **100%** caught · **0%** false positives | 100% on *this frozen set* — a floor, not a security proof. The set grows as new evasion shapes appear; four of its entries were misses in the first run and were fixed, not hidden |
 | **Cost** (what CRBRO adds to a session) | ~**750 tokens** at boot · **~6.5k tokens** of tool definitions · **<1 ms** local recall over 300 facts | The boot block is paid once. The 15 tool definitions (25,866 characters of description + input schema, measured with a real `tools/list` and divided by 4; 34,047 counting the output schemas of the three readers, ~8.5k tokens) are paid on every request by clients that load all tools (Claude Desktop, Cursor); Claude Code defers them and pays only for the ones it uses. Fewer tools, not fewer characters: the 23 of 1.13 measured 21,662 (~5.4k tokens), because each parameter's text now lives in the tool that absorbed it |
 
-What these benchmarks deliberately do **not** claim — human productivity, "it knows you", comparisons against other memory systems — is written down in [`benchmarks/LIMITS.md`](benchmarks/LIMITS.md).
+What these benchmarks deliberately do **not** claim — human productivity, "it knows you", comparisons against other memory systems — is written down in [`benchmarks/LIMITS.md`](https://github.com/Octonove/crbro-memory/blob/master/benchmarks/LIMITS.md).
 
 ## Quick Start
 
@@ -164,7 +165,7 @@ any matcher in `~/.claude/settings.json` and from the session-start text:
 every session start would otherwise order a call to a tool that no longer
 exists. Cannot move yet? 1.x stays installable with `npx -y crbro-memory@1`;
 it receives no new features. What changed inside each surviving tool is in
-[CHANGELOG.md](CHANGELOG.md).
+[CHANGELOG.md](https://github.com/Octonove/crbro-memory/blob/master/CHANGELOG.md).
 
 ## Credentials
 
@@ -316,9 +317,9 @@ npx crbro-memory semantic build       # embed an existing brain once (a 4k-line 
 
 Every new line is embedded when it is saved (ids are content hashes, so nothing is embedded twice), the model warms in the background after boot, and `crbro_recall` fuses both rankings by reciprocal rank. Results the vectors ranked carry `semantic_score`; a vector-only match is `strong` from cosine 0.86. With `CRBRO_SEMANTIC=0`, or without the runtime, no vectors are read and no model is loaded: recall is the keyword engine byte for byte.
 
-The model is `multilingual-e5-small` and stays so on purpose. `CRBRO_SEMANTIC_MODEL` accepts any e5-family model, and `e5-base` and `e5-large` were measured on the same benchmark: the large one is the better model alone (71% vs 63% recall@1) but fused with the keyword engine it scores the same or worse (75% / 85% vs 79% / 83%) for 4× the disk, 1.2 GB of RAM and 6× the time per line. The table is in [`benchmarks/README.md`](benchmarks/README.md).
+The model is `multilingual-e5-small` and stays so on purpose. `CRBRO_SEMANTIC_MODEL` accepts any e5-family model, and `e5-base` and `e5-large` were measured on the same benchmark: the large one is the better model alone (71% vs 63% recall@1) but fused with the keyword engine it scores the same or worse (75% / 85% vs 79% / 83%) for 4× the disk, 1.2 GB of RAM and 6× the time per line. The table is in [`benchmarks/README.md`](https://github.com/Octonove/crbro-memory/blob/master/benchmarks/README.md).
 
-What it buys on the frozen benchmark, and what it does not, is in the table above and in [`benchmarks/README.md`](benchmarks/README.md) — including the fact that the 0.84 cosine floor was chosen on that same set. One limit worth knowing before you install 500 MB: the model does not understand the question. Queries that share no concrete word with the stored line ("which machine serves the pages" for a fact about a Hetzner VPS) land in a flat 0.80–0.84 cosine band with near-random ordering — measured, and the reason the floor exists. What it adds is tolerance to vocabulary variation and to entities, which is where the benchmark gain comes from.
+What it buys on the frozen benchmark, and what it does not, is in the table above and in [`benchmarks/README.md`](https://github.com/Octonove/crbro-memory/blob/master/benchmarks/README.md) — including the fact that the 0.84 cosine floor was chosen on that same set. One limit worth knowing before you install 500 MB: the model does not understand the question. Queries that share no concrete word with the stored line ("which machine serves the pages" for a fact about a Hetzner VPS) land in a flat 0.80–0.84 cosine band with near-random ordering — measured, and the reason the floor exists. What it adds is tolerance to vocabulary variation and to entities, which is where the benchmark gain comes from.
 
 ### Measuring retrieval
 
@@ -340,4 +341,4 @@ see what it got wrong instead of guessing.
 
 ## License
 
-MIT — see [LICENSE](LICENSE). Built by [Octonove](https://github.com/Octonove).
+MIT — see [LICENSE](https://github.com/Octonove/crbro-memory/blob/master/LICENSE). Built by [Octonove](https://github.com/Octonove).
