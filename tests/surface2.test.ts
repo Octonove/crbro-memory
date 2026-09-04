@@ -139,14 +139,26 @@ describe('crbro_inspect', () => {
     expect(filtered.connection_ids).toEqual([b]);   // the raw list is not filtered
   });
 
-  it('view=neuron resolves by name too and bumps access_count on every read', async () => {
-    const id = (await learn('Bump Access', 'fact', 'Leerme sube el contador de accesos.')).neuron_id;
+  // 2.0.1: the view declares readOnlyHint, so it goes through cortex.peek and
+  // writes nothing. Heat keeps its frequency signal from the write paths;
+  // crbro_recall, the read an agent actually makes, never bumped either.
+  it('view=neuron resolves by name too and leaves the neuron untouched', async () => {
+    const id = (await learn('Solo Lectura', 'fact', 'Leerme no debe tocar el contador de accesos.')).neuron_id;
     const first = await inspectNeuron(id);
-    const second = await inspectNeuron('Bump Access');
+    const second = await inspectNeuron('Solo Lectura');
     expect(second.id).toBe(id);
-    expect(second.access_bumped).toBe(true);
-    expect(second.access_count).toBe(first.access_count + 1);
-    expect(second.last_accessed >= first.last_accessed).toBe(true);
+    expect(second.access_bumped).toBeUndefined();
+    expect(second.access_count).toBe(first.access_count);
+    expect(second.last_accessed).toBe(first.last_accessed);
+
+    // The file on disk is untouched too, not just the payload.
+    const before = await learn('Solo Lectura', 'fact', 'Un hecho más para fijar el contador.');
+    const afterWrite = await inspectNeuron(id);
+    await inspectNeuron(id);
+    await inspectNeuron(id);
+    const afterReads = await inspectNeuron(id);
+    expect(afterReads.access_count).toBe(afterWrite.access_count);
+    expect(before.neuron_id).toBe(id);
   });
 
   it('view=neuron without `neuron` and with an unknown name answers with isError', async () => {

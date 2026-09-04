@@ -248,10 +248,10 @@ export function createServer(): McpServer {
     'crbro_inspect',
     {
       title: 'Inspect the brain',
-      description: 'Read-only views of the brain by id or name; to search by content use crbro_recall. Nothing is written except in view=neuron, which bumps that neuron\'s access_count and last_accessed. view=status: version, brain path, totals, last boot/consolidation, semantic state, hot_topics_recalculated. view=neuron: one neuron in full — facts newest first, paged with limit/offset (superseded hidden unless include_superseded), decisions, patterns, preferences, errors, debts, entry_status, system map, and its connections resolved with name, type and strength (min_strength filters). view=neurons: rows hottest first (id, name, domain, type, heat, last_accessed, facts_count), filtered by domain, type, min_heat, paged with limit/offset. view=sessions: day logs newest first, the only place session summaries are read. view=global_map: one cluster per domain plus cross-domain bridges, computed live. Params of other views are ignored.',
+      description: 'Read-only views of the brain by id or name; to search by content use crbro_recall. Nothing is written by any view: every read leaves the brain untouched. view=status: version, brain path, totals, last boot/consolidation, semantic state, hot_topics_recalculated. view=neuron: one neuron in full — facts newest first, paged with limit/offset (superseded hidden unless include_superseded), decisions, patterns, preferences, errors, debts, entry_status, system map, and its connections resolved with name, type and strength (min_strength filters). view=neurons: rows hottest first (id, name, domain, type, heat, last_accessed, facts_count), filtered by domain, type, min_heat, paged with limit/offset. view=sessions: day logs newest first, the only place session summaries are read. view=global_map: one cluster per domain plus cross-domain bridges, computed live. Params of other views are ignored.',
       inputSchema: {
         view: z.enum(INSPECT_VIEWS).describe('Which read to perform. Only the params listed for that view are honoured; the rest are ignored, never an error.'),
-        neuron: z.string().optional().describe('view=neuron only, required there: neuron id (e.g. "project_octochat") or name (e.g. "OctoChat"). Reading bumps access_count and last_accessed.'),
+        neuron: z.string().optional().describe('view=neuron only, required there: neuron id (e.g. "project_octochat") or name (e.g. "OctoChat").'),
         domain: z.string().optional().describe('view=neurons: exact domain match, e.g. "proyectos-web".'),
         type: z.enum(NEURON_TYPES).optional().describe('view=neurons: only this neuron type.'),
         min_heat: z.number().min(0).max(1).optional().describe('view=neurons: minimum heat, 0.0-1.0. Heat blends access frequency, recency and connectivity.'),
@@ -329,12 +329,15 @@ export function createServer(): McpServer {
           if (!args.neuron) {
             return textResult('view=neuron needs `neuron`: a neuron id or name.', true);
           }
-          // Try by id first, then by name; cortex.get is the read that bumps
-          // access stats, and it is used on purpose (heat feeds on reads).
-          let neuron = await cortex.get(args.neuron);
+          // peek, not get: a tool that declares readOnlyHint must not write.
+          // get() stamps last_accessed and access_count, which made this view
+          // contradict its own annotation. Heat keeps its frequency signal from
+          // the write paths (learn, map), and crbro_recall — the read an agent
+          // actually makes — never bumped either.
+          let neuron = await cortex.peek(args.neuron);
           if (!neuron) {
             const found = await cortex.findByName(args.neuron);
-            if (found) neuron = await cortex.get(found.id);
+            if (found) neuron = await cortex.peek(found.id);
           }
           if (!neuron) {
             return textResult(
@@ -369,7 +372,6 @@ export function createServer(): McpServer {
               order: 'newest first',
               hidden_superseded: (neuron.facts || []).length - visible.length,
             },
-            access_bumped: true,
           });
         }
 
@@ -913,7 +915,9 @@ export function createServer(): McpServer {
         discard_pending: z.string().optional().describe('Drop an open item by id or 8+ characters of its text WITHOUT recording it as done (it never appears in recently_closed). Same matcher as resolve_pending; matches come back in discarded.'),
         clear: z.boolean().optional().describe('Empty active_topics, pending_tasks and recently_closed. Runs before the other updates in the same call.'),
       },
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      // clear empties the whole working context and discard_pending drops an
+      // item without recording it: destructive, whatever the common path does.
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
     },
     async (args) => {
       try {
@@ -938,7 +942,7 @@ export function createServer(): McpServer {
     'crbro_map',
     {
       title: 'System map',
-      description: 'Read or replace a neuron\'s system map: ONE living document — where the system lives, what serves what, which pieces talk to each other, the traps that cost hours. crbro_inspect view=neuron already returns the map; use crbro_map to read it alone without bumping access stats, or to rewrite it. Omit content to read (map:null if none); content replaces the previous version entirely (append-only maps rot); an empty string clears it. Read it before working on a system touched in past sessions; after changing the system rewrite the whole map. Reading never creates a neuron, writing does. Credentials are redacted on write. Atomic facts belong in crbro_learn — the map is the prose around them.',
+      description: 'Read or replace a neuron\'s system map: ONE living document — where the system lives, what serves what, which pieces talk to each other, the traps that cost hours. crbro_inspect view=neuron already returns the map; use crbro_map to read it alone, or to rewrite it. Omit content to read (map:null if none); content replaces the previous version entirely (append-only maps rot); an empty string clears it. Read it before working on a system touched in past sessions; after changing the system rewrite the whole map. Reading never creates a neuron, writing does. Credentials are redacted on write. Atomic facts belong in crbro_learn — the map is the prose around them.',
       inputSchema: {
         neuron: z.string().describe('Neuron id or name, e.g. "project_octochat" or "OctoChat".'),
         content: z.string().optional().describe('The new map, replacing the old one whole; omit to read. Write the reference you will need next time: paths, ids, what-serves-what, gotchas. An empty string clears the map.'),

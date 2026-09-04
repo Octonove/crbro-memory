@@ -24,7 +24,7 @@ let client: Client;
 let tools: any[];
 
 const READ_ONLY = ['crbro_inspect', 'crbro_recall', 'crbro_audit'];
-const DESTRUCTIVE = ['crbro_maintenance', 'crbro_map', 'crbro_secret', 'crbro_forget', 'crbro_connect'];
+const DESTRUCTIVE = ['crbro_maintenance', 'crbro_map', 'crbro_secret', 'crbro_forget', 'crbro_connect', 'crbro_context'];
 const STRUCTURED = ['crbro_inspect', 'crbro_recall', 'crbro_audit'];
 const RETIRED = [
   'crbro_status', 'crbro_neuron', 'crbro_neurons', 'crbro_hot_topics', 'crbro_connections',
@@ -163,7 +163,7 @@ describe('tools/call', () => {
     expect(r.structuredContent.results[0].confidence).toBe('strong');
   });
 
-  it('crbro_inspect view=neuron reads one neuron by id and bumps access', async () => {
+  it('crbro_inspect view=neuron reads one neuron by id and writes nothing', async () => {
     const learned = body(await client.callTool({ name: 'crbro_learn', arguments: {
       topic: 'Hosting', type: 'decision', content: 'Los backups nocturnos van a Backblaze B2.',
     } }));
@@ -171,8 +171,13 @@ describe('tools/call', () => {
     expect(r.isError).toBeFalsy();
     expect(r.structuredContent.view).toBe('neuron');
     expect(r.structuredContent.neuron.id).toBe(learned.neuron_id);
-    expect(r.structuredContent.neuron.access_bumped).toBe(true);
     expect(r.structuredContent.neuron.facts_pagination.order).toBe('newest first');
+    // readOnlyHint says this tool does not touch the brain, so it must not:
+    // reading twice leaves access_count and last_accessed exactly as they were.
+    expect(r.structuredContent.neuron.access_bumped).toBeUndefined();
+    const again: any = await client.callTool({ name: 'crbro_inspect', arguments: { view: 'neuron', neuron: learned.neuron_id } });
+    expect(again.structuredContent.neuron.access_count).toBe(r.structuredContent.neuron.access_count);
+    expect(again.structuredContent.neuron.last_accessed).toBe(r.structuredContent.neuron.last_accessed);
 
     const missing: any = await client.callTool({ name: 'crbro_inspect', arguments: { view: 'neuron', neuron: 'no_such_neuron' } });
     expect(missing.isError).toBe(true);
