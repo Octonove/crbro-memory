@@ -5,6 +5,7 @@
 [![MCP](https://img.shields.io/badge/MCP-Claude%20Code%20%C2%B7%20Claude%20Desktop%20%C2%B7%20Cursor-1E3A5F)](https://modelcontextprotocol.io)
 [![GitHub](https://img.shields.io/github/stars/Octonove/crbro-memory?logo=github&label=source)](https://github.com/Octonove/crbro-memory)
 [![Glama score](https://glama.ai/mcp/servers/Octonove/crbro-memory/badges/score.svg)](https://glama.ai/mcp/servers/Octonove/crbro-memory)
+[![Listed on mcpservers.org](https://mcpservers.org/badge.svg)](https://mcpservers.org/servers/octonove/crbro-memory)
 
 **CRBRO** is a local MCP (Model Context Protocol) server that gives your AI assistant **persistent long-term memory** across sessions. It uses a biological neural architecture — cortex, synapses, hippocampus — to store, connect, and retrieve knowledge automatically.
 
