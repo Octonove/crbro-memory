@@ -39,7 +39,7 @@ try {
   // Ruta del bundle RELATIVA: con shell en Windows, una ruta con espacios se
   // parte en dos argumentos y el CLI la rechaza. El destino va en la carpeta
   // temporal del sistema, que no los tiene.
-  execFileSync('npx', ['mcpb', 'unpack', path.posix.join('build', path.basename(BUNDLE)), destino], {
+  execFileSync('npx', ['--yes', '@anthropic-ai/mcpb@2.1.2', 'unpack', path.posix.join('build', path.basename(BUNDLE)), destino], {
     cwd: RAIZ, stdio: 'pipe', shell: process.platform === 'win32',
   });
 
