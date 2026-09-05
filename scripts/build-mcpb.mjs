@@ -138,14 +138,18 @@ const manifest = {
 writeFileSync(path.join(STAGING, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n');
 
 // ── 6. Validar y empaquetar ───────────────────────────────────────
+// El empaquetador se invoca con npx y versión fijada, NO como devDependency:
+// arrastra @inquirer/prompts → external-editor → tmp, con dos avisos de
+// seguridad altos sin arreglo publicado, y el CI corre npm audit. Una
+// herramienta que solo se usa al empaquetar no tiene por qué ponernos en rojo.
 paso(6, 'Validando y empaquetando');
 // Rutas RELATIVAS a propósito: la carpeta del proyecto lleva un espacio y,
 // al pasar por el intérprete de Windows, una ruta absoluta se parte en dos
 // argumentos y el CLI se queja de sobra de parámetros.
 const salidaRel = path.posix.join('build', `${pkg.name}-${pkg.version}.mcpb`);
 const salida = path.join(RAIZ, 'build', `${pkg.name}-${pkg.version}.mcpb`);
-run('npx', ['mcpb', 'validate', 'build/mcpb/manifest.json']);
-run('npx', ['mcpb', 'pack', 'build/mcpb', salidaRel]);
+run('npx', ['--yes', '@anthropic-ai/mcpb@2.1.2', 'validate', 'build/mcpb/manifest.json']);
+run('npx', ['--yes', '@anthropic-ai/mcpb@2.1.2', 'pack', 'build/mcpb', salidaRel]);
 
 const mb = (statSync(salida).size / 1048576).toFixed(2);
 console.log(`\n✅ ${path.relative(RAIZ, salida)} · ${mb} MB · ${tools.length} herramientas · v${pkg.version}`);
