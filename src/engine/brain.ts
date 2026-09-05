@@ -6,7 +6,46 @@ import { promises as fs } from 'node:fs';
 import { readJSON, writeJSON, fileExists, listJSONFiles, now } from '../utils/fs.js';
 import type { Manifest, BootResult, ActiveContext, HotTopics, Neuron, ProtocolDirective } from '../types/index.js';
 
-const CRBRO_DIR = process.env['CRBRO_PATH'] || path.join(process.env['HOME'] || process.env['USERPROFILE'] || '.', '.crbro');
+/**
+ * Where the brain lives. `CRBRO_PATH` is honoured when it is a usable
+ * absolute path; anything else falls back to `~/.crbro`, and says so.
+ *
+ * The defence exists because of a real install. A launcher that did not know
+ * the MCPB format handed the server the literal placeholder
+ * `${user_config.brain_path}` as its path. Being relative, Node resolved it
+ * against the launcher's working directory — C:\WINDOWS\system32 — and the
+ * first mkdir died with EPERM. Claude Desktop itself may pass the same
+ * placeholder when the optional folder field is left blank, which is exactly
+ * what a non-technical user does. So: a value that still contains a template
+ * hole is never a path; a relative value is resolved against the home folder,
+ * never against wherever the host happened to launch us from. Warnings go to
+ * stderr — stdout is the MCP wire.
+ */
+export function resolveBrainDir(
+  env: NodeJS.ProcessEnv = process.env,
+  warn: (msg: string) => void = (msg) => process.stderr.write(`[crbro] ${msg}\n`),
+): string {
+  const home = env['HOME'] || env['USERPROFILE'] || '.';
+  const fallback = path.join(home, '.crbro');
+  const raw = (env['CRBRO_PATH'] || '').trim();
+  if (!raw) return fallback;
+
+  if (/\$\{|%[A-Za-z_][A-Za-z0-9_]*%/.test(raw)) {
+    warn(`CRBRO_PATH contiene un hueco sin sustituir (${raw}); uso ${fallback}`);
+    return fallback;
+  }
+  if (raw === '~' || raw.startsWith('~/') || raw.startsWith('~\\')) {
+    return path.join(home, raw.slice(1));
+  }
+  if (!path.isAbsolute(raw)) {
+    const resolved = path.join(home, raw);
+    warn(`CRBRO_PATH es relativo (${raw}); lo resuelvo dentro de la carpeta personal: ${resolved}`);
+    return resolved;
+  }
+  return raw;
+}
+
+const CRBRO_DIR = resolveBrainDir();
 const MANIFEST_FILE = 'manifest.json';
 // The brain FORMAT, not the release. It moves only when the on-disk layout
 // changes in a way that needs a migration, which is why it has stayed at 1.0.0
