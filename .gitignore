@@ -4,3 +4,6 @@ dist/
 .DS_Store
 .env
 crbro-mine.bat
+
+# Paquete .mcpb generado por npm run mcpb
+build/

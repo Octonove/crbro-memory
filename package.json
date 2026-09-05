@@ -14,7 +14,9 @@
     "start": "node dist/index.js",
     "test": "vitest run",
     "test:watch": "vitest",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "npm run build",
+    "mcpb": "node scripts/build-mcpb.mjs",
+    "mcpb:verify": "node scripts/verify-mcpb.mjs"
   },
   "keywords": [
     "mcp",
@@ -27,7 +29,10 @@
     "semantic-search",
     "embeddings"
   ],
-  "author": "Synthetica Decks",
+  "author": {
+    "name": "Octonove",
+    "url": "https://github.com/Octonove"
+  },
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -49,6 +54,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@anthropic-ai/mcpb": "^2.1.2",
     "@types/node": "^25.6.0",
     "typescript": "^6.0.3",
     "vitest": "^4.1.5"

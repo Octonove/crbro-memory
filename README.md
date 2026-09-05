@@ -54,6 +54,17 @@ What these benchmarks deliberately do **not** claim — human productivity, "it 
 
 ## Quick Start
 
+### Claude Desktop: one double click
+
+Download the `.mcpb` bundle from the [latest release](https://github.com/Octonove/crbro-memory/releases/latest)
+and double-click it with Claude Desktop open. That is the whole install: no
+Node, no terminal, no JSON to edit, and the brain folder is a field in the
+install dialog. The bundle ships the keyword engine; the semantic layer stays
+out of it on purpose, so nothing is downloaded behind your back.
+
+Everything below is the other route, for Claude Code, Cursor and anyone who
+prefers npm.
+
 ### 1. Initialize
 
 Creates the brain in `~/.crbro/` and, since 1.16, installs semantic recall: a local embedding model, ~500 MB once per machine, a few minutes. Add `--no-semantic` to skip it.
@@ -340,6 +351,36 @@ each naming the neuron that should answer it:
 Then `npx crbro-memory eval` reports how often the right neuron comes back
 first, how often it makes the top three, and MRR — plus every miss, so you can
 see what it got wrong instead of guessing.
+
+## Privacy
+
+Everything CRBRO knows lives in plain JSON files on your machine, under
+`~/.crbro` or the folder you point it at. You can open them, diff them, back
+them up with git and delete them. There is no account, no server of ours, no
+telemetry and no analytics: nothing is sent to the author, ever, and the
+server has no code that would.
+
+Three things do touch the network, all of them started by you and none of
+them on by default:
+
+- **The optional semantic layer.** `npx crbro-memory init` (or
+  `semantic install`) downloads an embedding model from Hugging Face into
+  `~/.crbro/.semantic`, about 500 MB, once per machine. Skip it with
+  `init --no-semantic` and recall stays keyword-only. The desktop extension
+  never downloads it.
+- **Team spaces.** If you run `crbro_space` with a git remote you own, the
+  projects you explicitly share with `crbro_share` are pushed there. Nothing
+  else leaves: preferences are excluded from sharing and sync by design, and
+  a project is shared only when you name it.
+- **Your MCP client.** Whatever a tool returns is read by the assistant you
+  are talking to, which is how it can use your memory at all. That traffic is
+  between you and your client, not us.
+
+Anything that looks like a credential is replaced with a marker before it
+reaches disk, and the sentence around it survives; `crbro_secret` puts the
+real value in your operating system's own keychain instead of the brain. To
+erase everything, delete the folder. To see what is stored about any topic,
+read its file or call `crbro_inspect`.
 
 ## License
 
