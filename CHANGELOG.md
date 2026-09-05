@@ -2,6 +2,25 @@
 
 All notable changes to CRBRO.
 
+## [2.0.2] — 2026-09-04
+
+### A path that is still a template is not a path
+
+The first field test of the desktop extension was run in a launcher that does
+not know the MCPB format. It handed the server the literal placeholder
+`${user_config.brain_path}` as its brain folder; being relative, Node resolved
+it against the launcher's working directory, `C:\WINDOWS\system32`, and the
+first mkdir died with EPERM. Nothing was written, but nothing worked either.
+
+The same thing can happen inside Claude Desktop if the optional folder field
+is left blank, which is exactly what a non-technical user does, so the defence
+lives in the server, not in the manifest. `CRBRO_PATH` now has to be a usable
+absolute path to be honoured: a value with an unexpanded `${…}` or `%VAR%` is
+ignored with a note on stderr and the brain goes to `~/.crbro`; a relative
+value is resolved against the home folder, never against whatever directory
+the host launched us from; `~` expands. Covered by `tests/brain-path.test.ts`.
+The `.mcpb` for this version is attached to the release.
+
 ## [2.0.1] — 2026-09-04
 
 ### Two annotations that lied, found by the grader
