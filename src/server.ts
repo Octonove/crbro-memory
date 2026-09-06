@@ -29,6 +29,7 @@ import { Hippocampus } from './engine/hippocampus.js';
 import { Prefrontal } from './engine/prefrontal.js';
 import { SearchEngine } from './search/index.js';
 import { semanticStatus } from './search/semantic.js';
+import { fitToBudget } from './utils/budget.js';
 import { Maintenance } from './engine/maintenance.js';
 import {
   createSpace, joinSpace, listSpaces, readSpace, prepareShare, commitShare,
@@ -234,7 +235,16 @@ export function createServer(): McpServer {
           'the more recent. ' + THREE_STAGES + ' ' +
           'Call crbro_consolidate before the conversation ends; it logs the session too.';
 
-        return jsonResult(response);
+        // A mature brain outgrew the boot payload: on a 1,145-neuron brain it
+        // reached 81,406 characters (~20,000 tokens), three quarters of it the
+        // full text of three session summaries, and the client dumped it to a
+        // file 154 times instead of showing it. The blocks that make a session
+        // start correctly are kept whole; what grows without bound is shortened
+        // and says so, with the call that reads it in full.
+        return jsonResult(fitToBudget(response, {
+          keep: ['protocol_enforcement', 'memory_discipline', 'retired_tools', 'pending_guidance', 'semantic_hint'],
+          howToGetMore: 'Session summaries were shortened. Read one in full with crbro_inspect view=sessions.',
+        }));
       } catch (err) {
         return errorResult('boot', err);
       }
@@ -273,8 +283,11 @@ export function createServer(): McpServer {
           last_consolidation: z.string().nullable().optional(),
           semantic: z.object({ installed: z.boolean(), enabled: z.boolean(), mode: z.string(), model_downloaded: z.boolean(), home: z.string(), model: z.string() }).optional(),
           hot_topics_recalculated: z.string().nullable(),
-        }).optional(),
+        }).loose().optional(),
         neuron: z.object({}).loose().optional(),
+        // Every wrapper is loose on purpose: an oversized view comes back with
+        // a `truncated` block describing what was shortened, and a strict
+        // schema here would turn that honesty into a validation error.
         neurons: z.object({
           total: z.number(),
           offset: z.number(),
@@ -282,7 +295,7 @@ export function createServer(): McpServer {
             id: z.string(), name: z.string(), domain: z.string(), type: z.string(),
             heat: z.number(), last_accessed: z.string(), facts_count: z.number(),
           }).loose()),
-        }).optional(),
+        }).loose().optional(),
         sessions: z.object({
           total: z.number(),
           sessions: z.array(z.object({
@@ -290,23 +303,32 @@ export function createServer(): McpServer {
             topics_touched: z.array(z.string()).optional(),
             key_facts_added: z.number().optional(), decisions_made: z.number().optional(),
           }).loose()),
-        }).optional(),
+        }).loose().optional(),
         global_map: z.object({
           total_clusters: z.number(),
           total_bridges: z.number(),
           computed_at: z.string(),
           clusters: z.array(z.object({}).loose()),
           bridges: z.array(z.object({}).loose()),
-        }).optional(),
+        }).loose().optional(),
       },
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     async (args) => {
       try {
-        const done = (payload: unknown) => ({
-          content: [{ type: 'text' as const, text: JSON.stringify(payload, null, 2) }],
-          structuredContent: { view: args.view, [args.view]: payload },
-        });
+        // Every view leaves through here, so the size ceiling lives here too:
+        // a view added later inherits it without remembering to. It has to be
+        // this strict because the payload travels TWICE — once as text, once as
+        // structuredContent — so a client pays double for what a view emits.
+        const done = (payload: unknown) => {
+          const fitted = fitToBudget(payload, {
+            howToGetMore: `Ask for a slice instead of the whole: crbro_inspect view=${args.view} with limit and offset, or crbro_recall to search by content.`,
+          });
+          return {
+            content: [{ type: 'text' as const, text: JSON.stringify(fitted, null, 2) }],
+            structuredContent: { view: args.view, [args.view]: fitted },
+          };
+        };
 
         if (args.view === 'status') {
           const manifest = await brain.getManifest();
@@ -378,20 +400,23 @@ export function createServer(): McpServer {
         if (args.view === 'neurons') {
           const limit = Math.min(Math.max(args.limit ?? 50, 1), 500);
           const offset = Math.max(args.offset ?? 0, 0);
-          const rows = await cortex.list({
+          const { total, rows } = await cortex.listWithTotal({
             domain: args.domain,
             type: args.type,
             min_heat: args.min_heat,
             limit,
             offset,
           });
-          return done({ total: rows.length, offset, neurons: rows });
+          // total is what matched the filters, not what this page carries:
+          // a pager told "total: 50" on a 1,145-neuron brain stops at the first page.
+          return done({ total, offset, returned: rows.length, has_more: offset + rows.length < total, neurons: rows });
         }
 
         if (args.view === 'sessions') {
           const limit = Math.min(Math.max(args.limit ?? 10, 1), 100);
           const sessions = await hippocampus.listSessions(limit);
-          return done({ total: sessions.length, sessions });
+          const totalSessions = (await brain.getManifest()).total_sessions;
+          return done({ total: totalSessions, returned: sessions.length, sessions });
         }
 
         // view === 'global_map': computed live, never cached, nothing written.
@@ -418,13 +443,20 @@ export function createServer(): McpServer {
       title: 'Learn something',
       description: 'Write: store a fact, decision, pattern, preference, error or debt on a topic; the neuron is created if missing (or pass neuron_id). Stage 1 of the lifecycle: a new truth that REPLACES an old one → crbro_learn with supersedes (one call does both); to retire with no replacement use crbro_revise; to delete from disk use crbro_forget. crbro_recall first — it may already exist. The same fact text again is not duplicated: keywords merge (or keywords_replace) and a changed confidence applies (updated_in_place); text matching a retired fact or entry is refused with skipped_retired. Decisions always append; preferences never leave this machine. Credentials are replaced with a marker and listed in redacted — crbro_secret them, record only the name. Returns neuron_id, action, superseded count, near_duplicates (stored anyway; retire the old telling), supersedes_unmatched (still live) and totals.',
       inputSchema: {
-        topic: z.string().describe('Topic name, e.g. "OctoChat", "Firebase", "SEO Strategy".'),
+        // Optional since 2.0.3, and the reason is measured: the description
+        // told callers that neuron_id "skips name matching entirely", the
+        // schema still demanded topic, and the call died at the SDK before the
+        // handler existed — 38 times in one user's transcripts, always the same
+        // -32602 on a path the tool itself recommends. The engine never reads
+        // topic when the id resolves. Missing both is caught below, with a
+        // message that says what to pass.
+        topic: z.string().optional().describe('Topic name, e.g. "OctoChat", "Firebase", "SEO Strategy". Required UNLESS you pass neuron_id, in which case the topic is taken from that neuron.'),
         type: z.enum(['fact', 'decision', 'pattern', 'preference', 'error', 'debt']).describe('error = a mistake plus its correction, in one entry. debt = a deliberate deferral: what was NOT done on purpose, its ceiling, and the revisit condition, e.g. "DEFERRED: protecting the PDFs. CEILING: anyone can download them without signing up. REVISIT WHEN: the signup flow works."'),
         content: z.string().describe('The knowledge itself. Dense and self-contained: it is recalled without this conversation as context.'),
         confidence: z.number().min(0).max(1).optional().describe('0.0-1.0, default 1.0. Facts only. On an exact-duplicate active fact the stored confidence is updated to this value (updated_in_place:true).'),
         domain: z.string().optional().describe('Domain, e.g. "proyectos-web". Applied when the neuron is created; on an existing neuron it only replaces the default "general" (crbro_revise domain replaces it unconditionally).'),
         rationale: z.string().optional().describe('Why the decision was taken. Stored and indexed with it; ignored for other types.'),
-        neuron_id: z.string().optional().describe('Exact neuron id from crbro_recall, e.g. "project_octochat". Skips name matching entirely.'),
+        neuron_id: z.string().optional().describe('Exact neuron id from crbro_recall, e.g. "project_octochat". Skips name matching entirely, and then topic is not needed.'),
         supersedes: z.array(z.string()).optional().describe('Facts this one replaces: their ids or exact text. They leave recall but stay in the file. Unmatched targets are reported and stay live.'),
         keywords: z.array(z.string()).optional().describe('Facts only. 2-5 words a future question may use that the text does not contain: synonyms, the other language, the generic name of the product named. Indexed with the fact, never shown. The same text again with new keywords merges them.'),
         keywords_replace: z.boolean().optional().describe('When the exact fact text already exists, replace its stored keywords with `keywords` instead of merging (default false). Teammates in a shared space only ever receive the union.'),
@@ -433,7 +465,25 @@ export function createServer(): McpServer {
     },
     async (args) => {
       try {
-        const result = await cortex.learn(args.topic, args.type, args.content, {
+        // One of the two has to name a neuron. A blank topic counts as missing:
+        // "   " is truthy, and left alone it creates a neuron called nothing.
+        let topic = (args.topic ?? '').trim();
+        if (!topic) {
+          if (!args.neuron_id) {
+            return textResult(
+              'Nothing to store this on. Pass `topic` (the topic name — the neuron is created if none matches) ' +
+              'or `neuron_id` (an exact id from crbro_recall). Got neither.', true);
+          }
+          const target = await resolveNeuron(args.neuron_id);
+          if (!target) {
+            return textResult(
+              `No neuron with id "${args.neuron_id}". Find the right id with crbro_recall, ` +
+              'or pass `topic` and the neuron will be created.', true);
+          }
+          topic = target.name;
+        }
+
+        const result = await cortex.learn(topic, args.type, args.content, {
           confidence: args.confidence,
           domain: args.domain,
           rationale: args.rationale,
@@ -459,7 +509,7 @@ export function createServer(): McpServer {
         // `neuron` is only null when the caller asked not to create one,
         // which the MCP path never does. Guard anyway so the types stay honest.
         if (!result.neuron) {
-          return textResult(`No neuron matched "${args.topic}" and none was created.`);
+          return textResult(`No neuron matched "${topic}" and none was created.`);
         }
 
         return jsonResult({
@@ -537,6 +587,7 @@ export function createServer(): McpServer {
           also_matched: z.array(z.object({ text: z.string(), kind: z.string(), added: z.string() })).optional(),
         }).loose()),
         hint: z.string(),
+        truncated: z.object({}).loose().optional(),
       },
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
@@ -555,9 +606,15 @@ export function createServer(): McpServer {
             ? 'Nothing matched. Try fewer, more distinctive words - names, ids, filenames - rather than a full sentence.'
             : 'matching_content is the chunk that matched; matched_added is when it was recorded; confidence "weak" means little of the question was covered - verify before relying on it. Prefer recent facts when two disagree. has_map: true means the neuron holds a system map - read it with crbro_map before working on that system. To read the whole neuron: crbro_inspect view=neuron.',
         };
+        // Recall is the one read whose size the caller sets, with limit: ten
+        // results already cost ~12,000 tokens on a dense brain because each
+        // one carries its chunk twice, as text and as structuredContent.
+        const fitted = fitToBudget(payload, {
+          howToGetMore: 'Ask again with a smaller limit, or narrow the query — the matches are still there.',
+        });
         return {
-          content: [{ type: 'text' as const, text: JSON.stringify(payload, null, 2) }],
-          structuredContent: payload,
+          content: [{ type: 'text' as const, text: JSON.stringify(fitted, null, 2) }],
+          structuredContent: fitted,
         };
       } catch (err) {
         return errorResult('recall', err);

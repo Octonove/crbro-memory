@@ -2,6 +2,55 @@
 
 All notable changes to CRBRO.
 
+## [2.0.3] — 2026-09-07
+
+### The brain outgrew what a tool result can carry
+
+Nothing in the server had changed; the brain had. On a 1,145-neuron brain a
+single `crbro_inspect view=neuron` came back at ~132,000 tokens, `view=sessions`
+at ~84,000 and `crbro_boot` at ~20,000 — against a client that caps one tool
+result at 25,000. The transcripts show what that looks like from the outside:
+264 dumps of one neuron and 154 of boot written to a file instead of read,
+1 on 3 September, 11 on the 6th, 4 on the 7th. A memory that answers with
+"output saved to a file" is not answering.
+
+The ceiling now lives in one place, `fitToBudget`, at the point every read
+passes through, so a view added next year inherits it. Two passes: long texts
+keep their opening and say how much was left behind; if that is not enough,
+lists lose entries from the end, largest list first, never below one. Nothing
+is cut in silence — whatever was trimmed comes back in a `truncated` block with
+the real total, what was returned, and the exact call that fetches the rest.
+The boot protocol block, `memory_discipline` and `retired_tools` are never
+touched: a session that starts without them starts wrong.
+
+Measured on the same 1,145-neuron brain, text plus structuredContent:
+
+| Call | Before | After |
+|---|--:|--:|
+| `view=neuron` (the largest) | 132,673 | 11,606 |
+| `view=sessions` | 84,300 | 9,569 |
+| `view=global_map` | 28,940 | 3,669 |
+| `crbro_boot` | 20,352 | 4,989 |
+| `crbro_recall limit=50` | unbounded | 9,319 |
+
+### crbro_learn refused the call its own description recommends
+
+`neuron_id` was documented as skipping name matching entirely, but the schema
+still demanded `topic`, so the call died at the SDK with `-32602` before the
+handler existed — 38 times in one user's transcripts. The engine never reads
+`topic` when the id resolves. It is optional now, and missing both is answered
+with a sentence that says what to pass instead of `expected string, received
+undefined`. A blank `topic` no longer creates a nameless neuron, and a
+`neuron_id` that does not resolve is refused rather than written somewhere else.
+
+### view=neurons said 50 when it meant 1,145
+
+`total` carried the size of the page, so a client paging through the brain was
+told there was nothing after the first 50. It now reports what matched the
+filters before the slice, with `returned` and `has_more` beside it.
+
+Fourteen new tests in `tests/budget.test.ts`, 290 in total.
+
 ## [2.0.2] — 2026-09-04
 
 ### A path that is still a template is not a path
