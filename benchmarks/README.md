@@ -83,7 +83,7 @@ un suelo de coseno, y se marca `strong` a partir de 0.86.
 | | recall@1 | recall@3 | MRR | distractores con score de acierto |
 |---|--:|--:|--:|--:|
 | motor léxico 1.13 | 71% | 77% | 0.744 | 2 / 14 |
-| solo vectores | 60% | 83% | — | — |
+| solo vectores | 63% | 81% | — | — |
 | **fusión, suelo 0.84 (defecto)** | **79%** | **83%** | **0.813** | **0 / 14** |
 
 Con `also_matched`: **88% @1 · 92% @3**. Distractores: 12 de 14 devuelven

@@ -23,6 +23,8 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: npm test
+      # Los benchmarks del README: deterministas, sin red ni modelo (solo el motor de palabras y el filtro de credenciales).
+      - run: npm run bench
 
   audit:
     # A registry's build log caught 9 advisories this pipeline never looked

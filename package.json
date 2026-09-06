@@ -16,7 +16,8 @@
     "test:watch": "vitest",
     "prepublishOnly": "npm run build",
     "mcpb": "node scripts/build-mcpb.mjs",
-    "mcpb:verify": "node scripts/verify-mcpb.mjs"
+    "mcpb:verify": "node scripts/verify-mcpb.mjs",
+    "bench": "node benchmarks/retrieval/run.mjs && node benchmarks/security/run.mjs"
   },
   "keywords": [
     "mcp",
