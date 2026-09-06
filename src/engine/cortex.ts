@@ -1164,6 +1164,27 @@ export class Cortex {
   }
 
   /**
+   * List all neurons with optional filters, and how many matched before paging.
+   *
+   * `list` returns only the page, which made every caller report the page size
+   * as the total — so a client paging through 1,145 neurons was told there were
+   * 50, and stopped. The count here is taken after the filters and before the
+   * slice, which is the only number a pager can trust.
+   */
+  async listWithTotal(options?: {
+    domain?: string;
+    type?: NeuronType;
+    min_heat?: number;
+    limit?: number;
+    offset?: number;
+  }): Promise<{ total: number; rows: Awaited<ReturnType<Cortex['list']>> }> {
+    const all = await this.list({ ...options, limit: Number.MAX_SAFE_INTEGER, offset: 0 });
+    const limit = options?.limit || 50;
+    const offset = Math.max(0, options?.offset || 0);
+    return { total: all.length, rows: all.slice(offset, offset + limit) };
+  }
+
+  /**
    * List all neurons with optional filters.
    */
   async list(options?: {
