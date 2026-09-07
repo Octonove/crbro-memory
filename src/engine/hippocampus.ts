@@ -9,10 +9,15 @@ import type { SessionLog } from '../types/index.js';
 
 const SESSION_PREFIX = 'session_';
 
-/** Accept 'session_2026-09-03' or '2026-09-03'. */
-function normalizeSessionId(ref: string): string {
+/**
+ * Accept 'session_2026-09-03' or '2026-09-03'; null for anything that is not
+ * a day id, so a reference never turns into a path — "../manifest" was read
+ * back as a log before this check existed.
+ */
+export function normalizeSessionId(ref: string): string | null {
   const t = (ref || '').trim();
-  return t.startsWith(SESSION_PREFIX) ? t : `${SESSION_PREFIX}${t}`;
+  const id = t.startsWith(SESSION_PREFIX) ? t : `${SESSION_PREFIX}${t}`;
+  return /^session_\d{4}-\d{2}-\d{2}$/.test(id) ? id : null;
 }
 
 export class Hippocampus {
@@ -117,12 +122,20 @@ export class Hippocampus {
     return out;
   }
 
+  /** One log by id, whole; null when the reference is not a day id or the log is gone. */
+  async readSession(sessionRef: string): Promise<SessionLog | null> {
+    const session_id = normalizeSessionId(sessionRef);
+    if (!session_id) return null;
+    return readJSON<SessionLog>(this.brain.paths.session(session_id));
+  }
+
   /**
    * Delete one session log, after copying it to quarantine — the same
    * "nothing is deleted outright" rule the cortex follows.
    */
   async forgetSession(sessionRef: string): Promise<{ session_id: string; removed: boolean; backup: string | null }> {
     const session_id = normalizeSessionId(sessionRef);
+    if (!session_id) return { session_id: (sessionRef || '').trim(), removed: false, backup: null };
     const ruta = this.brain.paths.session(session_id);
     const log = await readJSON<SessionLog>(ruta);
     if (!log) return { session_id, removed: false, backup: null };

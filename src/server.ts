@@ -282,7 +282,8 @@ export function createServer(): McpServer {
           'supersedes instead of adding a sibling (two versions of one fact compete on recall as equals). ' +
           'Read what you need, not the neuron: crbro_recall finds the entry by content; crbro_inspect view=neuron ' +
           'gives an index (id, kind, preview per entry) and entries=[ids] returns just those in full. Ask for a ' +
-          'whole neuron only when you truly need all of it. ' +
+          'whole neuron only when you truly need all of it. Recall also lists the day logs that mention the ' +
+          'question (sessions_matched); read one with crbro_inspect view=sessions session=<id>. ' +
           'Structure — paths, what serves what, traps — goes in crbro_map, not in facts; anything derivable ' +
           'from the repo or git history is not worth storing. Write facts dense and self-contained: they are ' +
           'recalled without this conversation, and add keywords: the words a future question may use that ' +
@@ -324,6 +325,7 @@ export function createServer(): McpServer {
         neuron: z.string().optional().describe('view=neuron only, required there: neuron id (e.g. "project_octochat") or name (e.g. "OctoChat").'),
         detail: z.enum(['index', 'full']).optional().describe('view=neuron: "index" (default) returns the header, counts and every entry as id, kind, date and a short preview — cheap, then read what matters with `entries`. "full" returns the whole neuron with facts paged by limit/offset; large neurons are shortened and say so.'),
         entries: z.array(z.string()).optional().describe('view=neuron: read these entries in full — their ids from the index or from crbro_recall, or their exact text. Any kind: fact, decision, pattern, preference, error, debt, or "map" for the system map. Ignores detail.'),
+        session: z.string().optional().describe('view=sessions: read one day log whole by its id, e.g. "session_2026-09-07" (from crbro_recall sessions_matched or the list). Ignores limit and offset.'),
         domain: z.string().optional().describe('view=neurons: exact domain match, e.g. "proyectos-web".'),
         type: z.enum(NEURON_TYPES).optional().describe('view=neurons: only this neuron type.'),
         min_heat: z.number().min(0).max(1).optional().describe('view=neurons: minimum heat, 0.0-1.0. Heat blends access frequency, recency and connectivity.'),
@@ -360,6 +362,7 @@ export function createServer(): McpServer {
         }).loose().optional(),
         sessions: z.object({
           total: z.number(),
+          session: z.string().optional(),
           sessions: z.array(z.object({
             session_id: z.string().optional(), date: z.string().optional(), summary: z.string().optional(),
             topics_touched: z.array(z.string()).optional(),
@@ -568,6 +571,22 @@ export function createServer(): McpServer {
         }
 
         if (args.view === 'sessions') {
+          // One log by id, whole: where a recall session hit leads.
+          if (args.session) {
+            // Same id rules as crbro_forget — with or without the prefix, and
+            // never a path: the reference used to be joined into one as it came.
+            const log = await hippocampus.readSession(args.session);
+            if (!log) {
+              return textResult(`No session log "${args.session}". Ids look like session_2026-09-07; list them with view=sessions.`, true);
+            }
+            // Same shape as the list, so the output schema holds; total stays
+            // the brain's, so "total: 1" never reads as a one-day diary.
+            const totalSessions = (await brain.getManifest()).total_sessions;
+            return done({ total: totalSessions, returned: 1, offset: 0, has_more: false, session: log.session_id, sessions: [log] }, {
+              stringCap: DEFAULT_BUDGET_CHARS - 2_000,
+              howToGetMore: 'This is one full session log; a longer one is only readable from disk, in hippocampus/<session_id>.json.',
+            });
+          }
           const limit = Math.min(Math.max(args.limit ?? 10, 1), 100);
           const offset = Math.max(args.offset ?? 0, 0);
           const pagina = (await hippocampus.listSessions(limit + offset)).slice(offset, offset + limit);
@@ -741,7 +760,7 @@ export function createServer(): McpServer {
       inputSchema: {
         query: z.string().describe('What to look for, e.g. "Firebase authentication setup". Fewer, distinctive terms beat full sentences.'),
         queries: z.array(z.string()).optional().describe('Alternative phrasings of the same question, searched together with query and fused by rank. Use synonyms, the other language and the concrete product name; 2-4 is plenty.'),
-        domain: z.string().optional().describe('Only neurons in this domain (exact match, e.g. "proyectos-web").'),
+        domain: z.string().optional().describe('Only neurons in this domain (exact match, e.g. "proyectos-web"). Day logs have no domain: sessions_matched is listed regardless.'),
         limit: z.number().int().positive().optional().describe('Max neurons returned (default 5, ranked; ask for more only when the top five did not answer).'),
       },
       outputSchema: {
@@ -761,6 +780,8 @@ export function createServer(): McpServer {
         returned: z.number().optional(),
         matched_neurons: z.number().optional().describe('Neurons with any hit before limit; total_results is what came back'),
         has_more: z.boolean().optional(),
+        sessions_matched: z.array(z.object({}).loose()).optional(),
+        sessions_total: z.number().optional(),
         hint: z.string(),
         truncated: z.object({}).loose().optional(),
       },
@@ -771,7 +792,7 @@ export function createServer(): McpServer {
         // Five by default, down from ten: results are ranked and each one
         // carries its entry, so ten cost ~12,000 tokens on a dense brain for
         // answers that live in the top three (recall@3 is the metric).
-        const { results, matched_neurons } = await searchEngine.searchManyWithStats(
+        const { results, matched_neurons, sessions, sessions_total } = await searchEngine.searchManyWithStats(
           [args.query, ...(args.queries || [])],
           { domain: args.domain, limit: args.limit ?? 5 },
         );
@@ -803,11 +824,20 @@ export function createServer(): McpServer {
           matched_neurons,
           has_more: sobran > 0,
           results: rows,
-          hint: results.length === 0
-            ? 'Nothing matched. Try fewer, more distinctive words - names, ids, filenames - rather than a full sentence.'
+          // The diary, searched since 2.2: day logs whose summary mentions the
+          // question, in a list of their own so narrative never outranks a fact.
+          // sessions_total: how many days had a hit; three shown never reads as three.
+          ...(sessions.length ? { sessions_matched: sessions.map(s => ({ ...s, date: dia(s.date) })), sessions_total } : {}),
+          hint: (results.length === 0
+            ? (sessions.length
+              // A day mentions it and no fact does: point at the day, not at rephrasing.
+              ? `No stored fact matched; ${sessions_total} day log${sessions_total === 1 ? '' : 's'} mention it (sessions_matched): read one whole with crbro_inspect view=sessions session=<session_id>. If it is a fact worth keeping, save it with crbro_learn.`
+              : 'Nothing matched. Try fewer, more distinctive words - names, ids, filenames - rather than a full sentence.')
             : 'weak: verify. Newer wins on conflict. entry_id → crbro_inspect view=neuron entries=[id]. has_map → crbro_map first.'
               + (sobran > 0 ? ` ${sobran} more neuron${sobran === 1 ? '' : 's'} matched: raise limit or narrow the query.` : '')
-              + (cortados > 0 ? ' content_truncated → read the entry by entry_id.' : ''),
+              + (cortados > 0 ? ' content_truncated → read the entry by entry_id.' : '')
+              + (sessions.length ? ' sessions_matched: day logs that mention it; read one whole with crbro_inspect view=sessions session=<session_id>.' : ''))
+            + (sessions_total > sessions.length ? ` ${sessions_total - sessions.length} more day${sessions_total - sessions.length === 1 ? '' : 's'} mention it: narrow the query.` : ''),
         };
         // Recall is the one read whose size the caller sets, with limit: ten
         // results already cost ~12,000 tokens on a dense brain because each
@@ -961,7 +991,7 @@ export function createServer(): McpServer {
     'crbro_forget',
     {
       title: 'Forget for good',
-      description: 'Write, destructive: remove from disk after a quarantine copy (backup returned). Stage 3 of the lifecycle: something must not exist on disk at all — a credential, personal data, a whole neuron → crbro_forget; for knowledge that merely stopped being true use crbro_revise, which keeps the history. One mode per call. facts: delete entries of a neuron (facts, decisions, patterns, preferences, errors, debts, the map) by id or exact text. entire: delete the whole neuron and its synapses — call it without confirm_token first: the dry run reports what would happen and returns confirm_token. Show the user, get agreement, call again with the token; a stale token is refused. restore: bring back the newest quarantine copy. merge_into: union a neuron into another, rewire synapses, delete the source. session: delete one day\'s log. entire and merge_into refuse a shared neuron — crbro_share unshare first. A removed credential must still be rotated.',
+      description: 'Write, destructive: remove from disk after a quarantine copy (backup returned). Stage 3 of the lifecycle: something must not exist on disk at all — a credential, personal data, a whole neuron → crbro_forget; for knowledge that merely stopped being true use crbro_revise, which keeps the history. One mode per call. facts: delete entries of a neuron (facts, decisions, patterns, preferences, errors, debts, the map) by id or exact text. entire: delete the whole neuron and its synapses — call it without confirm_token first: the dry run reports what would happen and returns confirm_token. Show the user, get agreement, call again with the token; a stale token is refused. restore: bring back the newest quarantine copy. merge_into: union a neuron into another, rewire synapses, delete the source. session: delete one day\'s log, search index included (quarantine keeps the text). entire and merge_into refuse a shared neuron — crbro_share unshare first. A removed credential must still be rotated.',
       inputSchema: forgetSchema,
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
     },
@@ -970,6 +1000,11 @@ export function createServer(): McpServer {
         // ── session ──
         if (args.session !== undefined) {
           const r = await hippocampus.forgetSession(args.session);
+          // The diary is indexed (2.2): the log's lines leave with it, now and
+          // on disk, or recall would keep quoting a day that was deleted. A
+          // rebuild, not a removal: remove() keeps the words in the on-disk
+          // vocabulary, and a forgotten day may be the one with a credential.
+          if (r.removed) await searchEngine.rebuild();
           return jsonResult({
             ...r,
             message: r.removed
@@ -1264,7 +1299,7 @@ export function createServer(): McpServer {
       title: 'Consolidate the session',
       description: 'Write: close the session — the only way to log a session. Call it before the conversation ends. Persists pending knowledge and index writes, logs the session from summary (credentials stripped, kinds in redacted), sets the context\'s last_session, recalculates heat, links the neurons written this session with weak temporal synapses (synapses_updated), updates the manifest and syncs shared team spaces (offline is normal). Returns session_id, facts_saved, decisions_saved, topics_touched and per-space sync state; topics_touched logs neurons you only read. Not consolidating loses the session\'s knowledge. Mid-session open items go to crbro_context; housekeeping is crbro_maintenance.',
       inputSchema: {
-        summary: z.string().describe('A headline paragraph, not a report: what was done, decided and left open, in a few sentences. The facts themselves belong in crbro_learn, where recall finds them; this text is re-read at every boot. Stored whole, after credential redaction. Session logs are not searched by recall: what only lives here is invisible to it.'),
+        summary: z.string().describe('A headline paragraph, not a report: what was done, decided and left open, in a few sentences. The facts themselves belong in crbro_learn, where recall finds them; this text is re-read at every boot. Stored whole, after credential redaction, and searchable by recall as a session hit (sessions_matched). Facts still belong in crbro_learn: a hit in a log is narrative, a fact answers.'),
         topics_touched: z.array(z.string()).optional().describe('Neuron ids this session used WITHOUT writing (recalled, inspected, discussed). Added to the log\'s topics_touched next to the ids written this session; write counters stay real. Unknown ids are dropped and listed in topics_unknown.'),
       },
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
@@ -1285,6 +1320,10 @@ export function createServer(): McpServer {
         const SUMMARY_LONG = 3_000;
         const summary = redact(args.summary).text;
         const result = await maintenance.consolidate(summary, { topicsTouched: args.topics_touched });
+        // The day just logged joins the search index at once (2.2): the diary
+        // is searchable, and a recall tomorrow can point at today.
+        const logHoy = await readJSON<any>(brain.paths.session(result.session_id));
+        if (logHoy) await searchEngine.indexSession(logHoy);
         // Flush any index writes still sitting in the debounce window, so a
         // session that ends right after a learn does not lose it.
         await searchEngine.flush();
@@ -1299,7 +1338,7 @@ export function createServer(): McpServer {
           message: 'Session consolidated. Brain state persisted.',
           summary_chars: summary.length,
           ...(summary.length > SUMMARY_LONG ? {
-            note: `Long summary (${summary.length} characters). Session logs are not searched by crbro_recall: anything that lives only here is invisible to it. Store the facts with crbro_learn; boot reads only the first 240 characters of this text.`,
+            note: `Long summary (${summary.length} characters). Recall searches day logs too (sessions_matched), but a hit there is a paragraph of narrative: store the facts with crbro_learn so they come back as facts, with their topic and date. Boot reads only the first 240 characters of this text.`,
           } : {}),
         });
       } catch (err) {

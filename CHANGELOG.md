@@ -2,6 +2,54 @@
 
 All notable changes to CRBRO.
 
+## [2.2.0] — 2026-09-07
+
+### The diary is searchable
+
+Session summaries carry the narrative — what was done, when, in what order,
+why a thing was left half-way — and none of it was reachable by content:
+"what did we do about Glama on Thursday" had no answer unless someone had
+saved it as a fact. Every session log is in the search index now, as
+paragraphs of up to 700 characters, and `crbro_recall` returns the days that
+mention the question in a list of its own, `sessions_matched`: session id,
+date, the paragraph that matched as a 300-character preview, an entry id, and
+the same lexical `confidence` rule the neuron results use (a session never
+gains confidence from the semantic layer).
+
+A list of its own, on purpose. Session chunks are separated before results
+are grouped by neuron, so a long narrative can never outrank the fact that
+answers, and the neuron ranking is untouched: the retrieval benchmark stays
+at 71% / 77% (79% / 85% with `also_matched`). Session chunks are lexical
+only — the words a day was described with are the words it is asked about —
+and stay out of the vector index.
+
+`crbro_inspect view=sessions session=<id>` reads one log whole; consolidate
+indexes the day it just logged, so tomorrow's recall can point at today; a
+rebuild indexes the whole diary. Index format 7, rebuilt once on the first
+boot — 4.4–4.7 seconds on a brain of 1,148 neurons and 84 sessions. Three diary
+questions on that brain answered in 7–27 ms with the right days.
+
+What the diary must not change, pinned before shipping by two refutation
+passes: a fact still wins. The one-edit slack that finds a fact spelled right
+when the question has a typo is now decided on neuron hits alone, so a day
+log that repeats the typo verbatim no longer switches it off. Several
+phrasings rank the day they all point at first, by accumulated coverage, in
+the same order whichever phrasing comes first. A domain-scoped recall still
+lists the days — logs have no domain. Nothing is cut in silence:
+`sessions_total` says how many days mention it when three are shown, and a
+question only the diary answers gets a hint that points at the day, not at
+rephrasing. `crbro_forget session` takes the log's lines out of the index
+with it, now and on disk; the quarantine copy keeps the text.
+`crbro_inspect view=sessions session=` accepts the id with or without its
+prefix, like forget, and refuses anything that is not a day id — a relative
+path used to be read back as a log. A log written by another process is
+picked up on the next boot, not only on maintenance.
+
+The consolidate note and the parameter text said session logs were not
+searched. They are now, and both say what is still true: a hit in a log is a
+paragraph of narrative; the facts belong in `crbro_learn`, where they come
+back as facts with their topic and date. Twelve new tests, 305 in total.
+
 ## [2.1.2] — 2026-09-07
 
 ### A lock that Windows sometimes refuses is still a lock
