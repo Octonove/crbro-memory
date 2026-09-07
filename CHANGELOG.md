@@ -2,6 +2,32 @@
 
 All notable changes to CRBRO.
 
+## [2.1.1] — 2026-09-07
+
+### The summary is stored whole again
+
+2.1.0 cut a session summary at 3,000 characters. The reason it was there —
+boot re-reading three summaries in full — had been solved in the same release
+by reading only their first 240 characters, so the cut only ever lost the tail
+of what the caller wrote. It is gone. The response now carries
+`summary_chars` and, past 3,000, a note with the fact that still matters:
+session logs are not searched by recall, so what lives only in a summary is
+invisible to it. The facts belong in `crbro_learn`.
+
+### Initiative, in the two places Claude Desktop reads
+
+A field test in Claude Desktop passed everything except initiative: in a new
+conversation the model did not boot the memory on its own, and asked whether
+semantic recall was on it answered that it had no way to know — although
+`view=status` reports exactly that. Claude Desktop does not read the
+`instructions` a server returns at initialize
+([anthropics/claude-code#43749](https://github.com/anthropics/claude-code/issues/43749)),
+so the two levers it does honour carry the message now: `crbro_recall`'s
+description says to call it before answering anything about the user, their
+projects, preferences or past work, and `crbro_inspect`'s says `view=status`
+answers questions about CRBRO itself. `instructions` are set as well, for the
+clients that read them — Claude Code among them.
+
 ## [2.1.0] — 2026-09-07
 
 ### A memory you query, not one you dump
