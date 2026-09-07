@@ -100,12 +100,52 @@ afterAll(async () => {
 });
 
 describe('the server never emits a result a client would refuse', () => {
-  it('a huge neuron comes back inside the budget, and says it was shortened', async () => {
-    const r = await call('crbro_inspect', { view: 'neuron', neuron: 'project_gordo' });
+  it('a huge neuron in full comes back inside the budget, and says it was shortened', async () => {
+    const r = await call('crbro_inspect', { view: 'neuron', neuron: 'project_gordo', detail: 'full' });
     expect(chars(r)).toBeLessThan(2 * (DEFAULT_BUDGET_CHARS + 2_000));
     const payload = body(r);
     expect(payload.truncated).toBeDefined();
     expect(payload.truncated.how_to_get_more).toContain('limit');
+  });
+
+  it('the default view of a huge neuron is an index: small, complete, with ids', async () => {
+    const r = await call('crbro_inspect', { view: 'neuron', neuron: 'project_gordo' });
+    const idx = body(r);
+    expect(idx.truncated).toBeUndefined();
+    expect(idx.counts.fact).toBe(120);
+    expect(idx.entries.length).toBe(25);                       // default page
+    expect(idx.entries_pagination).toMatchObject({ total: 120, returned: 25, has_more: true, hidden_retired: 0 });
+    for (const e of idx.entries) {
+      expect(e.id).toMatch(/^[0-9a-f]+$/);
+      expect(e.kind).toBe('fact');
+      expect(e.preview.length).toBeLessThanOrEqual(170);
+      expect(e.chars).toBeGreaterThan(3_000);
+    }
+    expect(idx.how_to_read).toContain('entries=');
+  });
+
+  it('entries=[id] returns exactly those entries in full, and names what it could not find', async () => {
+    const idx = body(await call('crbro_inspect', { view: 'neuron', neuron: 'project_gordo', limit: 2 }));
+    const [a, b] = idx.entries;
+    const r = body(await call('crbro_inspect', { view: 'neuron', neuron: 'project_gordo', entries: [a.id, b.id, 'no_existe'] }));
+    expect(r.returned).toBe(2);
+    expect(r.entries.map((e: any) => e.id)).toEqual([a.id, b.id]);
+    expect(r.entries[0].text.length).toBe(a.chars);
+    expect(r.not_found).toEqual(['no_existe']);
+  });
+
+  it('a recall hit carries entry_id, and that id opens the entry', async () => {
+    const hit = body(await call('crbro_recall', { query: 'primero', limit: 3 }));
+    const top = hit.results.find((x: any) => x.neuron_id === 'project_gordo');
+    expect(top.entry_id).toMatch(/^[0-9a-f]+$/);
+    // The hit is 3,200 characters, so recall hands back its opening, declared,
+    // and the id fetches the whole thing.
+    expect(top.content_truncated).toBe(true);
+    expect(top.content_chars).toBeGreaterThan(1_200);
+    const r = body(await call('crbro_inspect', { view: 'neuron', neuron: 'project_gordo', entries: [top.entry_id] }));
+    expect(r.returned).toBe(1);
+    expect(r.entries[0].text.length).toBe(top.content_chars);
+    expect(r.entries[0].text.startsWith(top.matching_content.replace(/…$/, ''))).toBe(true);
   });
 
   it('boot stays inside the budget with the protocol block intact', async () => {
@@ -143,7 +183,7 @@ describe('crbro_learn accepts what its own description recommends', () => {
     const id = first.neuron_id;
     const second = body(await call('crbro_learn', { neuron_id: id, type: 'fact', content: 'el segundo, sin topic' }));
     expect(second.neuron_id).toBe(id);
-    const neuron = body(await call('crbro_inspect', { view: 'neuron', neuron: id }));
+    const neuron = body(await call('crbro_inspect', { view: 'neuron', neuron: id, detail: 'full' }));
     const texts = (neuron.facts || []).map((f: any) => f.text).join(' ');
     expect(texts).toContain('el segundo, sin topic');
   });

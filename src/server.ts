@@ -29,7 +29,11 @@ import { Hippocampus } from './engine/hippocampus.js';
 import { Prefrontal } from './engine/prefrontal.js';
 import { SearchEngine } from './search/index.js';
 import { semanticStatus } from './search/semantic.js';
-import { fitToBudget } from './utils/budget.js';
+import { fitToBudget, DEFAULT_BUDGET_CHARS, type BudgetOptions } from './utils/budget.js';
+import { redact } from './engine/secrets.js';
+
+/** Listings carry the day, not the millisecond: "2026-09-07" says what "2026-09-07T14:02:11.483Z" says, in a third of the tokens. Full stamps stay on single-entry reads. */
+const dia = <T>(iso: T): T | string => (typeof iso === 'string' && iso.length >= 10 ? iso.slice(0, 10) : iso);
 import { Maintenance } from './engine/maintenance.js';
 import {
   createSpace, joinSpace, listSpaces, readSpace, prepareShare, commitShare,
@@ -39,7 +43,8 @@ import {
   detectBackend, setSecret, getSecret, listSecrets, removeSecret, KeychainUnavailable,
 } from './engine/keychain.js';
 import { readJSON } from './utils/fs.js';
-import { contentHash } from './utils/hash.js';
+import { contentHash, factId } from './utils/hash.js';
+import { entryId } from './sync/ops.js';
 import type { HotTopics, Neuron } from './types/index.js';
 
 /**
@@ -87,7 +92,7 @@ function textResult(text: string, isError = false) {
 }
 
 function jsonResult(payload: unknown) {
-  return { content: [{ type: 'text' as const, text: JSON.stringify(payload, null, 2) }] };
+  return { content: [{ type: 'text' as const, text: JSON.stringify(payload) }] };
 }
 
 function errorResult(where: string, err: unknown) {
@@ -164,7 +169,50 @@ export function createServer(): McpServer {
         // The last three real session logs, and last_session taken from them:
         // the manifest field brain.boot reads was never written by anything,
         // so it came back null in every session.
-        response.recent_sessions = await hippocampus.listSessions(3);
+        // Headlines, not transcripts. Three full summaries were 82% of an
+        // 81,000-character boot on a mature brain — text the model had already
+        // read once, at consolidation, re-read at every start. The opening
+        // line is where a summary says what happened; the rest is a call away.
+        const recientes = await hippocampus.listSessions(3);
+        response.recent_sessions = recientes.map((s: any) => {
+          const texto = String(s.summary || '');
+          const titular = texto.length > 240 ? `${texto.slice(0, 240).trimEnd()}…` : texto;
+          const topics: string[] = s.topics_touched || [];
+          // Same key as before, `summary`, so nothing that reads it breaks; when
+          // it is only the opening, summary_truncated says so next to it.
+          return {
+            session_id: s.session_id, date: s.date, summary: titular,
+            ...(texto.length > 240 ? { summary_truncated: true, summary_chars: texto.length } : {}),
+            topics_touched: topics.slice(0, 5),
+            ...(topics.length > 5 ? { topics_count: topics.length } : {}),
+            key_facts_added: s.key_facts_added, decisions_made: s.decisions_made,
+            new_neurons_created: s.new_neurons_created, synapses_updated: s.synapses_updated,
+            duration_estimate: s.duration_estimate,
+          };
+        });
+        if (recientes.some((s: any) => String(s.summary || '').length > 240)) {
+          response.sessions_note = 'recent_sessions carries the first 240 characters of each summary (summary_chars is the full size). crbro_inspect view=sessions limit=1 returns the latest one whole; limit=3 returns the three, each capped at 3,000 characters and declared.';
+        }
+        // Ten hot topics with the day, not twenty with the millisecond: each
+        // row is a pointer the model follows with recall, not a record.
+        response.hot_topics = (result.hot_topics || []).slice(0, 10)
+          .map((h: any) => ({ ...h, last_access: dia(h.last_access) }));
+        // active_context repeated open_items and recently_closed, which boot
+        // already serves at the top level: 1,414 characters said twice.
+        if (result.active_context && typeof result.active_context === 'object') {
+          const { pending_tasks: _p, recently_closed: _r, ...resto } = result.active_context;
+          response.active_context = resto;
+        }
+        for (const [k, cap] of [['open_items', 12], ['recently_closed', 8]] as const) {
+          const lista = response[k];
+          if (!Array.isArray(lista)) continue;
+          if (lista.length > cap) response[`${k}_total`] = lista.length;
+          response[k] = lista.slice(0, cap).map((it: any) => ({
+            ...it,
+            ...(it.added ? { added: dia(it.added) } : {}),
+            ...(it.closed ? { closed: dia(it.closed) } : {}),
+          }));
+        }
         response.last_session = response.recent_sessions[0]?.session_id ?? result.last_session ?? null;
         response.retired_tools = RETIRED_TOOLS;
 
@@ -222,8 +270,9 @@ export function createServer(): McpServer {
         response.memory_discipline =
           'Before crbro_learn, crbro_recall: what you are about to save may already exist — then pass ' +
           'supersedes instead of adding a sibling (two versions of one fact compete on recall as equals). ' +
-          'crbro_recall searches by content; to read one neuron by id or name, list neurons, sessions or ' +
-          'the global map, use crbro_inspect. ' +
+          'Read what you need, not the neuron: crbro_recall finds the entry by content; crbro_inspect view=neuron ' +
+          'gives an index (id, kind, preview per entry) and entries=[ids] returns just those in full. Ask for a ' +
+          'whole neuron only when you truly need all of it. ' +
           'Structure — paths, what serves what, traps — goes in crbro_map, not in facts; anything derivable ' +
           'from the repo or git history is not worth storing. Write facts dense and self-contained: they are ' +
           'recalled without this conversation, and add keywords: the words a future question may use that ' +
@@ -232,7 +281,8 @@ export function createServer(): McpServer {
           'deliberate deferral with its ceiling and revisit trigger. Credentials never go in the brain: ' +
           'crbro_secret, then record only the NAME. Recall results carry confidence — "weak" means the match ' +
           'covers little of the question, verify before relying on it — and when two facts disagree, prefer ' +
-          'the more recent. ' + THREE_STAGES + ' ' +
+          'the more recent. Lifecycle: supersedes replaces, crbro_revise retires, crbro_forget removes what ' +
+          'must not exist on disk — each tool describes its own stage. ' +
           'Call crbro_consolidate before the conversation ends; it logs the session too.';
 
         // A mature brain outgrew the boot payload: on a 1,145-neuron brain it
@@ -258,17 +308,19 @@ export function createServer(): McpServer {
     'crbro_inspect',
     {
       title: 'Inspect the brain',
-      description: 'Read-only views of the brain by id or name; to search by content use crbro_recall. Nothing is written by any view: every read leaves the brain untouched. view=status: version, brain path, totals, last boot/consolidation, semantic state, hot_topics_recalculated. view=neuron: one neuron in full — facts newest first, paged with limit/offset (superseded hidden unless include_superseded), decisions, patterns, preferences, errors, debts, entry_status, system map, and its connections resolved with name, type and strength (min_strength filters). view=neurons: rows hottest first (id, name, domain, type, heat, last_accessed, facts_count), filtered by domain, type, min_heat, paged with limit/offset. view=sessions: day logs newest first, the only place session summaries are read. view=global_map: one cluster per domain plus cross-domain bridges, computed live. Params of other views are ignored.',
+      description: 'Read-only views of the brain by id or name; to search by content use crbro_recall. Nothing is written by any view: every read leaves the brain untouched. view=status: version, brain path, totals, last boot/consolidation, semantic state, hot_topics_recalculated. view=neuron: an index of one neuron — header, counts, connections (min_strength filters) and every entry as id, kind, date and preview, paged with limit/offset; entries=[ids or exact text] reads those in full, detail=full returns the whole neuron, shortened and declared when large. view=neurons: rows hottest first (id, name, domain, type, heat, last_accessed, facts_count), filtered by domain, type, min_heat, paged with limit/offset. view=sessions: day logs newest first, the only place session summaries are read. view=global_map: one cluster per domain plus cross-domain bridges, computed live. Params of other views are ignored.',
       inputSchema: {
         view: z.enum(INSPECT_VIEWS).describe('Which read to perform. Only the params listed for that view are honoured; the rest are ignored, never an error.'),
         neuron: z.string().optional().describe('view=neuron only, required there: neuron id (e.g. "project_octochat") or name (e.g. "OctoChat").'),
+        detail: z.enum(['index', 'full']).optional().describe('view=neuron: "index" (default) returns the header, counts and every entry as id, kind, date and a short preview — cheap, then read what matters with `entries`. "full" returns the whole neuron with facts paged by limit/offset; large neurons are shortened and say so.'),
+        entries: z.array(z.string()).optional().describe('view=neuron: read these entries in full — their ids from the index or from crbro_recall, or their exact text. Any kind: fact, decision, pattern, preference, error, debt, or "map" for the system map. Ignores detail.'),
         domain: z.string().optional().describe('view=neurons: exact domain match, e.g. "proyectos-web".'),
         type: z.enum(NEURON_TYPES).optional().describe('view=neurons: only this neuron type.'),
         min_heat: z.number().min(0).max(1).optional().describe('view=neurons: minimum heat, 0.0-1.0. Heat blends access frequency, recency and connectivity.'),
         min_strength: z.number().min(0).max(1).optional().describe('view=neuron: drop connections weaker than this (0.0-1.0). Omit or 0 = all.'),
-        limit: z.number().int().positive().optional().describe('Page size. view=neuron: facts per page (default 40, max 200); view=neurons: rows (default 50, max 500); view=sessions: day logs (default 10, max 100). Other views ignore it.'),
-        offset: z.number().int().min(0).optional().describe('Items to skip. view=neuron: facts (newest first); view=neurons: rows after the heat sort. Default 0.'),
-        include_superseded: z.boolean().optional().describe('view=neuron: also return superseded and retracted facts (default false). Retired decisions, patterns, errors and debts are always returned, with entry_status saying which are retired.'),
+        limit: z.number().int().positive().optional().describe('Page size. view=neuron: index entries per page (default 25, max 200); view=neurons: rows (default 50, max 500); view=sessions: day logs (default 10, max 100). Other views ignore it.'),
+        offset: z.number().int().min(0).optional().describe('Items to skip. view=neuron: index entries; view=neurons: rows after the heat sort. Default 0.'),
+        include_superseded: z.boolean().optional().describe('view=neuron: also list superseded and retracted entries of every kind (default false; the index reports how many are hidden in entries_pagination.hidden_retired). detail=full always returns entry_status.'),
       },
       outputSchema: {
         view: z.enum(INSPECT_VIEWS),
@@ -320,12 +372,13 @@ export function createServer(): McpServer {
         // a view added later inherits it without remembering to. It has to be
         // this strict because the payload travels TWICE — once as text, once as
         // structuredContent — so a client pays double for what a view emits.
-        const done = (payload: unknown) => {
+        const done = (payload: unknown, extra: Partial<BudgetOptions> = {}) => {
           const fitted = fitToBudget(payload, {
             howToGetMore: `Ask for a slice instead of the whole: crbro_inspect view=${args.view} with limit and offset, or crbro_recall to search by content.`,
+            ...extra,
           });
           return {
-            content: [{ type: 'text' as const, text: JSON.stringify(fitted, null, 2) }],
+            content: [{ type: 'text' as const, text: JSON.stringify(fitted) }],
             structuredContent: { view: args.view, [args.view]: fitted },
           };
         };
@@ -366,34 +419,126 @@ export function createServer(): McpServer {
               `Neuron not found: "${args.neuron}". Find the id with crbro_recall or crbro_inspect view=neurons.`, true);
           }
 
-          // A whole neuron can be enormous - the biggest on the reference brain
-          // serialises to 528,836 characters, more than most models can hold - so
-          // facts are paged instead of dumped.
-          const limit = Math.min(Math.max(args.limit ?? 40, 1), 200);
+          // Three ways to read a neuron, cheapest first. The default is an
+          // INDEX: header, counts and one line per entry with a stable id. The
+          // biggest neuron on the reference brain serialises to ~530,000
+          // characters; no client carries that, and a model rarely needs it —
+          // it needs two or three entries it can now name. `entries` reads
+          // those in full; `detail=full` is the old dump, and it goes through
+          // the ceiling like every other read.
+          const limit = Math.min(Math.max(args.limit ?? 25, 1), 200);
           const offset = Math.max(args.offset ?? 0, 0);
-          const visible = (neuron.facts || []).filter(f =>
-            args.include_superseded ? true : (f.status !== 'superseded' && f.status !== 'retracted')
-          );
-          const ordered = [...visible].sort((a, b) =>
-            String(b.added || '').localeCompare(String(a.added || ''))
-          );
-          const page = ordered.slice(offset, offset + limit);
           const connections = await synapses.getConnections(neuron.id, args.min_strength);
+          const retired = (id: string) => neuron!.entry_status?.[id]?.status;
+
+          type Row = {
+            id: string; kind: string; text: string; added: string;
+            status?: string; confidence?: number; rationale?: string; keys?: string[]; revision_note?: string; revised?: string;
+          };
+          const rows: Row[] = [];
+          for (const f of neuron.facts || []) {
+            rows.push({ id: f.id || factId(f.text), kind: 'fact', text: f.text, added: f.added || '',
+              status: f.status, confidence: f.confidence, keys: f.keys, revision_note: f.revision_note, revised: f.revised });
+          }
+          for (const d of neuron.decisions || []) {
+            const id = d.id || entryId(d.text);
+            rows.push({ id, kind: 'decision', text: d.text, added: d.date || '', rationale: d.rationale, status: retired(id), revised: neuron!.entry_status?.[id]?.revised, revision_note: neuron!.entry_status?.[id]?.note });
+          }
+          const sidecar = (kind: string, list?: string[]) => {
+            for (const t of list || []) {
+              const id = entryId(t);
+              rows.push({ id, kind, text: t, added: neuron!.entry_dates?.[id] || '', status: retired(id), revised: neuron!.entry_status?.[id]?.revised, revision_note: neuron!.entry_status?.[id]?.note });
+            }
+          };
+          sidecar('pattern', neuron.patterns);
+          sidecar('preference', neuron.preferences);
+          sidecar('error', neuron.errors);
+          sidecar('debt', neuron.debts);
+          if (neuron.map?.text) rows.push({ id: 'map', kind: 'map', text: neuron.map.text, added: neuron.map.updated || '' });
+
+          const header = {
+            id: neuron.id, name: neuron.name, domain: neuron.domain, type: neuron.type,
+            heat: neuron.heat, summary: neuron.summary, tags: neuron.tags,
+            created: neuron.created, last_accessed: neuron.last_accessed,
+          };
+
+          // ── entries=[…]: exactly what was asked for, in full ──────────
+          const wanted = (args.entries || []).map(s => s.trim()).filter(Boolean);
+          if (wanted.length) {
+            const found: Row[] = [];
+            const missing: string[] = [];
+            for (const w of wanted) {
+              const hit = rows.find(r => r.id === w) || rows.find(r => r.text.trim().toLowerCase() === w.toLowerCase());
+              if (hit) { if (!found.includes(hit)) found.push(hit); } else missing.push(w);
+            }
+            return done({
+              ...header,
+              entries: found,
+              returned: found.length,
+              ...(missing.length ? { not_found: missing, hint: 'Ids come from the index (view=neuron) or from crbro_recall as entry_id; exact text also works.' } : {}),
+            });
+          }
+
+          // ── detail=full: the whole neuron, facts paged, as before ──────
+          if (args.detail === 'full') {
+            const visible = (neuron.facts || []).filter(f =>
+              args.include_superseded ? true : (f.status !== 'superseded' && f.status !== 'retracted')
+            );
+            const ordered = [...visible].sort((a, b) =>
+              String(b.added || '').localeCompare(String(a.added || ''))
+            );
+            const page = ordered.slice(offset, offset + limit);
+            return done({
+              ...neuron,
+              connection_ids: neuron.connections || [],
+              connections,
+              total_connections: connections.length,
+              facts: page,
+              facts_pagination: {
+                total: ordered.length,
+                returned: page.length,
+                offset,
+                has_more: offset + page.length < ordered.length,
+                order: 'newest first',
+                hidden_superseded: (neuron.facts || []).length - visible.length,
+              },
+            });
+          }
+
+          // ── default: the index ────────────────────────────────────────
+          // A fact may carry status 'active' explicitly; only the two retired
+          // states hide an entry from the default page.
+          const isRetired = (s?: string) => s === 'superseded' || s === 'retracted';
+          const live = rows.filter(r => args.include_superseded ? true : !isRetired(r.status));
+          const byKind = (k: string) => live.filter(r => r.kind === k)
+            .sort((a, b) => String(b.added).localeCompare(String(a.added)));
+          // Few and heavy first — map, errors, debts — then the many: facts are the
+          // long tail and get paged; the map is one entry and rarely fits a preview.
+          const ordered = ['map', 'error', 'debt', 'preference', 'pattern', 'decision', 'fact'].flatMap(byKind);
+          const page = ordered.slice(offset, offset + limit);
+          const PREVIEW = 160;
+          const counts: Record<string, number> = {};
+          for (const r of rows) counts[r.kind] = (counts[r.kind] || 0) + 1;
 
           return done({
-            ...neuron,
-            connection_ids: neuron.connections || [],
+            ...header,
+            counts: { ...counts, connections: connections.length, retired: rows.filter(r => isRetired(r.status)).length },
             connections,
-            total_connections: connections.length,
-            facts: page,
-            facts_pagination: {
+            entries: page.map(r => ({
+              id: r.id, kind: r.kind, added: dia(r.added),
+              preview: r.text.length > PREVIEW ? `${r.text.slice(0, PREVIEW).trimEnd()}…` : r.text,
+              chars: r.text.length,
+              ...(isRetired(r.status) ? { status: r.status, ...(r.revised ? { revised: dia(r.revised) } : {}), ...(r.revision_note ? { retired_note: r.revision_note } : {}) } : {}),
+            })),
+            entries_pagination: {
               total: ordered.length,
               returned: page.length,
               offset,
               has_more: offset + page.length < ordered.length,
-              order: 'newest first',
-              hidden_superseded: (neuron.facts || []).length - visible.length,
+              order: 'map, errors, debts, preferences, patterns, decisions, facts — newest first within each',
+              ...(args.include_superseded ? {} : { hidden_retired: rows.length - live.length, see_retired: 'pass include_superseded=true' }),
             },
+            how_to_read: `crbro_inspect view=neuron neuron="${neuron.id}" entries=[<ids>] returns those in full; detail=full returns everything.`,
           });
         }
 
@@ -414,9 +559,24 @@ export function createServer(): McpServer {
 
         if (args.view === 'sessions') {
           const limit = Math.min(Math.max(args.limit ?? 10, 1), 100);
-          const sessions = await hippocampus.listSessions(limit);
+          const offset = Math.max(args.offset ?? 0, 0);
+          const pagina = (await hippocampus.listSessions(limit + offset)).slice(offset, offset + limit);
           const totalSessions = (await brain.getManifest()).total_sessions;
-          return done({ total: totalSessions, returned: sessions.length, sessions });
+          // One log asked for by itself comes whole: it is the door boot points
+          // at when it shortens a summary. A list caps each one and says so.
+          const CAP = 3_000;
+          const sessions = limit === 1 ? pagina : pagina.map((s: any) => {
+            const t = String(s.summary || '');
+            return t.length > CAP
+              ? { ...s, summary: `${t.slice(0, CAP).trimEnd()}…`, summary_truncated: true, summary_chars: t.length }
+              : s;
+          });
+          return done(
+            { total: totalSessions, returned: sessions.length, offset, has_more: offset + sessions.length < totalSessions, sessions },
+            limit === 1
+              ? { stringCap: DEFAULT_BUDGET_CHARS - 2_000, howToGetMore: 'This is one full session log; a longer one is only readable from disk, in hippocampus/<session_id>.json.' }
+              : { howToGetMore: 'Page with limit and offset; limit=1 returns a single log whole.' },
+          );
         }
 
         // view === 'global_map': computed live, never cached, nothing written.
@@ -572,7 +732,7 @@ export function createServer(): McpServer {
         query: z.string().describe('What to look for, e.g. "Firebase authentication setup". Fewer, distinctive terms beat full sentences.'),
         queries: z.array(z.string()).optional().describe('Alternative phrasings of the same question, searched together with query and fused by rank. Use synonyms, the other language and the concrete product name; 2-4 is plenty.'),
         domain: z.string().optional().describe('Only neurons in this domain (exact match, e.g. "proyectos-web").'),
-        limit: z.number().optional().describe('Max neurons returned (default 10).'),
+        limit: z.number().int().positive().optional().describe('Max neurons returned (default 5, ranked; ask for more only when the top five did not answer).'),
       },
       outputSchema: {
         query: z.string(),
@@ -584,8 +744,13 @@ export function createServer(): McpServer {
           heat: z.number(), has_map: z.boolean().optional(),
           matched_terms: z.number().optional(), query_terms: z.number().optional(),
           confidence: z.enum(['strong', 'weak']).optional(),
-          also_matched: z.array(z.object({ text: z.string(), kind: z.string(), added: z.string() })).optional(),
+          entry_id: z.string().optional(),
+          content_truncated: z.boolean().optional(), content_chars: z.number().optional(),
+          also_matched: z.array(z.object({ entry_id: z.string().optional(), kind: z.string(), added: z.string(), preview: z.string(), chars: z.number() }).loose()).optional(),
         }).loose()),
+        returned: z.number().optional(),
+        matched_neurons: z.number().optional().describe('Neurons with any hit before limit; total_results is what came back'),
+        has_more: z.boolean().optional(),
         hint: z.string(),
         truncated: z.object({}).loose().optional(),
       },
@@ -593,18 +758,46 @@ export function createServer(): McpServer {
     },
     async (args) => {
       try {
-        const results = await searchEngine.searchMany([args.query, ...(args.queries || [])], {
-          domain: args.domain,
-          limit: args.limit,
+        // Five by default, down from ten: results are ranked and each one
+        // carries its entry, so ten cost ~12,000 tokens on a dense brain for
+        // answers that live in the top three (recall@3 is the metric).
+        const { results, matched_neurons } = await searchEngine.searchManyWithStats(
+          [args.query, ...(args.queries || [])],
+          { domain: args.domain, limit: args.limit ?? 5 },
+        );
+
+        // A hit carries its entry, but not without limit: one 6,000-character
+        // fact must not cost more than the five results around it. Past the
+        // cap the opening comes back, declared, and entry_id reads the rest.
+        const CONTENT_CAP = 1_200;
+        let cortados = 0;
+        const rows = results.map(r => {
+          const mc = r.matching_content;
+          const largo = mc.length > CONTENT_CAP;
+          if (largo) cortados++;
+          return {
+            ...r,
+            matched_added: dia(r.matched_added),
+            ...(largo ? { matching_content: `${mc.slice(0, CONTENT_CAP).trimEnd()}…`, content_truncated: true, content_chars: mc.length } : {}),
+            ...(r.also_matched ? { also_matched: r.also_matched.map(a => ({ ...a, added: dia(a.added) })) } : {}),
+          };
         });
+        const sobran = matched_neurons - results.length;
 
         const payload = {
           query: args.query,
+          // total_results is what came back (capped by limit); matched_neurons is
+          // how many neurons had a hit at all, so five never reads as "only five".
           total_results: results.length,
-          results,
+          returned: results.length,
+          matched_neurons,
+          has_more: sobran > 0,
+          results: rows,
           hint: results.length === 0
             ? 'Nothing matched. Try fewer, more distinctive words - names, ids, filenames - rather than a full sentence.'
-            : 'matching_content is the chunk that matched; matched_added is when it was recorded; confidence "weak" means little of the question was covered - verify before relying on it. Prefer recent facts when two disagree. has_map: true means the neuron holds a system map - read it with crbro_map before working on that system. To read the whole neuron: crbro_inspect view=neuron.',
+            : 'weak: verify. Newer wins on conflict. entry_id → crbro_inspect view=neuron entries=[id]. has_map → crbro_map first.'
+              + (sobran > 0 ? ` ${sobran} more neuron${sobran === 1 ? '' : 's'} matched: raise limit or narrow the query.` : '')
+              + (cortados > 0 ? ' content_truncated → read the entry by entry_id.' : ''),
         };
         // Recall is the one read whose size the caller sets, with limit: ten
         // results already cost ~12,000 tokens on a dense brain because each
@@ -613,7 +806,7 @@ export function createServer(): McpServer {
           howToGetMore: 'Ask again with a smaller limit, or narrow the query — the matches are still there.',
         });
         return {
-          content: [{ type: 'text' as const, text: JSON.stringify(fitted, null, 2) }],
+          content: [{ type: 'text' as const, text: JSON.stringify(fitted) }],
           structuredContent: fitted,
         };
       } catch (err) {
@@ -1061,14 +1254,25 @@ export function createServer(): McpServer {
       title: 'Consolidate the session',
       description: 'Write: close the session — the only way to log a session. Call it before the conversation ends. Persists pending knowledge and index writes, logs the session from summary (credentials stripped, kinds in redacted), sets the context\'s last_session, recalculates heat, links the neurons written this session with weak temporal synapses (synapses_updated), updates the manifest and syncs shared team spaces (offline is normal). Returns session_id, facts_saved, decisions_saved, topics_touched and per-space sync state; topics_touched logs neurons you only read. Not consolidating loses the session\'s knowledge. Mid-session open items go to crbro_context; housekeeping is crbro_maintenance.',
       inputSchema: {
-        summary: z.string().describe('What was accomplished: concrete work, decisions, outcomes. Stored (after credential redaction) as the session log later sessions read.'),
+        summary: z.string().describe('A headline paragraph, not a report: what was done, decided and left open, in a few sentences. The facts themselves belong in crbro_learn, where recall finds them; this text is re-read at every boot. Stored after credential redaction; beyond 3,000 characters it is cut and the response says so.'),
         topics_touched: z.array(z.string()).optional().describe('Neuron ids this session used WITHOUT writing (recalled, inspected, discussed). Added to the log\'s topics_touched next to the ids written this session; write counters stay real. Unknown ids are dropped and listed in topics_unknown.'),
       },
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },
     async (args) => {
       try {
-        const result = await maintenance.consolidate(args.summary, { topicsTouched: args.topics_touched });
+        // A summary is re-read at every boot of every later session. The card
+        // asks for one line; the field was taking whole reports — median 8,233
+        // characters on one brain — so the ceiling is enforced here and declared,
+        // never applied in silence. What a session learned goes through
+        // crbro_learn, where it is found by content instead of re-read whole.
+        // Redact BEFORE cutting: a credential that straddles the cut would
+        // otherwise leave its first half on disk, unrecognisable to the filter.
+        const SUMMARY_MAX = 3_000;
+        const limpio = redact(args.summary).text;
+        const enviado = limpio.length;
+        const summary = enviado > SUMMARY_MAX ? `${limpio.slice(0, SUMMARY_MAX).trimEnd()}…` : limpio;
+        const result = await maintenance.consolidate(summary, { topicsTouched: args.topics_touched });
         // Flush any index writes still sitting in the debounce window, so a
         // session that ends right after a learn does not lose it.
         await searchEngine.flush();
@@ -1081,6 +1285,10 @@ export function createServer(): McpServer {
             ? compartidos.map(c => ({ space: c.space, state: c.state, pushed: c.pushed }))
             : undefined,
           message: 'Session consolidated. Brain state persisted.',
+          ...(enviado > SUMMARY_MAX ? {
+            summary_truncated: { kept_from_this_call: summary.length, sent: enviado },
+            note: `The summary was cut at ${SUMMARY_MAX} characters: it is re-read at every boot. Keep it to a headline paragraph and store the facts with crbro_learn, where recall finds them.`,
+          } : {}),
         });
       } catch (err) {
         return errorResult('consolidate', err);
@@ -1177,7 +1385,7 @@ export function createServer(): McpServer {
           note: 'Values are never shown here, by design.',
         };
         return {
-          content: [{ type: 'text' as const, text: JSON.stringify(payload, null, 2) }],
+          content: [{ type: 'text' as const, text: JSON.stringify(payload) }],
           structuredContent: payload,
         };
       } catch (err) {

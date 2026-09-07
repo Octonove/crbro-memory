@@ -273,6 +273,13 @@ export interface SearchResult {
   matched_kind?: string;
   /** When that chunk was recorded, so callers can prefer recent knowledge. */
   matched_added?: string;
+  /**
+   * The handle for "read this one in full": the same hash the neuron index
+   * (crbro_inspect view=neuron) and the retirement sidecars use, so a hit
+   * becomes `entries=[entry_id]` instead of a whole-neuron dump. Absent for
+   * the header chunk, which is identity, not an entry.
+   */
+  entry_id?: string;
   heat: number;
   /** The neuron keeps a system map — read it with crbro_map before working on this system. */
   has_map?: boolean;
@@ -293,5 +300,5 @@ export interface SearchResult {
    * one neuron can answer with more than one line, and the line you need is
    * not always the one that scored highest.
    */
-  also_matched?: Array<{ text: string; kind: string; added: string }>;
+  also_matched?: Array<{ entry_id?: string; kind: string; added: string; preview: string; chars: number }>;
 }

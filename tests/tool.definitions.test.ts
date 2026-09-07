@@ -167,7 +167,7 @@ describe('tools/call', () => {
     const learned = body(await client.callTool({ name: 'crbro_learn', arguments: {
       topic: 'Hosting', type: 'decision', content: 'Los backups nocturnos van a Backblaze B2.',
     } }));
-    const r: any = await client.callTool({ name: 'crbro_inspect', arguments: { view: 'neuron', neuron: learned.neuron_id } });
+    const r: any = await client.callTool({ name: 'crbro_inspect', arguments: { view: 'neuron', detail: 'full', neuron: learned.neuron_id } });
     expect(r.isError).toBeFalsy();
     expect(r.structuredContent.view).toBe('neuron');
     expect(r.structuredContent.neuron.id).toBe(learned.neuron_id);
@@ -175,11 +175,11 @@ describe('tools/call', () => {
     // readOnlyHint says this tool does not touch the brain, so it must not:
     // reading twice leaves access_count and last_accessed exactly as they were.
     expect(r.structuredContent.neuron.access_bumped).toBeUndefined();
-    const again: any = await client.callTool({ name: 'crbro_inspect', arguments: { view: 'neuron', neuron: learned.neuron_id } });
+    const again: any = await client.callTool({ name: 'crbro_inspect', arguments: { view: 'neuron', detail: 'full', neuron: learned.neuron_id } });
     expect(again.structuredContent.neuron.access_count).toBe(r.structuredContent.neuron.access_count);
     expect(again.structuredContent.neuron.last_accessed).toBe(r.structuredContent.neuron.last_accessed);
 
-    const missing: any = await client.callTool({ name: 'crbro_inspect', arguments: { view: 'neuron', neuron: 'no_such_neuron' } });
+    const missing: any = await client.callTool({ name: 'crbro_inspect', arguments: { view: 'neuron', detail: 'full', neuron: 'no_such_neuron' } });
     expect(missing.isError).toBe(true);
     expect(missing.content[0].text).toContain('crbro_inspect view=neurons');
   });
@@ -234,7 +234,7 @@ describe('tools/call', () => {
     expect(d.confirm_token).toBeTruthy();
     expect(d.counts.facts).toBe(1);
 
-    const still: any = await client.callTool({ name: 'crbro_inspect', arguments: { view: 'neuron', neuron: id } });
+    const still: any = await client.callTool({ name: 'crbro_inspect', arguments: { view: 'neuron', detail: 'full', neuron: id } });
     expect(still.isError).toBeFalsy();
 
     const stale: any = await client.callTool({ name: 'crbro_forget', arguments: { neuron: id, entire: true, confirm_token: 'nope' } });
@@ -243,7 +243,7 @@ describe('tools/call', () => {
     const done = body(await client.callTool({ name: 'crbro_forget', arguments: { neuron: id, entire: true, confirm_token: d.confirm_token } }));
     expect(done.removed).toBe('neuron');
     expect(done.backup).toBeTruthy();
-    const gone: any = await client.callTool({ name: 'crbro_inspect', arguments: { view: 'neuron', neuron: id } });
+    const gone: any = await client.callTool({ name: 'crbro_inspect', arguments: { view: 'neuron', detail: 'full', neuron: id } });
     expect(gone.isError).toBe(true);
 
     const back = body(await client.callTool({ name: 'crbro_forget', arguments: { neuron: id, restore: true } }));
@@ -290,7 +290,7 @@ describe('tools/call', () => {
     expect(r.revised_entries).toBe(1);
     expect(r.changed).toContain('tags');
 
-    const n: any = await client.callTool({ name: 'crbro_inspect', arguments: { view: 'neuron', neuron: id } });
+    const n: any = await client.callTool({ name: 'crbro_inspect', arguments: { view: 'neuron', detail: 'full', neuron: id } });
     const status = n.structuredContent.neuron.entry_status;
     expect(Object.keys(status).length).toBe(1);
     expect(Object.values(status)[0]).toMatchObject({ status: 'superseded', note: 'moved to a dedicated store' });

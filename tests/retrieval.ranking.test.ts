@@ -79,7 +79,9 @@ describe('also_matched', () => {
     const extra = hits[0].also_matched || [];
     expect(extra.length).toBe(2);
     for (const e of extra) {
-      expect(e.text).not.toBe(hits[0].matching_content);
+      expect(e.preview).not.toBe(hits[0].matching_content);
+      expect(e.chars).toBeGreaterThan(0);
+      expect(e.entry_id).toMatch(/^[0-9a-f]+$/);
       expect(e.kind).toBe('fact');
     }
   });

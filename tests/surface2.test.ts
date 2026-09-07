@@ -25,7 +25,7 @@ const call = (name: string, args: Record<string, unknown> = {}) =>
 const learn = async (topic: string, type: string, content: string, extra: Record<string, unknown> = {}) =>
   body(await call('crbro_learn', { topic, type, content, ...extra }));
 const inspectNeuron = async (neuron: string, extra: Record<string, unknown> = {}) => {
-  const r = await call('crbro_inspect', { view: 'neuron', neuron, ...extra });
+  const r = await call('crbro_inspect', { view: 'neuron', neuron, detail: 'full', ...extra });
   expect(r.isError, r.content?.[0]?.text).toBeFalsy();
   return r.structuredContent.neuron;
 };
@@ -95,13 +95,13 @@ describe('crbro_inspect', () => {
       await new Promise(r => setTimeout(r, 5));       // distinct `added` stamps
     }
 
-    const page1 = await inspectNeuron(id, { limit: 2 });
+    const page1 = await inspectNeuron(id, { limit: 2, detail: 'full' });
     expect(page1.facts).toHaveLength(2);
     expect(page1.facts_pagination).toMatchObject({ total: 5, returned: 2, offset: 0, has_more: true, order: 'newest first', hidden_superseded: 0 });
     expect(page1.facts[0].added >= page1.facts[1].added).toBe(true);
     expect(page1.facts[0].text).toBe(texts[4]);
 
-    const page3 = await inspectNeuron(id, { limit: 2, offset: 4 });
+    const page3 = await inspectNeuron(id, { limit: 2, offset: 4, detail: 'full' });
     expect(page3.facts).toHaveLength(1);
     expect(page3.facts_pagination).toMatchObject({ total: 5, returned: 1, offset: 4, has_more: false });
     expect(page3.facts[0].text).toBe(texts[0]);
@@ -109,12 +109,12 @@ describe('crbro_inspect', () => {
     // Retire one: it leaves the default page and is counted as hidden.
     const rev = body(await call('crbro_revise', { neuron: id, facts: [texts[2]] }));
     expect(rev.revised_facts).toBe(1);
-    const hidden = await inspectNeuron(id);
+    const hidden = await inspectNeuron(id, { detail: 'full' });
     expect(hidden.facts_pagination.total).toBe(4);
     expect(hidden.facts_pagination.hidden_superseded).toBe(1);
     expect(hidden.facts.map((f: any) => f.text)).not.toContain(texts[2]);
 
-    const all = await inspectNeuron(id, { include_superseded: true });
+    const all = await inspectNeuron(id, { include_superseded: true, detail: 'full' });
     expect(all.facts_pagination.total).toBe(5);
     expect(all.facts.find((f: any) => f.text === texts[2]).status).toBe('superseded');
   });

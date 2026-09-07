@@ -499,8 +499,8 @@ describe('SearchEngine: retired entries leave recall, removeNeuron drops a neuro
     });
   });
 
-  it('the index format is version 5, so a pre-2.0 index is rebuilt', () => {
-    expect(INDEX_VERSION).toBe(5);
+  it('the index format is version 6, so an index without entry ids is rebuilt', () => {
+    expect(INDEX_VERSION).toBe(6);
   });
 });
 

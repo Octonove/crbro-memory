@@ -2,6 +2,69 @@
 
 All notable changes to CRBRO.
 
+## [2.1.0] — 2026-09-07
+
+### A memory you query, not one you dump
+
+2.0.3 put a ceiling on every read. 2.1 removes the reason the ceiling was
+being hit: reads that returned everything when the caller needed one thing.
+Every figure below is the text a Claude Code session actually reads
+(`content[0].text`; that client does not pass `structuredContent` to the
+model), measured on the same 1,145-neuron brain, 2.0.3 → 2.1.0.
+
+**`crbro_inspect view=neuron` is an index by default.** Header, counts,
+connections, and every entry — map first, then errors, debts, preferences,
+patterns, decisions and the long tail of facts — as an id, a kind, a date and a
+160-character preview, 25 per page with `limit`/`offset`. Retired entries are
+hidden and counted in `entries_pagination.hidden_retired`; with
+`include_superseded=true` they come back with `revised` and `retired_note`.
+`entries=[ids or exact text]` returns just those in full and names what it
+could not find; `detail=full` is the old whole-neuron read, still budgeted.
+The 307-fact neuron: 5,904 tokens shortened in 2.0.3 (66,952 whole in 2.0.2)
+→ 1,887 for the complete index.
+
+**`crbro_recall` hands you the handle.** Every result and every `also_matched`
+line carries `entry_id` — stamped on each chunk at index time, so a decision
+whose chunk is "text — rationale" still resolves to the decision's own id. The
+default is five ranked results, down from ten (the metric is recall@3);
+`matched_neurons` and `has_more` say how many neurons matched before the cut,
+so five never reads as "only five". A hit longer than 1,200 characters comes
+back as its opening with `content_truncated` and `content_chars`; the
+`also_matched` lines are 300-character previews with their own ids. The
+~90-token hint that repeated on every call is one line. Ten results:
+6,242 → 3,941 tokens; five, the default: about 2,000.
+
+**`crbro_boot` carries headlines.** The last three sessions come as their
+opening 240 characters with `summary_truncated` and `summary_chars` beside
+them; `hot_topics` are ten rows with the day, not twenty with the
+millisecond; `active_context` no longer repeats `open_items` and
+`recently_closed`, which boot already serves at the top level, capped at 12
+and 8 with `_total` when there are more. The protocol block,
+`memory_discipline` and `retired_tools` are untouched. 4,989 → 2,758 tokens.
+
+**`crbro_inspect view=sessions` honours `offset` and caps each summary at
+3,000 characters, declared** — except `limit=1`, which returns one log whole:
+that is the door boot points at.
+
+**`crbro_consolidate` caps the summary at 3,000 characters, after redacting.**
+The card asks for a line; the field was taking whole reports, median 6,829
+characters on the reference brain, re-read at every later boot. Credentials
+are redacted before the cut so none is left half-written on disk; the
+response returns `summary_truncated: {kept_from_this_call, sent}` with the
+reason, and the parameter now says where the facts belong: in `crbro_learn`.
+
+**Compact JSON on the wire.** Responses were pretty-printed; the indentation
+was 4–27% of what the model paid, depending on the view (12% of boot, 27% of
+`global_map`). `view=global_map`: 2,111 → 1,549 tokens.
+
+`memory_discipline` teaches the habit in one sentence and dropped a
+371-character lifecycle paragraph already carried by learn, revise and forget.
+The search index is format 6 and rebuilds itself once on the first boot.
+Brains on disk are untouched; a client that wants the 2.0 shape passes
+`detail=full`. Eighteen new or adapted tests, 293 in total; the retrieval
+benchmark is unchanged at 71% / 77% (79% / 85% with `also_matched`), now
+matching hits by `entry_id`.
+
 ## [2.0.3] — 2026-09-07
 
 ### The brain outgrew what a tool result can carry
