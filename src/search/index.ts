@@ -18,7 +18,7 @@ import { create, insert, search, remove, save, load, getByID } from '@orama/oram
 import type { AnyOrama, RawData } from '@orama/orama';
 import path from 'node:path';
 import { readJSON, writeJSON, listJSONFiles, fileExists, deleteJSON, fileMtime, newestMtime } from '../utils/fs.js';
-import { chunkId } from '../utils/hash.js';
+import { chunkId, factId } from '../utils/hash.js';
 import { queryTerms, variants } from './tokenize.js';
 import { SemanticIndex, semanticEnabled, type SemanticHit } from './semantic.js';
 import { entryId } from '../sync/ops.js';
@@ -35,7 +35,7 @@ import type { Neuron, SearchResult, Fact } from '../types/index.js';
  * 2.0) are no longer chunked, so an index built before it must be rebuilt or
  * it would keep serving entries that were retired.
  */
-export const INDEX_VERSION = 5;   // 4: keys field (1.15) · 5: entry_status (2.0)
+export const INDEX_VERSION = 6;   // 4: keys field (1.15) · 5: entry_status (2.0) · 6: eid per chunk (2.1)
 
 /** Weight given to a neuron for each *additional* chunk that matches. */
 const BREADTH_BONUS = 0.05;
@@ -68,6 +68,22 @@ function semanticFloor(): number {
 /** At or above this cosine a vector-only match is reported as strong. */
 const SEMANTIC_STRONG = 0.86;
 
+/**
+ * An also_matched line: a preview and a handle, not the body. As full text
+ * these lines were 46% of what a recall cost; the opening says whether the
+ * line matters, and entry_id reads it whole through crbro_inspect.
+ */
+const ALSO_PREVIEW = 300;
+function alsoLine(text: string, kind: string, added: string, eid?: string) {
+  return {
+    ...(eid ? { entry_id: eid } : {}),
+    kind,
+    added,
+    preview: text.length > ALSO_PREVIEW ? `${text.slice(0, ALSO_PREVIEW).trimEnd()}…` : text,
+    chars: text.length,
+  };
+}
+
 const SCHEMA = {
   id: 'string' as const,       // "<neuron_id>#<hash>"  — must be `id` for Orama
   neuron: 'string' as const,
@@ -75,6 +91,7 @@ const SCHEMA = {
   text: 'string' as const,
   keys: 'string' as const,     // aliases a future question may use — facts only (1.15)
   kind: 'string' as const,     // header | fact | decision | pattern | preference
+  eid: 'string' as const,      // the entry's own id: factId for facts, entryId otherwise, 'map', '' for the header (2.1)
   domain: 'string' as const,
   tags: 'string' as const,
   added: 'string' as const,
@@ -86,12 +103,18 @@ interface StoredIndex {
   data: RawData;
 }
 
+/** Filled in by search/searchMany when the caller passes it: what the list left out. */
+export interface SearchStats {
+  matched_neurons?: number;
+}
+
 interface ChunkHit {
   neuron: string;
   name: string;
   domain: string;
   text: string;
   kind: string;
+  eid: string;
   added: string;
   heat: number;
   score: number;
@@ -294,7 +317,7 @@ export class SearchEngine {
    */
   async search(
     query: string,
-    options?: { domain?: string; limit?: number }
+    options?: { domain?: string; limit?: number; stats?: SearchStats }
   ): Promise<SearchResult[]> {
     if (!this.db) await this.init();
     if (!this.db) return [];
@@ -327,6 +350,7 @@ export class SearchEngine {
             domain: doc.domain,
             text: doc.text,
             kind: doc.kind,
+            eid: doc.eid || '',
             added: doc.added,
             heat: doc.heat || 0,
             score: normalised,
@@ -360,6 +384,9 @@ export class SearchEngine {
     }
     for (const list of byNeuron.values()) list.sort((a, b) => b.score - a.score);
 
+    // How many neurons had any hit, before the limit: without it a caller
+    // shown five results cannot tell "five matched" from "five of forty".
+    if (options?.stats) options.stats.matched_neurons = byNeuron.size;
     return this.materializeResults([...byNeuron.values()], limit, terms.length);
   }
 
@@ -372,7 +399,7 @@ export class SearchEngine {
    */
   async searchMany(
     queries: string[],
-    options: { domain?: string; limit?: number } = {}
+    options: { domain?: string; limit?: number; stats?: SearchStats } = {}
   ): Promise<SearchResult[]> {
     const distintas = [...new Set(queries.map(q => (q || '').trim()).filter(Boolean))];
     if (distintas.length === 0) return [];
@@ -381,9 +408,9 @@ export class SearchEngine {
     const listas = await Promise.all(
       distintas.map(q => this.search(q, { ...options, limit: Math.max(limit, 10) * 2 }))
     );
-    type Also = { text: string; kind: string; added: string };
+    type Also = NonNullable<SearchResult['also_matched']>[number];
     const fused = new Map<string, { score: number; best: SearchResult; bestRank: number; strong: boolean; also: Map<string, Also> }>();
-    const alsoOf = (r: SearchResult): Also => ({ text: r.matching_content, kind: r.matched_kind || '', added: r.matched_added || '' });
+    const alsoOf = (r: SearchResult): Also => alsoLine(r.matching_content, r.matched_kind || '', r.matched_added || '', r.entry_id);
     for (const lista of listas) {
       lista.forEach((r, i) => {
         const gain = 1 / (RRF_K + i + 1);
@@ -403,21 +430,39 @@ export class SearchEngine {
             f.also.set(r.matching_content, alsoOf(r));
           }
         }
-        for (const a of r.also_matched || []) f.also.set(a.text, a);
+        for (const a of r.also_matched || []) f.also.set(a.entry_id || a.preview, a);
       });
     }
     const escala = (RRF_K + 1) / listas.length;
+    if (options.stats) options.stats.matched_neurons = fused.size;
     return [...fused.values()]
       .sort((a, b) => b.score - a.score)
       .slice(0, limit)
       .map(f => {
         const r: SearchResult = { ...f.best, relevance_score: Math.round(f.score * escala * 1000) / 1000 };
         r.confidence = f.strong ? 'strong' : 'weak';
-        const also = [...f.also.values()].filter(a => a.text !== r.matching_content).slice(0, 3);
+        const propio = alsoLine(r.matching_content, r.matched_kind || '', r.matched_added || '', r.entry_id);
+        const also = [...f.also.values()]
+          .filter(a => (a.entry_id && propio.entry_id) ? a.entry_id !== propio.entry_id : a.preview !== propio.preview)
+          .slice(0, 3);
         if (also.length) r.also_matched = also;
         else delete r.also_matched;
         return r;
       });
+  }
+
+  /**
+   * searchMany plus the one number the list alone cannot carry: how many
+   * neurons matched before the limit cut the list. The server puts it beside
+   * `returned` so a short page never reads as a short brain.
+   */
+  async searchManyWithStats(
+    queries: string[],
+    options: { domain?: string; limit?: number } = {}
+  ): Promise<{ results: SearchResult[]; matched_neurons: number }> {
+    const stats: SearchStats = {};
+    const results = await this.searchMany(queries, { ...options, stats });
+    return { results, matched_neurons: stats.matched_neurons ?? results.length };
   }
 
   /**
@@ -450,7 +495,7 @@ export class SearchEngine {
       if (domain && doc.domain !== domain) continue;
       perChunk.set(h.id, {
         neuron: doc.neuron, name: doc.name, domain: doc.domain, text: doc.text,
-        kind: doc.kind, added: doc.added, heat: doc.heat || 0, score: 0, matched: 0,
+        kind: doc.kind, eid: doc.eid || '', added: doc.added, heat: doc.heat || 0, score: 0, matched: 0,
       });
     }
 
@@ -563,6 +608,7 @@ export class SearchEngine {
           matching_content: elegido.text,
           matched_kind: elegido.kind,
           matched_added: elegido.added || '',
+          ...(elegido.eid ? { entry_id: elegido.eid } : {}),
           heat: elegido.heat,
           matched_terms: elegido.matched,
           query_terms: queryTermCount,
@@ -583,7 +629,9 @@ export class SearchEngine {
     // they can still change the answer.
     for (const { r, extra } of top.slice(0, ALSO_MATCHED_RESULTS)) {
       if (extra.length > 0) {
-        r.also_matched = extra.map(c => ({ text: c.text, kind: c.kind, added: c.added || '' }));
+        // Previews, not bodies: the also lines were 46% of a recall's cost as
+        // full text. The id reads any of them whole.
+        r.also_matched = extra.map(c => alsoLine(c.text, c.kind, c.added || '', c.eid));
       }
     }
     return top.map(x => x.r);
@@ -692,6 +740,7 @@ export class SearchEngine {
       id: chunkId(neuron.id, `header:${headerText}`),
       text: headerText,
       kind: 'header',
+      eid: '',
       added: neuron.created || '',
     });
 
@@ -704,6 +753,7 @@ export class SearchEngine {
         text: fact.text,
         keys: (fact.keys || []).join(' '),
         kind: 'fact',
+        eid: fact.id || factId(fact.text),
         added: fact.added || '',
       });
     }
@@ -719,6 +769,9 @@ export class SearchEngine {
         id: chunkId(neuron.id, text),
         text,
         kind: 'decision',
+        // The chunk carries text + rationale for search; the id is the
+        // decision's own, so a hit resolves in the index and the sidecars.
+        eid: decision.id || entryId(decision.text),
         added: decision.date || '',
       });
     }
@@ -735,6 +788,7 @@ export class SearchEngine {
         id: chunkId(neuron.id, pattern),
         text: pattern,
         kind: 'pattern',
+        eid: entryId(pattern),
         added: fecha(pattern),
       });
     }
@@ -746,6 +800,7 @@ export class SearchEngine {
         id: chunkId(neuron.id, pref),
         text: pref,
         kind: 'preference',
+        eid: entryId(pref),
         added: fecha(pref),
       });
     }
@@ -758,6 +813,7 @@ export class SearchEngine {
         id: chunkId(neuron.id, `error:${err}`),
         text: err,
         kind: 'error',
+        eid: entryId(err),
         added: fecha(err),
       });
     }
@@ -770,6 +826,7 @@ export class SearchEngine {
         id: chunkId(neuron.id, `debt:${debt}`),
         text: debt,
         kind: 'debt',
+        eid: entryId(debt),
         added: fecha(debt),
       });
     }
@@ -780,6 +837,7 @@ export class SearchEngine {
         id: chunkId(neuron.id, `map:${neuron.map.text}`),
         text: neuron.map.text,
         kind: 'map',
+        eid: 'map',
         added: neuron.map.updated || '',
       });
     }

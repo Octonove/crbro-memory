@@ -37,6 +37,11 @@ const qs = JSON.parse(readFileSync(join(HERE, 'queries.json'), 'utf8'));
 const { Brain } = await import(pathToFileURL(join(DIST, 'engine/brain.js')).href);
 const { Cortex } = await import(pathToFileURL(join(DIST, 'engine/cortex.js')).href);
 const { SearchEngine } = await import(pathToFileURL(join(DIST, 'search/index.js')).href);
+// 2.1 identifies a hit by its entry id, not by echoing the whole text back:
+// matching_content may come back shortened and also_matched lines are
+// previews. The expected fact is the one whose id matches; the text
+// comparison stays as the fallback for anything without an id.
+const { factId } = await import(pathToFileURL(join(DIST, 'utils/hash.js')).href);
 
 // ─── Montar el cerebro desde el fixture ────────────────────────────
 const root = mkdtempSync(join(tmpdir(), 'crbro-bench-'));
@@ -95,14 +100,16 @@ for (const [qi, q] of qs.queries.entries()) {
   if (hits[0] && hits[0].confidence === 'strong') res.top1Strong++;
 
   // Acierto a nivel de HECHO: el chunk devuelto es el texto esperado.
-  const pos = hits.findIndex(h => h.matching_content === esperado.text);
+  const esperadoId = factId(esperado.text);
+  const es = (h) => h.entry_id ? h.entry_id === esperadoId : h.matching_content === esperado.text;
+  const pos = hits.findIndex(es);
   if (pos === 0) res.motor.at1++;
   if (pos >= 0 && pos < 3) res.motor.at3++;
   if (pos >= 0) res.motor.mrr += 1 / (pos + 1);
   else res.fallos.push({ query: q.query, label: q.expect_label });
 
-  const posAlso = hits.findIndex(h => h.matching_content === esperado.text
-    || (h.also_matched || []).some(a => a.text === esperado.text));
+  const posAlso = hits.findIndex(h => es(h)
+    || (h.also_matched || []).some(a => a.entry_id ? a.entry_id === esperadoId : (a.preview ?? a.text) === esperado.text));
   if (posAlso === 0) res.conAlso.at1++;
   if (posAlso >= 0 && posAlso < 3) res.conAlso.at3++;
 
