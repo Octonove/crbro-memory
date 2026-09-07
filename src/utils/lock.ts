@@ -56,7 +56,12 @@ async function acquire(target: string): Promise<() => Promise<void>> {
       };
     } catch (err) {
       const code = (err as NodeJS.ErrnoException)?.code;
-      if (code !== 'EEXIST') throw err;
+      // EEXIST is the mechanism. EPERM and EBUSY are Windows saying the same
+      // thing a beat later: the holder is unlinking the lock at the very
+      // instant we try to create it. Measured on the CI runner: two writers
+      // interleaving on the same neuron hit it about one run in five. Both
+      // are a reason to try again, never a reason to lose the write.
+      if (code !== 'EEXIST' && code !== 'EPERM' && code !== 'EBUSY') throw err;
 
       // Someone holds it. If they have held it far too long, they are gone.
       try {

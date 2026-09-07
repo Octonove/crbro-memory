@@ -2,6 +2,19 @@
 
 All notable changes to CRBRO.
 
+## [2.1.2] — 2026-09-07
+
+### A lock that Windows sometimes refuses is still a lock
+
+The per-neuron write lock is a file created with the exclusive flag: one
+creator wins, everyone else sees EEXIST and waits. On Windows the loser can
+see EPERM or EBUSY instead — the holder is unlinking the lock at the very
+instant the next writer tries to create it — and that was thrown as a real
+error. In CI, two writers interleaving on one neuron hit it about one run in
+five; on a desk it is two clients saving into the same topic at once. Both
+codes are now a reason to wait and try again, under the same deadline as
+before. No write is lost, and the concurrency suite runs clean on Windows.
+
 ## [2.1.1] — 2026-09-07
 
 ### The summary is stored whole again
