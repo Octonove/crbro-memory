@@ -35,7 +35,7 @@ import type { Neuron, SearchResult, Fact } from '../types/index.js';
  * 2.0) are no longer chunked, so an index built before it must be rebuilt or
  * it would keep serving entries that were retired.
  */
-export const INDEX_VERSION = 6;   // 4: keys field (1.15) · 5: entry_status (2.0) · 6: eid per chunk (2.1)
+export const INDEX_VERSION = 7;   // 4: keys field (1.15) · 5: entry_status (2.0) · 6: eid per chunk (2.1) · 7: session logs indexed (2.2)
 
 /** Weight given to a neuron for each *additional* chunk that matches. */
 const BREADTH_BONUS = 0.05;
@@ -106,6 +106,89 @@ interface StoredIndex {
 /** Filled in by search/searchMany when the caller passes it: what the list left out. */
 export interface SearchStats {
   matched_neurons?: number;
+  /** Day logs whose summary mentions the query — a list of their own, never mixed with neurons. */
+  sessions?: SessionMatch[];
+  /** How many day logs had a hit at all, before the cap on sessions: three never reads as "only three". */
+  sessions_total?: number;
+}
+
+/**
+ * A session log that matched. The diary is searchable since 2.2, but it is
+ * narrative, not knowledge: a session hit points at where something was
+ * told, it never outranks the fact that answers. Read the whole log with
+ * crbro_inspect view=sessions session=<session_id>.
+ */
+export interface SessionMatch {
+  session_id: string;
+  date: string;
+  entry_id: string;
+  preview: string;
+  chars: number;
+  matched_terms: number;
+  query_terms: number;
+  confidence: 'strong' | 'weak';
+}
+
+interface SessionHit {
+  session: string;
+  date: string;
+  text: string;
+  eid: string;
+  score: number;
+  matched: number;
+}
+
+const SESSION_MATCHES = 3;
+const SESSION_CHUNK = 700;
+
+/** Best chunk per session, top sessions by coverage-weighted score; total is how many days had a hit. */
+function topSessions(hits: Map<string, SessionHit>, queryTerms: number): { matches: SessionMatch[]; total: number } {
+  const porSesion = new Map<string, SessionHit>();
+  for (const h of hits.values()) {
+    const prev = porSesion.get(h.session);
+    if (!prev || h.score * h.matched > prev.score * prev.matched) porSesion.set(h.session, h);
+  }
+  const matches = [...porSesion.values()]
+    // Ties broken by id, newest first, so the list is the same on every run.
+    .sort((a, b) => b.score * b.matched - a.score * a.matched || (a.session < b.session ? 1 : -1))
+    .slice(0, SESSION_MATCHES)
+    .map((h): SessionMatch => {
+      const strong = queryTerms <= 1 ? h.matched >= 1 : h.matched >= 2 && h.matched / queryTerms >= 0.5;
+      return {
+        session_id: h.session,
+        date: h.date,
+        entry_id: h.eid,
+        preview: h.text.length > 300 ? `${h.text.slice(0, 300).trimEnd()}…` : h.text,
+        chars: h.text.length,
+        matched_terms: h.matched,
+        query_terms: queryTerms,
+        confidence: strong ? 'strong' : 'weak',
+      };
+    });
+  return { matches, total: porSesion.size };
+}
+
+/**
+ * A summary becomes paragraphs of at most SESSION_CHUNK characters: a match
+ * then points at the paragraph that mentions the thing, and the preview is
+ * the paragraph itself, not the opening of a 7,000-character day.
+ */
+function sessionChunks(summary: string): string[] {
+  const out: string[] = [];
+  for (const parrafo of summary.split(/\n-{3,}\n|\n{2,}/)) {
+    const p = parrafo.trim();
+    if (!p) continue;
+    if (p.length <= SESSION_CHUNK) { out.push(p); continue; }
+    let resto = p;
+    while (resto.length > SESSION_CHUNK) {
+      const corte = resto.lastIndexOf(' ', SESSION_CHUNK);
+      const at = corte > SESSION_CHUNK / 2 ? corte : SESSION_CHUNK;
+      out.push(resto.slice(0, at).trim());
+      resto = resto.slice(at).trim();
+    }
+    if (resto) out.push(resto);
+  }
+  return out;
 }
 
 interface ChunkHit {
@@ -216,8 +299,10 @@ export class SearchEngine {
     const indexAt = await fileMtime(this.brain.paths.chunksIndex());
     if (indexAt === 0) return true;
     const cortexAt = await newestMtime(this.brain.paths.cortex);
+    // The diary is indexed too (2.2): a log written by another process counts.
+    const diaryAt = await newestMtime(this.brain.paths.hippocampus);
     // One second of slack: a write landing during a rebuild is not staleness.
-    return cortexAt > indexAt + 1000;
+    return Math.max(cortexAt, diaryAt) > indexAt + 1000;
   }
 
   /**
@@ -240,6 +325,16 @@ export class SearchEngine {
         await this.insertNeuronChunks(neuron);
       } catch {
         // Skip unreadable neuron, keep going.
+      }
+    }
+
+    // The diary too (2.2): every session log, as paragraphs.
+    for (const id of await listJSONFiles(this.brain.paths.hippocampus)) {
+      try {
+        const log = await readJSON<{ session_id: string; date?: string; summary?: string }>(this.brain.paths.session(id));
+        if (log?.summary) await this.insertSessionChunks(log);
+      } catch {
+        // Skip unreadable log, keep going.
       }
     }
 
@@ -327,6 +422,7 @@ export class SearchEngine {
     if (terms.length === 0) return [];
 
     const perChunk = new Map<string, ChunkHit>();
+    const perSession = new Map<string, SessionHit>();
 
     for (const term of terms) {
       const hits = await this.searchTerm(term, options?.domain);
@@ -338,6 +434,16 @@ export class SearchEngine {
         const doc = hit.document as any;
         const key = doc.id as string;
         const normalised = best > 0 ? hit.score / best : 0;
+
+        // Session logs are searched, but never as neurons: they keep a list
+        // of their own, so a long narrative cannot outrank the fact that
+        // answers, and the neuron path below never sees them.
+        if (doc.kind === 'session') {
+          const prev = perSession.get(key);
+          if (prev) { prev.score += normalised; prev.matched += 1; }
+          else perSession.set(key, { session: String(doc.name || ''), date: String(doc.added || ''), text: String(doc.text || ''), eid: String(doc.eid || ''), score: normalised, matched: 1 });
+          continue;
+        }
 
         const existing = perChunk.get(key);
         if (existing) {
@@ -373,6 +479,11 @@ export class SearchEngine {
       await this.fuseSemantic(query, perChunk, options?.domain);
     }
 
+    if (options?.stats) {
+      const top = topSessions(perSession, terms.length);
+      options.stats.sessions = top.matches;
+      options.stats.sessions_total = top.total;
+    }
     if (perChunk.size === 0) return [];
 
     // Group chunks by neuron, best first.
@@ -405,9 +516,34 @@ export class SearchEngine {
     if (distintas.length === 0) return [];
     if (distintas.length === 1) return this.search(distintas[0], options);
     const limit = options.limit ?? 10;
+    const porConsulta: SearchStats[] = distintas.map(() => ({}));
     const listas = await Promise.all(
-      distintas.map(q => this.search(q, { ...options, limit: Math.max(limit, 10) * 2 }))
+      distintas.map((q, i) => this.search(q, { ...options, stats: porConsulta[i], limit: Math.max(limit, 10) * 2 }))
     );
+    if (options.stats) {
+      // Session hits: a day that several phrasings point at ranks first, then
+      // by accumulated coverage (matched over query terms, so 2/2 beats 3/8).
+      // The row kept is the best-covered one, strong if any phrasing found it
+      // so — and the same phrasings in any order give the same list.
+      const cobertura = (m: SessionMatch) => (m.query_terms > 0 ? m.matched_terms / m.query_terms : 0);
+      const fusion = new Map<string, { row: SessionMatch; cobertura: number; frases: number; strong: boolean }>();
+      for (const s of porConsulta) {
+        for (const m of s.sessions || []) {
+          const f = fusion.get(m.session_id);
+          if (!f) { fusion.set(m.session_id, { row: m, cobertura: cobertura(m), frases: 1, strong: m.confidence === 'strong' }); continue; }
+          f.cobertura += cobertura(m);
+          f.frases += 1;
+          f.strong = f.strong || m.confidence === 'strong';
+          if (cobertura(m) > cobertura(f.row) || (cobertura(m) === cobertura(f.row) && m.matched_terms > f.row.matched_terms)) f.row = m;
+        }
+      }
+      options.stats.sessions = [...fusion.values()]
+        .sort((a, b) => b.frases - a.frases || b.cobertura - a.cobertura || (a.row.session_id < b.row.session_id ? 1 : -1))
+        .slice(0, SESSION_MATCHES)
+        .map(f => ({ ...f.row, confidence: f.strong ? 'strong' as const : f.row.confidence }));
+      // Each phrasing counted its own days: the union is at least the largest count.
+      options.stats.sessions_total = Math.max(fusion.size, ...porConsulta.map(s => s.sessions_total || 0));
+    }
     type Also = NonNullable<SearchResult['also_matched']>[number];
     const fused = new Map<string, { score: number; best: SearchResult; bestRank: number; strong: boolean; also: Map<string, Also> }>();
     const alsoOf = (r: SearchResult): Also => alsoLine(r.matching_content, r.matched_kind || '', r.matched_added || '', r.entry_id);
@@ -459,10 +595,11 @@ export class SearchEngine {
   async searchManyWithStats(
     queries: string[],
     options: { domain?: string; limit?: number } = {}
-  ): Promise<{ results: SearchResult[]; matched_neurons: number }> {
+  ): Promise<{ results: SearchResult[]; matched_neurons: number; sessions: SessionMatch[]; sessions_total: number }> {
     const stats: SearchStats = {};
     const results = await this.searchMany(queries, { ...options, stats });
-    return { results, matched_neurons: stats.matched_neurons ?? results.length };
+    const sessions = stats.sessions ?? [];
+    return { results, matched_neurons: stats.matched_neurons ?? results.length, sessions, sessions_total: stats.sessions_total ?? sessions.length };
   }
 
   /**
@@ -491,7 +628,7 @@ export class SearchEngine {
       if (perChunk.has(h.id)) continue;
       let doc: any;
       try { doc = await getByID(this.db as AnyOrama, h.id); } catch { doc = undefined; }
-      if (!doc || doc.kind === 'header') continue;
+      if (!doc || doc.kind === 'header' || doc.kind === 'session') continue;
       if (domain && doc.domain !== domain) continue;
       perChunk.set(h.id, {
         neuron: doc.neuron, name: doc.name, domain: doc.domain, text: doc.text,
@@ -689,7 +826,9 @@ export class SearchEngine {
       // Filtered here, not with an Orama `where` clause: a `where` on a
       // plain string field matches nothing at all, so the old code turned
       // every domain-scoped recall into zero results (measured).
-      return domain ? hits.filter(h => (h.document as any).domain === domain) : hits;
+      // Day logs have no domain: a domain-scoped recall still lists the days
+      // that mention it, in their own list, or the diary vanished in silence.
+      return domain ? hits.filter(h => (h.document as any).kind === 'session' || (h.document as any).domain === domain) : hits;
     };
 
     let hits = await run(0);
@@ -710,8 +849,13 @@ export class SearchEngine {
       hits = [...mejor.values()].sort((a, b) => b.score - a.score);
     }
 
-    if (hits.length === 0 && term.length >= 5) {
-      hits = await run(1);
+    // Decided on neuron hits, not on hits at all: since 2.2 a day log that
+    // repeats the user's typo verbatim is an exact hit, and it must not switch
+    // off the slack that still finds the fact spelled right.
+    if (term.length >= 5 && !hits.some(h => (h.document as any).kind !== 'session')) {
+      const vistos = new Set(hits.map(h => h.document.id));
+      const fuzzy = (await run(1)).filter(h => (h.document as any).kind !== 'session' && !vistos.has(h.document.id));
+      if (fuzzy.length > 0) hits = [...hits, ...fuzzy].sort((a, b) => b.score - a.score);
     }
     return hits;
   }
@@ -843,6 +987,37 @@ export class SearchEngine {
     }
   }
 
+  /**
+   * Index one session log, replacing whatever it had. Called by consolidate
+   * for the day just logged and by rebuild for the whole diary.
+   */
+  async indexSession(log: { session_id: string; date?: string; summary?: string }): Promise<void> {
+    if (!this.db) await this.init();
+    if (!this.db) return;
+    await this.removeNeuronChunks(`session:${log.session_id}`);
+    if (log.summary) await this.insertSessionChunks(log);
+    this.markDirty();
+  }
+
+  private async insertSessionChunks(log: { session_id: string; date?: string; summary?: string }): Promise<void> {
+    const trozos = sessionChunks(String(log.summary || ''));
+    for (let i = 0; i < trozos.length; i++) {
+      await this.put({
+        id: chunkId(`session:${log.session_id}`, trozos[i]),
+        neuron: `session:${log.session_id}`,
+        name: log.session_id,
+        text: trozos[i],
+        keys: '',
+        kind: 'session',
+        eid: `${log.session_id}#${i}`,
+        domain: '',
+        tags: '',
+        added: log.date || '',
+        heat: 0,
+      });
+    }
+  }
+
   private async put(doc: Record<string, unknown>): Promise<void> {
     try {
       await insert(this.db as AnyOrama, doc as any);
@@ -861,8 +1036,9 @@ export class SearchEngine {
     }
     ids.add(String(doc.id));
     // Headers are name + tags: lexical only, they would only add noise to
-    // the vector index.
-    if (this.semantic && doc.kind !== 'header') {
+    // the vector index. Session logs stay lexical too, for now: the words a
+    // day was described with are the words it is asked about.
+    if (this.semantic && doc.kind !== 'header' && doc.kind !== 'session') {
       this.pendingEmbed.set(String(doc.id), String(doc.text || ''));
     }
   }
