@@ -103,9 +103,19 @@ const NEURON_TYPES = ['project', 'tech', 'lang', 'person', 'domain', 'process', 
 const INSPECT_VIEWS = ['status', 'neuron', 'neurons', 'sessions', 'global_map'] as const;
 
 export function createServer(): McpServer {
+  // Served at initialize for the clients that read it (Claude Desktop does
+  // not, as of anthropics/claude-code#43749; there the tool descriptions
+  // carry the same message). It is the one place to say how the memory is
+  // meant to be used, before any tool is called.
   const server = new McpServer({
     name: 'crbro-memory',
     version: runningVersion(),
+  }, {
+    instructions:
+      'CRBRO is this user\'s persistent memory, kept on their own machine. Start every conversation with crbro_boot: it loads what earlier sessions left — protocols to follow, open items, hot topics. ' +
+      'Before answering anything about the user, their projects, preferences, decisions or past work, call crbro_recall: the answer is usually stored, and making them repeat it is the failure this memory exists to prevent. ' +
+      'Questions about CRBRO itself (version, counts, whether semantic recall is on) are crbro_inspect view=status. Read one entry, not a whole neuron: view=neuron gives an index, entries=[ids] the text. ' +
+      'Save with crbro_learn as you go, and close with crbro_consolidate before the conversation ends.',
   });
 
   // ─── Initialize engines ──────────────────────────────────────
@@ -308,7 +318,7 @@ export function createServer(): McpServer {
     'crbro_inspect',
     {
       title: 'Inspect the brain',
-      description: 'Read-only views of the brain by id or name; to search by content use crbro_recall. Nothing is written by any view: every read leaves the brain untouched. view=status: version, brain path, totals, last boot/consolidation, semantic state, hot_topics_recalculated. view=neuron: an index of one neuron — header, counts, connections (min_strength filters) and every entry as id, kind, date and preview, paged with limit/offset; entries=[ids or exact text] reads those in full, detail=full returns the whole neuron, shortened and declared when large. view=neurons: rows hottest first (id, name, domain, type, heat, last_accessed, facts_count), filtered by domain, type, min_heat, paged with limit/offset. view=sessions: day logs newest first, the only place session summaries are read. view=global_map: one cluster per domain plus cross-domain bridges, computed live. Params of other views are ignored.',
+      description: 'Read-only views of the brain by id or name; to search by content use crbro_recall. Nothing is written by any view: every read leaves the brain untouched. view=status answers any question about CRBRO itself: version, brain path, totals, last boot/consolidation, whether semantic recall is installed and on, hot_topics_recalculated. view=neuron: an index of one neuron — header, counts, connections (min_strength filters) and every entry as id, kind, date and preview, paged with limit/offset; entries=[ids or exact text] reads those in full, detail=full returns the whole neuron, shortened and declared when large. view=neurons: rows hottest first (id, name, domain, type, heat, last_accessed, facts_count), filtered by domain, type, min_heat, paged with limit/offset. view=sessions: day logs newest first, the only place session summaries are read. view=global_map: one cluster per domain plus cross-domain bridges, computed live. Params of other views are ignored.',
       inputSchema: {
         view: z.enum(INSPECT_VIEWS).describe('Which read to perform. Only the params listed for that view are honoured; the rest are ignored, never an error.'),
         neuron: z.string().optional().describe('view=neuron only, required there: neuron id (e.g. "project_octochat") or name (e.g. "OctoChat").'),
@@ -727,7 +737,7 @@ export function createServer(): McpServer {
     'crbro_recall',
     {
       title: 'Recall',
-      description: 'Read-only search of everything saved in earlier sessions — the full text of facts, decisions, patterns, preferences, errors, debts and maps, not just topic names; to read one neuron by id or name use crbro_inspect view=neuron. One result per neuron: its best matching chunk with matched_kind and matched_added, a confidence label (weak = little of the question covered; verify first), plus also_matched. Retired facts and entries never surface. Call it before asking the user what they may already have told you, and before crbro_learn. If nothing matches, retry with 2-4 phrasings in queries or fewer, distinctive words. has_map:true: read the system map with crbro_map before touching that system.',
+      description: 'Read-only search of everything saved in earlier sessions — facts, decisions, patterns, preferences, errors, debts and maps by their full text. Call it BEFORE answering anything about the user, their projects, preferences, decisions or past work: the answer is usually stored, and making them repeat it is the failure this memory exists to prevent. Also before crbro_learn, so a fact is superseded instead of duplicated. One result per neuron: the best matching entry with entry_id (read it whole with crbro_inspect view=neuron entries=[id]), matched_kind, matched_added, a confidence label (weak = little of the question covered; verify) and also_matched previews. Retired entries never surface. Five ranked results by default; matched_neurons says how many more matched. If nothing matches, retry with 2-4 phrasings in queries or fewer, distinctive words. has_map:true: read the system map with crbro_map before touching that system.',
       inputSchema: {
         query: z.string().describe('What to look for, e.g. "Firebase authentication setup". Fewer, distinctive terms beat full sentences.'),
         queries: z.array(z.string()).optional().describe('Alternative phrasings of the same question, searched together with query and fused by rank. Use synonyms, the other language and the concrete product name; 2-4 is plenty.'),
@@ -1254,7 +1264,7 @@ export function createServer(): McpServer {
       title: 'Consolidate the session',
       description: 'Write: close the session — the only way to log a session. Call it before the conversation ends. Persists pending knowledge and index writes, logs the session from summary (credentials stripped, kinds in redacted), sets the context\'s last_session, recalculates heat, links the neurons written this session with weak temporal synapses (synapses_updated), updates the manifest and syncs shared team spaces (offline is normal). Returns session_id, facts_saved, decisions_saved, topics_touched and per-space sync state; topics_touched logs neurons you only read. Not consolidating loses the session\'s knowledge. Mid-session open items go to crbro_context; housekeeping is crbro_maintenance.',
       inputSchema: {
-        summary: z.string().describe('A headline paragraph, not a report: what was done, decided and left open, in a few sentences. The facts themselves belong in crbro_learn, where recall finds them; this text is re-read at every boot. Stored after credential redaction; beyond 3,000 characters it is cut and the response says so.'),
+        summary: z.string().describe('A headline paragraph, not a report: what was done, decided and left open, in a few sentences. The facts themselves belong in crbro_learn, where recall finds them; this text is re-read at every boot. Stored whole, after credential redaction. Session logs are not searched by recall: what only lives here is invisible to it.'),
         topics_touched: z.array(z.string()).optional().describe('Neuron ids this session used WITHOUT writing (recalled, inspected, discussed). Added to the log\'s topics_touched next to the ids written this session; write counters stay real. Unknown ids are dropped and listed in topics_unknown.'),
       },
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
@@ -1266,12 +1276,14 @@ export function createServer(): McpServer {
         // characters on one brain — so the ceiling is enforced here and declared,
         // never applied in silence. What a session learned goes through
         // crbro_learn, where it is found by content instead of re-read whole.
-        // Redact BEFORE cutting: a credential that straddles the cut would
-        // otherwise leave its first half on disk, unrecognisable to the filter.
-        const SUMMARY_MAX = 3_000;
-        const limpio = redact(args.summary).text;
-        const enviado = limpio.length;
-        const summary = enviado > SUMMARY_MAX ? `${limpio.slice(0, SUMMARY_MAX).trimEnd()}…` : limpio;
+        // Stored whole. 2.1.0 cut it at 3,000 characters to protect boot, which
+        // re-read three summaries in full; the same release made boot read only
+        // their first 240, so the cut only ever lost the tail of what the
+        // caller wrote. What is still true: session logs are not searched by
+        // recall, so a fact that lives only here is invisible to it — the note
+        // below says so past the size where that starts to matter.
+        const SUMMARY_LONG = 3_000;
+        const summary = redact(args.summary).text;
         const result = await maintenance.consolidate(summary, { topicsTouched: args.topics_touched });
         // Flush any index writes still sitting in the debounce window, so a
         // session that ends right after a learn does not lose it.
@@ -1285,9 +1297,9 @@ export function createServer(): McpServer {
             ? compartidos.map(c => ({ space: c.space, state: c.state, pushed: c.pushed }))
             : undefined,
           message: 'Session consolidated. Brain state persisted.',
-          ...(enviado > SUMMARY_MAX ? {
-            summary_truncated: { kept_from_this_call: summary.length, sent: enviado },
-            note: `The summary was cut at ${SUMMARY_MAX} characters: it is re-read at every boot. Keep it to a headline paragraph and store the facts with crbro_learn, where recall finds them.`,
+          summary_chars: summary.length,
+          ...(summary.length > SUMMARY_LONG ? {
+            note: `Long summary (${summary.length} characters). Session logs are not searched by crbro_recall: anything that lives only here is invisible to it. Store the facts with crbro_learn; boot reads only the first 240 characters of this text.`,
           } : {}),
         });
       } catch (err) {
