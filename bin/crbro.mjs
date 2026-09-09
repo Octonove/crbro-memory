@@ -2,7 +2,7 @@
 
 // ─── CRBRO CLI ───────────────────────────────────────────────────
 // Command-line interface for CRBRO memory system
-// Supports: init, status, mine, setup-miner, miner-status,
+// Supports: init, status, secret, mine, setup-miner, miner-status,
 //           remove-miner, and MCP server mode (default)
 
 import { platform, homedir } from 'os';
@@ -584,6 +584,149 @@ if (command === 'init') {
     }
   }).catch(console.error);
 
+} else if (command === 'secret') {
+  // ─── Credentials, from the terminal ────────────────────────────
+  //
+  // Until 2.3 the only way to store a credential was the crbro_secret MCP
+  // tool, which means typing it into a conversation with a model. For a
+  // module whose whole point is that a secret never touches the brain, that
+  // was the wrong last mile. These subcommands close it: the value is read
+  // from stdin, never from argv, so it stays out of the shell history and
+  // out of the process table where `ps` and Task Manager can read it.
+  const sub = args[1];
+  const name = args[2];
+
+  const readPiped = () => new Promise((resolve, reject) => {
+    let data = '';
+    process.stdin.setEncoding('utf8');
+    process.stdin.on('data', (d) => { data += d; });
+    process.stdin.on('end', () => resolve(data.replace(/\r?\n$/, '')));
+    process.stdin.on('error', reject);
+  });
+
+  // Interactive read with the echo off. Raw mode hands us every keystroke,
+  // so nothing is drawn and nothing survives in the terminal scrollback.
+  const readHidden = (promptText) => new Promise((resolve, reject) => {
+    const stdin = process.stdin;
+    let value = '';
+    const cleanup = () => {
+      stdin.removeListener('data', onData);
+      if (stdin.isTTY) stdin.setRawMode(false);
+      stdin.pause();
+    };
+    const onData = (chunk) => {
+      for (const ch of chunk.toString('utf8')) {
+        if (ch === '\r' || ch === '\n') { cleanup(); process.stderr.write('\n'); return resolve(value); }
+        if (ch === '\u0003') { cleanup(); process.stderr.write('\n'); return reject(new Error('Cancelled — nothing was stored.')); }
+        if (ch === '\u007f' || ch === '\b') { value = value.slice(0, -1); continue; }
+        value += ch;
+      }
+    };
+    process.stderr.write(promptText);
+    if (stdin.isTTY) stdin.setRawMode(true);
+    stdin.resume();
+    stdin.on('data', onData);
+  });
+
+  const flagValue = (flag) => {
+    const i = args.indexOf(flag);
+    return i !== -1 && args[i + 1] ? args[i + 1] : '';
+  };
+
+  import('../dist/engine/keychain.js').then(async (kc) => {
+    try {
+      if (sub === 'status') {
+        const { backend, reason } = kc.detectBackend();
+        console.log('');
+        console.log('  🔐 CRBRO keychain');
+        console.log('  ─────────────────');
+        console.log(`  Backend:  ${backend || '❌ none available'}`);
+        if (reason) console.log(`  Reason:   ${reason}`);
+        if (backend === 'windows-dpapi') {
+          const dir = process.env['CRBRO_KEYS_DIR'] || join(homedir(), '.crbro-keys');
+          console.log(`  Store:    ${join(dir, 'keys.dpapi')}`);
+          console.log('            Sealed to this Windows account: copied to another');
+          console.log('            machine or lifted from a backup, it is unreadable.');
+        }
+        console.log('');
+        console.log('  The store lives outside the brain. No sync, no team space and no');
+        console.log('  crbro_share can reach it — per machine, on purpose.');
+        console.log('');
+        return;
+      }
+
+      if (sub === 'list') {
+        const secrets = kc.listSecrets();
+        console.log('');
+        if (secrets.length === 0) {
+          console.log('  🔐 No credentials stored on this machine yet.');
+          console.log('     Store one:  npx crbro-memory secret set MY_TOKEN');
+          console.log('');
+          return;
+        }
+        console.log(`  🔐 ${secrets.length} credential(s) — names only, values are never listed.`);
+        console.log('  ──────────────────────────────────────────────────────────');
+        for (const s of secrets) {
+          console.log(`  ${s.name.padEnd(28)} ${s.updated}  ${s.description || ''}`.trimEnd());
+        }
+        console.log('');
+        return;
+      }
+
+      if (!name) {
+        console.error(`  ❌ Missing name. Usage: npx crbro-memory secret ${sub || '<set|get|list|remove|status>'} NAME`);
+        process.exit(1);
+      }
+
+      if (sub === 'set') {
+        const value = process.stdin.isTTY
+          ? await readHidden(`  Value for ${name} (input hidden, Enter to finish): `)
+          : await readPiped();
+        if (!value) {
+          console.error('  ❌ Empty value. Nothing was stored.');
+          process.exit(1);
+        }
+        kc.setSecret(name, value, flagValue('--description'));
+        console.log(`  ✅ ${name} sealed in the OS keychain. CRBRO keeps no copy.`);
+        console.log('     Record only the NAME in the brain, never the value.');
+        return;
+      }
+
+      if (sub === 'get') {
+        const value = kc.getSecret(name);
+        if (value === null) {
+          console.error(`  ❌ ${name} not found on this machine.`);
+          process.exit(1);
+        }
+        if (process.stdout.isTTY) {
+          process.stderr.write('  ⚠️  Printing a credential to the screen. Pipe it instead to keep it out of the scrollback.\n');
+        }
+        process.stdout.write(value + '\n');
+        return;
+      }
+
+      if (sub === 'remove') {
+        if (!args.includes('--yes')) {
+          console.error(`  ❌ This deletes ${name} from the keychain and cannot be undone.`);
+          console.error(`     Re-run to confirm:  npx crbro-memory secret remove ${name} --yes`);
+          process.exit(1);
+        }
+        const removed = kc.removeSecret(name);
+        console.log(removed ? `  ✅ ${name} removed.` : `  ⚪ ${name} was not there. Nothing changed.`);
+        return;
+      }
+
+      console.error('  Usage: npx crbro-memory secret <set|get|list|remove|status> [NAME]');
+      process.exit(1);
+    } catch (err) {
+      console.error(`  ❌ ${err instanceof Error ? err.message : err}`);
+      process.exit(1);
+    }
+  }).catch((err) => {
+    console.error(`  ❌ ${err instanceof Error ? err.message : err}`);
+    process.exit(1);
+  });
+
 } else if (command === '--help' || command === '-h') {
   // ─── Help ──────────────────────────────────────────────────────
   console.log('');
@@ -608,6 +751,13 @@ if (command === 'init') {
   console.log('    npx crbro-memory semantic install Install transformers.js into ~/.crbro/.semantic');
   console.log('    npx crbro-memory semantic build   Embed the whole brain once (needs CRBRO_SEMANTIC=1)');
   console.log('    npx crbro-memory semantic status  Runtime, model and whether it is enabled');
+  console.log('');
+  console.log('  Credentials (per machine, sealed in the OS keychain):');
+  console.log('    npx crbro-memory secret set NAME     Store one; the value is read from stdin, never argv');
+  console.log('    npx crbro-memory secret list         Names only, never values');
+  console.log('    npx crbro-memory secret get NAME     Print one; pipe it to keep it off the screen');
+  console.log('    npx crbro-memory secret remove NAME --yes');
+  console.log('    npx crbro-memory secret status       Which keychain this machine offers');
   console.log('');
   console.log('  Server:');
   console.log('    npx crbro-memory                  Start MCP server (stdio)');
