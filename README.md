@@ -214,6 +214,27 @@ goes in the brain is the *name*:
 Which is all an assistant needs to find it again next week, and useless to
 anyone who reads your memory files.
 
+### From the terminal
+
+Until 2.3 the only way in was `crbro_secret`, which meant typing the value into a
+conversation with a model. `crbro secret` is the same store from the shell:
+
+```bash
+npx crbro-memory secret set GITHUB_TOKEN     # value read from stdin, never argv
+npx crbro-memory secret list                 # names only, never values
+npx crbro-memory secret get GITHUB_TOKEN     # pipe it; warns if it would hit the screen
+npx crbro-memory secret remove GITHUB_TOKEN --yes
+npx crbro-memory secret status               # which store this machine offers
+```
+
+An argument lands in the shell history and in the process table; stdin does not.
+On a terminal the input is hidden as you type, and piping works the same way:
+
+```bash
+Get-Content token.txt | npx crbro-memory secret set GITHUB_TOKEN    # PowerShell
+op read "op://vault/github/token" | npx crbro-memory secret set GITHUB_TOKEN
+```
+
 An environment variable of the same name always wins, so CI and one-off
 overrides work without touching the keychain. On a headless box with no
 credential store, `crbro_secret` says so plainly instead of failing — the
@@ -319,6 +340,7 @@ npx crbro-memory status   # Show brain status
 npx crbro-memory reindex  # Rebuild the search index
 npx crbro-memory eval     # Measure retrieval quality against your own query set
 npx crbro-memory semantic status | install | build   # Semantic recall (installed by init; below)
+npx crbro-memory secret set|get|list|remove|status   # Credentials in the OS keychain (above)
 npx crbro-memory --help   # Help
 ```
 

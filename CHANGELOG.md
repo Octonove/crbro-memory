@@ -2,6 +2,43 @@
 
 All notable changes to CRBRO.
 
+## [2.3.0] — 2026-09-09
+
+### Credentials, without going through a model
+
+The keychain broker landed earlier and closed the wrong half of the problem. A
+secret was refused entry to the brain and then had somewhere to go — but the
+only door was `crbro_secret`, an MCP tool, so the value had to be typed into a
+conversation with a model to get anywhere. For a module whose first sentence is
+that credentials never touch the brain, routing every one of them through a chat
+transcript was the wrong last mile.
+
+`crbro secret` is that door, from the terminal:
+
+```bash
+npx crbro-memory secret set GITHUB_TOKEN
+npx crbro-memory secret list
+npx crbro-memory secret get GITHUB_TOKEN
+npx crbro-memory secret remove GITHUB_TOKEN --yes
+npx crbro-memory secret status
+```
+
+The value is read from **stdin, never from `argv`**, and that is the whole point:
+an argument is written to the shell history and is visible in the process table,
+where anything else running on the machine can read it while the command runs. On
+a terminal the input is read with the echo off, so it never reaches the scrollback
+either. Piped, it is read whole with one trailing newline stripped — which is what
+`Get-Content`, `cat` and every password manager CLI produce.
+
+`get` writes the raw value to stdout so it composes, and warns on stderr when
+stdout is a terminal, because printing a credential to the screen is almost never
+what was meant. `remove` requires `--yes`. `set` refuses an empty value before it
+touches the store.
+
+Nothing here changes where a secret lives: still the operating system's own
+store, still outside the brain, still sealed per machine and unreadable from a
+backup.
+
 ## [2.2.0] — 2026-09-07
 
 ### The diary is searchable
