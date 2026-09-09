@@ -2,6 +2,41 @@
 
 All notable changes to CRBRO.
 
+## [2.3.1] — 2026-09-09
+
+### The read tools were unreachable from Claude Code
+
+`crbro_recall`, `crbro_inspect` and `crbro_map` — the three that carry an
+`outputSchema`, and most of what the memory is for — never arrived. The client
+rejected them before the first call:
+
+```
+Tool 'crbro_inspect' has an invalid outputSchema: JSON Schema declares an
+unsupported dialect ("$schema": "http://json-schema.org/draft-07/schema#").
+The default validator supports JSON Schema 2020-12 only.
+```
+
+The server starts, the tools register, `tools/list` answers — and they are
+dropped on arrival. Nothing in the logs says so, which is why it went unnoticed:
+writes kept working, so the memory looked alive while half of it was gone.
+
+It came from the SDK, not from the schemas. Its Zod converter defaults to
+`target: 'draft-7'`, that default is hardcoded, and `registerTool` exposes no
+way to change it — so everything went out stamped as draft-07, and a client
+validating with an Ajv built for 2020-12 refuses it.
+
+The label was the whole problem. Checked against the real `tools/list` output,
+not one schema uses anything that differs between the two dialects: no
+`definitions`, no `$ref`, no tuple `items`, no boolean `exclusiveMinimum`. They
+were valid 2020-12 already.
+
+So the label comes off on the way out, rather than being rewritten to 2020-12:
+with no `$schema` a validator applies the dialect it can actually run, and
+claiming 2020-12 would mean vouching for output the SDK generates, not us. The
+day the SDK switches, this becomes a no-op instead of a conflict. Two tests pin
+it — no schema declares a dialect, and every tool still ships with its shape
+intact, so the fix cannot fail silently if the SDK moves its internals.
+
 ## [2.3.0] — 2026-09-09
 
 ### Credentials, without going through a model

@@ -1693,5 +1693,53 @@ export function createServer(): McpServer {
     }
   );
 
+  dropSchemaDialect(server);
   return server;
+}
+
+/**
+ * Takes the dialect label off every schema we publish in tools/list.
+ *
+ * The SDK converts our Zod schemas with `target: 'draft-7'` — that default is
+ * hardcoded in its zod-json-schema-compat and registerTool exposes no option
+ * to change it — so every schema goes out stamped
+ * `"$schema": "http://json-schema.org/draft-07/schema#"`. A client that
+ * validates with an Ajv built for 2020-12, which is what Claude Code ships,
+ * refuses the tool outright: «Tool 'crbro_inspect' has an invalid
+ * outputSchema: JSON Schema declares an unsupported dialect». The three read
+ * tools that carry an outputSchema — recall, inspect and map — became
+ * uncallable, which is most of the memory.
+ *
+ * The label is the whole problem. Checked against the real tools/list output:
+ * not one schema uses anything that differs between the two dialects — no
+ * `definitions`, no `$ref`, no tuple `items`, no boolean `exclusiveMinimum`.
+ * They are valid 2020-12 exactly as they stand.
+ *
+ * So the label comes off instead of being rewritten to 2020-12. With no
+ * `$schema` a validator applies its own dialect, which is the one it can
+ * actually run; claiming 2020-12 would mean vouching for output we do not
+ * generate ourselves, and would go stale the day the SDK emits something
+ * dialect-specific. Doing it here, on the way out, also means that the day the
+ * SDK switches to 2020-12 this quietly becomes a no-op instead of a conflict.
+ */
+function dropSchemaDialect(server: McpServer): void {
+  const low = (server as unknown as { server?: { _requestHandlers?: Map<string, unknown> } }).server;
+  const handlers = low?._requestHandlers;
+  const original = handlers?.get('tools/list') as
+    | ((req: unknown, extra: unknown) => Promise<{ tools?: Record<string, unknown>[] }>)
+    | undefined;
+  if (!handlers || typeof original !== 'function') return;   // SDK internals moved: leave it alone
+
+  handlers.set('tools/list', async (req: unknown, extra: unknown) => {
+    const result = await original(req, extra);
+    for (const tool of result?.tools ?? []) {
+      for (const key of ['inputSchema', 'outputSchema'] as const) {
+        const schema = tool[key];
+        if (schema && typeof schema === 'object') {
+          delete (schema as Record<string, unknown>).$schema;
+        }
+      }
+    }
+    return result;
+  });
 }
