@@ -2,6 +2,44 @@
 
 All notable changes to CRBRO.
 
+## [2.4.0] — 2026-09-10
+
+### The memory was installed and never woke up
+
+Registering the MCP server does not call it. The tools appear, the brain sits on
+disk, and unless something runs `crbro_boot` at the start of a conversation the
+assistant answers from nothing — which looks exactly like a memory that does not
+work. Every "CRBRO doesn't remember" report so far has been this, and the
+install instructions were the cause: they said *"start any session with
+crbro_boot"*, which is a thing you do once, by hand, and then forget.
+
+```bash
+npx crbro-memory install-boot
+```
+
+It wires the start into whichever clients it finds, merging into the config and
+never rewriting it:
+
+- **Claude Code** — `SessionStart` in `~/.claude/settings.json`, a command whose
+  stdout enters the session and tells the model to boot first. Claude Code
+  cannot invoke an MCP tool from a hook, so the instruction is the mechanism.
+- **Codex** — `SessionStart` in `~/.codex/hooks.json`: an `mcp_tool` step that
+  calls `crbro_boot` directly **and** the same printed instruction behind it.
+  Not redundancy — the hook can fire before the MCP server has finished
+  starting, and then the direct call is lost with nothing to catch it. That is
+  the failure that started this release.
+
+Tools without session hooks (Cursor, Windsurf, Antigravity) get the exact line
+to paste into their always-on rules file, printed by the command.
+
+Idempotent, and it recognises a hook you wrote yourself — including one that
+points at a file instead of naming `crbro_boot`, which is how the first draft of
+this command managed to install a second hook next to an existing one and boot
+the brain twice. Five tests run the real CLI against a throwaway home and pin
+each of these: the merge, the two Codex layers, the hand-written hook left
+alone, two runs changing nothing, and no client found reporting instead of
+writing.
+
 ## [2.3.1] — 2026-09-09
 
 ### The read tools were unreachable from Claude Code

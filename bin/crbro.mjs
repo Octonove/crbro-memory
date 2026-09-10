@@ -584,6 +584,131 @@ if (command === 'init') {
     }
   }).catch(console.error);
 
+} else if (command === 'install-boot') {
+  // ─── The step that made the memory look broken ─────────────────
+  //
+  // Installing the MCP server does not call it. Without something that runs
+  // crbro_boot at the start of a conversation, the brain sits there and the
+  // assistant answers from nothing — the memory looks installed and behaves
+  // like it was never there. Every report of "CRBRO does not remember" so far
+  // has been this, not a bug in the recall.
+  //
+  // So this wires the start itself, per client:
+  //
+  //   Claude Code  ~/.claude/settings.json — SessionStart runs a command whose
+  //                stdout is added to the session, telling the model to call
+  //                crbro_boot first. Claude Code has no way to invoke an MCP
+  //                tool from a hook, so the instruction is the mechanism.
+  //   Codex        ~/.codex/hooks.json — SessionStart can call an MCP tool
+  //                directly (type "mcp_tool"), so it does, AND keeps the same
+  //                printed instruction as a second layer: the hook can fire
+  //                before the MCP server has finished starting, and then the
+  //                direct call is simply lost.
+  //
+  // Only files that already exist are touched, and each one is merged, never
+  // rewritten. Idempotent: a second run reports and changes nothing.
+  import('fs').then(async fs => {
+    const AVISO =
+      'CRBRO: call mcp__crbro__crbro_boot as your FIRST tool action, before answering, ' +
+      'unless this session already contains its result. Discover deferred CRBRO tools first if needed. ' +
+      'Apply the protocol_enforcement block it returns for the rest of the session.';
+
+    // printf on a shell, Write-Output on Windows PowerShell. One line, no
+    // external file: a path stored in a hook goes stale on the next update.
+    const cmdPosix = `printf '%s\\n' ${JSON.stringify(AVISO)}`;
+    const cmdWin = `powershell -NoProfile -Command ${JSON.stringify('Write-Output ' + JSON.stringify(AVISO))}`;
+    const MATCHER = 'startup|resume|clear|compact';
+
+    const leerJson = (p) => {
+      if (!fs.existsSync(p)) return null;
+      try {
+        return JSON.parse(fs.readFileSync(p, 'utf8').replace(/^﻿/, ''));
+      } catch (e) {
+        console.error(`  ❌ ${p} exists but could not be parsed — not touching it.`);
+        console.error(`     ${e.message}`);
+        process.exit(1);
+      }
+    };
+    const escribirJson = (p, obj) => {
+      const tmp = p + '.' + process.pid + '.tmp';
+      fs.writeFileSync(tmp, JSON.stringify(obj, null, 2) + '\n', 'utf8');
+      fs.renameSync(tmp, p);
+    };
+
+    let tocados = 0, yaEstaban = 0, ausentes = [];
+
+    // — Claude Code —
+    const claudePath = join(homedir(), '.claude', 'settings.json');
+    const claude = leerJson(claudePath) ?? (fs.existsSync(join(homedir(), '.claude')) ? {} : null);
+    if (claude === null) {
+      ausentes.push('Claude Code (~/.claude not found)');
+    } else {
+      claude.hooks = claude.hooks || {};
+      const list = claude.hooks.SessionStart = claude.hooks.SessionStart || [];
+      // Any mention of crbro counts as "already wired". A hand-rolled hook
+      // often points at a file — `cat ~/.claude/crbro-session-start.txt` — so
+      // looking for crbro_boot alone misses it and installs a second entry
+      // that boots the brain twice.
+      if (/crbro/i.test(JSON.stringify(list))) {
+        yaEstaban++;
+        console.log('  ⚪ Claude Code: SessionStart already starts CRBRO. Left alone.');
+      } else {
+        list.push({
+          matcher: MATCHER,
+          hooks: [{ type: 'command', command: cmdPosix, shell: 'bash', timeout: 10, statusMessage: 'Loading CRBRO memory...' }],
+        });
+        escribirJson(claudePath, claude);
+        tocados++;
+        console.log(`  ✅ Claude Code: SessionStart hook added.\n     ${claudePath}`);
+      }
+    }
+
+    // — Codex —
+    const codexDir = join(homedir(), '.codex');
+    const codexPath = join(codexDir, 'hooks.json');
+    if (!fs.existsSync(codexDir)) {
+      ausentes.push('Codex (~/.codex not found)');
+    } else {
+      const codex = leerJson(codexPath) ?? {};
+      codex.hooks = codex.hooks || {};
+      const list = codex.hooks.SessionStart = codex.hooks.SessionStart || [];
+      // Any mention of crbro counts as "already wired". A hand-rolled hook
+      // often points at a file — `cat ~/.claude/crbro-session-start.txt` — so
+      // looking for crbro_boot alone misses it and installs a second entry
+      // that boots the brain twice.
+      if (/crbro/i.test(JSON.stringify(list))) {
+        yaEstaban++;
+        console.log('  ⚪ Codex: SessionStart already starts CRBRO. Left alone.');
+      } else {
+        list.push({
+          matcher: MATCHER,
+          hooks: [
+            { type: 'mcp_tool', server: 'crbro', tool: 'crbro_boot', input: {}, timeout: 30, statusMessage: 'Loading CRBRO memory...' },
+            { type: 'command', command: cmdPosix, commandWindows: cmdWin, timeout: 10, statusMessage: 'Checking CRBRO start...' },
+          ],
+        });
+        escribirJson(codexPath, codex);
+        tocados++;
+        console.log(`  ✅ Codex: SessionStart hook added (MCP call + fallback).\n     ${codexPath}`);
+      }
+    }
+
+    console.log('');
+    if (!tocados && !yaEstaban) {
+      console.log('  ⚠️  Neither ~/.claude nor ~/.codex was found, so nothing was wired.');
+    }
+    for (const a of ausentes) console.log(`  ⚪ Skipped ${a}`);
+    console.log('');
+    console.log('  Other tools (Cursor, Windsurf, Antigravity…) have no session hooks.');
+    console.log('  Put this line in their always-on rules file (.cursorrules, .windsurfrules,');
+    console.log('  User Rules) and it does the same job:');
+    console.log('');
+    console.log(`    ${AVISO}`);
+    console.log('');
+    if (tocados) console.log('  Restart the tool, then check a new conversation actually boots CRBRO.');
+    console.log('');
+  }).catch(console.error);
+
 } else if (command === 'secret') {
   // ─── Credentials, from the terminal ────────────────────────────
   //
@@ -735,6 +860,7 @@ if (command === 'init') {
   console.log('');
   console.log('  Setup:');
   console.log('    npx crbro-memory init             Initialize brain + detect IDEs');
+  console.log('    npx crbro-memory install-boot     Make the memory load itself in every conversation');
   console.log('    npx crbro-memory status           Show brain status');
   console.log('');
   console.log('  Auto-Mining:');
