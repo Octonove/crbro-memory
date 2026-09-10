@@ -119,11 +119,34 @@ claude mcp add --scope user crbro -- npx -y crbro-memory
 docker build -t crbro-memory . && docker run -i -v crbro-brain:/root/.crbro crbro-memory
 ```
 
-### 3. Start using it
+### 3. Make it load itself — do not skip this
 
-Your AI will now have access to 15 memory tools. Start any session with `crbro_boot`.
+```bash
+npx crbro-memory install-boot
+```
 
-### 4. (Claude Code, optional) The subagent hook
+**Installing the server does not call it.** The tools are there, the brain is on disk, and nothing reads it: the assistant answers from nothing and the memory looks broken when it is merely asleep. Every "CRBRO doesn't remember" report so far has been this, not a bug in recall.
+
+`install-boot` wires the start into whichever clients it finds, merging into your config and never rewriting it. It is idempotent, and it leaves alone any hook you already wrote yourself:
+
+| Client | What it writes |
+|---|---|
+| **Claude Code** | `SessionStart` in `~/.claude/settings.json` — a command whose stdout enters the session telling the model to call `crbro_boot` first. Claude Code cannot invoke an MCP tool from a hook, so the instruction *is* the mechanism. |
+| **Codex** | `SessionStart` in `~/.codex/hooks.json` — an `mcp_tool` step that calls `crbro_boot` directly, **plus** the same printed instruction as a second layer. |
+
+That second layer in Codex is not belt-and-braces: the hook can fire before the MCP server has finished starting, and then the direct call is simply lost. The instruction covers that window.
+
+**Tools without session hooks** (Cursor, Windsurf, Antigravity…) do the same job from their always-on rules file — `.cursorrules`, `.windsurfrules`, User Rules. `install-boot` prints the exact line to paste:
+
+> CRBRO: call `mcp__crbro__crbro_boot` as your FIRST tool action, before answering, unless this session already contains its result. Apply the `protocol_enforcement` block it returns for the rest of the session.
+
+Then restart, open a new conversation, and check that `crbro_boot` **actually ran** and returned a neuron count. If you still have to call it by hand, this step did not take.
+
+### 4. Start using it
+
+Your AI now has 15 memory tools and boots the brain on its own. `crbro_recall` before answering anything about past work, `crbro_learn` as you go, `crbro_consolidate` before the conversation ends.
+
+### 5. (Claude Code, optional) The subagent hook
 
 ```bash
 npx crbro-memory install-hooks --inject
@@ -336,6 +359,7 @@ npx crbro-memory remove-miner     # Remove the scheduled task
 ```bash
 npx crbro-memory          # Start MCP server (stdio)
 npx crbro-memory init     # Initialize brain + detect IDEs
+npx crbro-memory install-boot  # Make the memory load itself in every conversation (above)
 npx crbro-memory status   # Show brain status
 npx crbro-memory reindex  # Rebuild the search index
 npx crbro-memory eval     # Measure retrieval quality against your own query set
