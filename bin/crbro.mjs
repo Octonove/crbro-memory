@@ -504,6 +504,92 @@ if (command === 'init') {
     console.log('');
   }).catch(console.error);
 
+} else if (command === 'guard') {
+  // ─── What the PreToolUse guard would say for a command ─────────
+  //
+  //   crbro guard "firebase deploy --only hosting"
+  //   crbro guard --rebuild        write the trigger index now
+  //
+  // Reads <brain>/.search/triggers.json, the lookup crbro_consolidate
+  // derives from the error, debt and pattern ledgers. Read-only unless
+  // --rebuild is passed.
+  (async () => {
+    const { Brain } = await import('../dist/engine/brain.js');
+    const { writeTriggerIndex, triggerIndexPath, lessonsFor } = await import('../dist/engine/triggers.js');
+    const fs = await import('fs');
+    const brain = new Brain();
+    if (process.argv.includes('--rebuild')) {
+      const r = await writeTriggerIndex(brain);
+      if ('error' in r) { console.error(`  ❌ ${r.error}`); process.exit(1); }
+      console.log(`  ✅ Trigger index written: ${r.entries} lessons under ${r.keys} commands.`);
+      console.log(`     ${triggerIndexPath(brain)}`);
+    }
+    const texto = process.argv.slice(3).filter(a => !a.startsWith('--')).join(' ').trim();
+    if (!texto) {
+      if (!process.argv.includes('--rebuild')) console.log('  Usage: crbro guard "<command line>"   |   crbro guard --rebuild');
+      return;
+    }
+    let index;
+    try {
+      index = JSON.parse(fs.readFileSync(triggerIndexPath(brain), 'utf8'));
+    } catch {
+      console.log('  No trigger index yet. Run: crbro guard --rebuild (crbro_consolidate writes it too).');
+      return;
+    }
+    const lessons = lessonsFor(index, texto, 10);
+    if (lessons.length === 0) { console.log('  Nothing stored mentions that command.'); return; }
+    for (const l of lessons) console.log(`  • [${l.k}${l.d ? ' · ' + l.d : ''} · ${l.n}] ${l.t}\n`);
+  })().catch(e => { console.error(e.message); process.exit(1); });
+
+} else if (command === 'install-hooks' && process.argv.includes('--guard')) {
+  // ─── Wire the PreToolUse guard into Claude Code (opt-in) ───────
+  //
+  // Before a Bash or PowerShell call, hooks/crbro-guard.mjs looks the command
+  // up in the trigger index and adds the stored errors, debts and patterns
+  // that mention it to the model's context — once per session each, three at
+  // most. It never blocks and never asks. Remove the PreToolUse entry from
+  // ~/.claude/settings.json to uninstall.
+  import('fs').then(async fs => {
+    const settingsPath = join(homedir(), '.claude', 'settings.json');
+    const here = dirname(fileURLToPath(import.meta.url));
+    const hookDir = join(homedir(), '.claude', 'crbro-hooks');
+    const hookScript = join(hookDir, 'crbro-guard.mjs');
+    fs.mkdirSync(hookDir, { recursive: true });
+    fs.copyFileSync(join(here, '..', 'hooks', 'crbro-guard.mjs'), hookScript);
+
+    let settings = {};
+    try {
+      const raw = fs.readFileSync(settingsPath, 'utf8');
+      settings = JSON.parse(raw.charCodeAt(0) === 0xFEFF ? raw.slice(1) : raw);
+    } catch (e) {
+      if (fs.existsSync(settingsPath)) {
+        console.error(`  ❌ ${settingsPath} exists but could not be parsed — not touching it.`);
+        console.error(`     ${e.message}`);
+        process.exit(1);
+      }
+    }
+    settings.hooks = settings.hooks || {};
+    const list = settings.hooks.PreToolUse = settings.hooks.PreToolUse || [];
+    if (JSON.stringify(list).includes('crbro-guard')) {
+      console.log('  ✅ PreToolUse guard already installed. Script refreshed.');
+    } else {
+      list.push({
+        matcher: 'Bash|PowerShell',
+        hooks: [{ type: 'command', command: `node "${hookScript.split('\\').join('/')}"`, timeout: 5 }],
+      });
+      const tmp = settingsPath + '.' + process.pid + '.tmp';
+      fs.writeFileSync(tmp, JSON.stringify(settings, null, 2), 'utf8');
+      fs.renameSync(tmp, settingsPath);
+      console.log('  ✅ PreToolUse guard installed.');
+      console.log(`     ${settingsPath}`);
+    }
+    const { Brain } = await import('../dist/engine/brain.js');
+    const { writeTriggerIndex } = await import('../dist/engine/triggers.js');
+    const r = await writeTriggerIndex(new Brain());
+    if (!('error' in r)) console.log(`     Trigger index: ${r.entries} lessons under ${r.keys} commands. Try: crbro guard "git push"`);
+    console.log('     It adds context, never blocks. New sessions pick it up.');
+  }).catch(console.error);
+
 } else if (command === 'install-hooks') {
   // ─── Wire the SubagentStart hook into Claude Code ──────────────
   //
