@@ -2,6 +2,32 @@
 
 All notable changes to CRBRO.
 
+## [2.5.1] — 2026-09-20
+
+Two things found by using 2.5.0 on the brain it was built from, the same night.
+
+- **A neuron missing from the index is indexed, whatever its date says.** The
+  catch-up added in 2.5.0 goes by file dates: what changed since the index was
+  written gets re-indexed. But an index file written by a process that never
+  saw a neuron is *newer* than that neuron and does not contain it — and no
+  date would ever bring it back. That is exactly what a 2.4 server still
+  running does to a brain compacted under it: its next persist writes its own
+  in-memory index over the new one, and the digest neuron disappears from
+  recall. Every neuron has at least a header chunk, so "no chunks at all" means
+  "not indexed", and the catch-up now indexes it.
+- **The guard ignores bare flags.** `curl -s` and `grep -n` are not actions, and
+  lessons that merely mentioned them spoke before every unrelated `curl`. A
+  flag only makes a key where it changes what the program does to your files
+  (`rm -rf`, `node --check`, `python -m`…). Heredoc bodies and `npm run <script>`
+  were already handled in 2.5.0.
+
+And one for whoever installs behind an antivirus: `npx crbro-memory` failing
+with `UNABLE_TO_VERIFY_LEAF_SIGNATURE` is not CRBRO and not npm — it is a web
+shield (Avast, in the case that found it) re-signing HTTPS with a root that
+Windows trusts and Node does not. The README now says what to set.
+
+420 tests.
+
 ## [2.5.0] — 2026-09-20
 
 An audit of one real brain — 1,200 neurons, 97 sessions, five months of daily

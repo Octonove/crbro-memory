@@ -129,6 +129,17 @@ claude mcp add --scope user crbro -- npx -y crbro-memory
 }
 ```
 
+> **`UNABLE_TO_VERIFY_LEAF_SIGNATURE` when running `npx crbro-memory`?** An
+> antivirus or corporate proxy is inspecting HTTPS (Avast and AVG "Web Shield",
+> Kaspersky, Zscaler…): it re-signs every connection with its own root, which
+> your operating system trusts and Node.js does not. Tell Node to trust the
+> system store — it turns no check off: `setx NODE_USE_SYSTEM_CA 1` on Windows
+> (then open a new terminal), `export NODE_USE_SYSTEM_CA=1` elsewhere; Node
+> 22.15+. For one MCP client only, put it in that server's `env`:
+> `"env": { "NODE_USE_SYSTEM_CA": "1" }`. Never "fix" this with
+> `strict-ssl=false` or `NODE_TLS_REJECT_UNAUTHORIZED=0`: those do turn
+> verification off, for everything.
+
 **Docker** (the brain lives in `/root/.crbro`; mount a volume to keep it. The image carries no semantic runtime, so recall is keyword-only there):
 ```bash
 docker build -t crbro-memory . && docker run -i -v crbro-brain:/root/.crbro crbro-memory
