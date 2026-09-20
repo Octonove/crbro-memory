@@ -319,12 +319,18 @@ export class SearchEngine {
       await this.refresh();
       return;
     }
-    const empezado = Date.now();
-    await this.loadOrRebuild();
-    this.syncedAt = empezado;
+    const indexAt = await fileMtime(this.brain.paths.chunksIndex());
+    if ((await this.loadOrRebuild()) === 'loaded') {
+      // A loaded index is as old as its file. isStale() forgives one second, and
+      // a process killed inside the 5 s persist debounce leaves exactly that:
+      // a neuron on disk, newer than the index by less than the slack, that no
+      // rebuild will ever pick up. Catch up from the file's own timestamp.
+      this.syncedAt = indexAt;
+      await this.refresh();
+    }
   }
 
-  private async loadOrRebuild(): Promise<void> {
+  private async loadOrRebuild(): Promise<'loaded' | 'rebuilt'> {
     if (this.semantic) {
       await this.semantic.load();
       // Warm the model off the critical path: boot returns at once and the
@@ -341,7 +347,7 @@ export class SearchEngine {
           this.db = create({ schema: SCHEMA });
           load(this.db, stored.data);
           this.docCount = this.countDocs(stored.data);
-          if (this.recoverChunkMap(stored.data)) return;
+          if (this.recoverChunkMap(stored.data)) return 'loaded';
           // Could not tell which chunk belongs to which neuron — without
           // that, removal is blind, so a rebuild is the only safe answer.
         }
@@ -351,6 +357,7 @@ export class SearchEngine {
     }
 
     await this.rebuild();
+    return 'rebuilt';
   }
 
   /**
