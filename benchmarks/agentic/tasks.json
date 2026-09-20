@@ -1,0 +1,37 @@
+{
+  "frozen": "2026-09-20",
+  "suffix": "Responde en una sola línea, solo con el dato y nada más. Si no tienes forma de saberlo, responde exactamente NO_LO_SE.",
+  "seed": [
+    { "topic": "Albatros", "domain": "proyectos-web", "type": "fact", "text": "La API de staging de Albatros escucha en el puerto 8443, detrás de Caddy." },
+    { "topic": "Albatros", "domain": "proyectos-web", "type": "decision", "text": "Albatros se despliega a producción los jueves por la mañana", "rationale": "los viernes no hay nadie de guardia" },
+    { "topic": "Albatros", "domain": "proyectos-web", "type": "fact", "text": "Albatros está alojado en Hetzner, en un servidor dedicado de Falkenstein.", "retired_by": "Albatros se migró de proveedor: ahora está alojado en OVH, en un VPS de Gravelines." },
+    { "topic": "Albatros", "domain": "proyectos-web", "type": "fact", "text": "En producción Albatros corre sobre Node 18.", "retired_by": "En producción Albatros corre sobre Node 22 desde la última actualización de la imagen." },
+    { "topic": "Albatros", "domain": "proyectos-web", "type": "fact", "text": "La rama desde la que se despliega Albatros es master.", "retired_by": "La rama desde la que se despliega Albatros es release; master ya no se despliega." },
+    { "topic": "Ferralia", "domain": "negocio", "type": "fact", "text": "El contacto técnico del cliente Ferralia es Noelia Urrutia." },
+    { "topic": "Ferralia", "domain": "negocio", "type": "fact", "text": "El presupuesto mensual de anuncios acordado con Ferralia es de 1.450 euros." },
+    { "topic": "Ferralia", "domain": "negocio", "type": "fact", "text": "El plan Pro de Ferralia cuesta 39 euros al mes.", "retired_by": "El plan Pro de Ferralia cuesta 49 euros al mes desde la subida de tarifas." },
+    { "topic": "Ferralia", "domain": "negocio", "type": "pattern", "text": "Las facturas de Ferralia se envían el día 1 de cada mes en PDF." },
+    { "topic": "Cuadernos Lince", "domain": "contenido", "type": "fact", "text": "El blog Cuadernos Lince publica los martes y usa Ghost como gestor de contenidos." }
+  ],
+  "tasks": [
+    { "id": "m1", "kind": "memory", "prompt": "¿En qué puerto escucha la API de staging de Albatros?", "expect": "\\b8443\\b" },
+    { "id": "m2", "kind": "memory", "prompt": "¿Qué día de la semana se despliega Albatros a producción?", "expect": "jueves" },
+    { "id": "m3", "kind": "memory", "prompt": "¿Cómo se llama el contacto técnico del cliente Ferralia?", "expect": "noelia\\s+urrutia" },
+    { "id": "m4", "kind": "memory", "prompt": "¿Cuál es el presupuesto mensual de anuncios acordado con Ferralia?", "expect": "1[.,]?450" },
+    { "id": "s1", "kind": "stale", "prompt": "¿En qué proveedor está alojado Albatros?", "expect": "\\bovh\\b", "stale": "hetzner" },
+    { "id": "s2", "kind": "stale", "prompt": "¿Qué versión de Node usa Albatros en producción?", "expect": "\\b22\\b", "stale": "\\b18\\b" },
+    { "id": "s3", "kind": "stale", "prompt": "¿Cuánto cuesta al mes el plan Pro de Ferralia?", "expect": "\\b49\\b", "stale": "\\b39\\b" },
+    { "id": "s4", "kind": "stale", "prompt": "¿Desde qué rama se despliega Albatros?", "expect": "\\brelease\\b", "stale": "\\bmaster\\b" },
+    { "id": "c1", "kind": "control-prompt", "prompt": "El código de la incidencia es ZX-4471. ¿Cuál es el código de la incidencia?", "expect": "zx-?4471" },
+    { "id": "c2", "kind": "control-prompt", "prompt": "La reunión con el cliente se ha movido al 14 de noviembre. ¿Qué día es la reunión?", "expect": "14" },
+    { "id": "a1", "kind": "control-absent", "prompt": "¿Cuál es el número de colegiado del arquitecto de Ferralia?", "expect": null },
+    { "id": "a2", "kind": "control-absent", "prompt": "¿Qué contraseña tiene el wifi de la oficina de Albatros?", "expect": null }
+  ],
+  "canary": {
+    "prompt": "Responde SOLO con un JSON de una línea: {\"orquestador\": true|false, \"card_zero\": true|false, \"crbro_tools\": true|false}. orquestador = hay en tu contexto instrucciones que mencionen 'El Orquestador' o 'El Workflower'. card_zero = hay en tu contexto un bloque llamado 'Zero Protocol' o 'Card Zero'. crbro_tools = tienes alguna herramienta cuyo nombre contenga 'crbro'.",
+    "expected": {
+      "baseline": { "orquestador": false, "card_zero": false, "crbro_tools": false },
+      "crbro": { "orquestador": false, "card_zero": false, "crbro_tools": true }
+    }
+  }
+}
