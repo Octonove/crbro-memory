@@ -51,6 +51,8 @@ const INTERPRETERS = new Set(['node', 'deno', 'bun', 'python', 'python3', 'py', 
 /** Two words that still name nothing: `npm run` is not an action, `npm run build` is. */
 const DEEP = new Set(('npm run|yarn run|pnpm run|bun run|docker compose|wp plugin|wp post|wp option|wp theme|wp user|wp cache|wp db|'
   + 'gh pr|gh issue|gh repo|gh release|gh run|gcloud run|gcloud auth|gcloud functions|gcloud app|git remote').split('|'));
+/** A flag names an action only where it changes what the program does to your files. `curl -s` and `grep -n` are not lessons. */
+const FLAG_PAIRS = new Set(['rm -rf', 'rm -r', 'rm -fr', 'git -c', 'cp -r', 'node --check', 'node -e', 'python -c', 'python -m', 'python3 -m', 'npx -y']);
 const SCRIPT = /\.(ps1|sh|bash|py|mjs|cjs|js|ts|bat|cmd|rb|php)$/;
 /** After a program's name in a sentence these are grammar, not a subcommand ("python en Windows", "git is"). */
 const PROSE = new Set(('a al con de del el en es la las lo los no o para por que se si sin su un una y ya '
@@ -98,7 +100,7 @@ export function keysOfCommand(command: string): string[] {
     if (SCRIPT.test(t[0])) keys.add(t[0]);
     if (t[1]) {
       const pair = `${t[0]} ${t[1]}`;
-      keys.add(DEEP.has(pair) && t[2] && !t[2].startsWith('-') ? `${pair} ${t[2]}` : pair);
+      if (!t[1].startsWith('-') || FLAG_PAIRS.has(pair)) keys.add(DEEP.has(pair) && t[2] && !t[2].startsWith('-') ? `${pair} ${t[2]}` : pair);
       if (INTERPRETERS.has(t[0])) {
         const file = t.slice(1).find(x => !x.startsWith('-'));
         if (file && SCRIPT.test(file)) keys.add(file);

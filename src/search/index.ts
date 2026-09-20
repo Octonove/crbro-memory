@@ -385,7 +385,12 @@ export class SearchEngine {
     const ids = await listJSONFiles(this.brain.paths.cortex);
     const vivos = new Set(ids);
     for (const id of ids) {
-      if ((await fileMtime(this.brain.paths.neuron(id))) <= desde) continue;
+      // Unchanged AND already in the index. A neuron with no chunks at all is
+      // not indexed, whatever its date says: every neuron has at least its
+      // header chunk. That is what an index file written by ANOTHER process
+      // looks like from here — newer than the neuron, and without it — and the
+      // file date alone would never bring it back.
+      if (this.chunksByNeuron.has(id) && (await fileMtime(this.brain.paths.neuron(id))) <= desde) continue;
       try {
         const neuron = await readJSON<Neuron>(this.brain.paths.neuron(id));
         if (!neuron) continue;

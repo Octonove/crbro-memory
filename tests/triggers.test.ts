@@ -28,6 +28,9 @@ describe('keysOfCommand', () => {
     expect(keysOfCommand('npx firebase deploy')).toEqual(expect.arrayContaining(['npx firebase', 'firebase deploy']));
     expect(keysOfCommand('NODE_ENV=prod sudo systemctl restart nginx')).toContain('systemctl restart');
     expect(keysOfCommand('rm -rf build')).toContain('rm -rf');
+    // A bare flag is not an action — except the few that are.
+    expect(keysOfCommand('curl -s https://x.test | grep -n foo | head -5')).toEqual([]);
+    expect(keysOfCommand('node --check app.js && python -m venv .venv')).toEqual(expect.arrayContaining(['node --check', 'python -m']));
     // `npm run` names nothing; the script does. A lesson about `npm run dev` stays quiet before a build.
     expect(keysOfCommand('npm run build 2>&1 | tail -1')).toContain('npm run build');
     expect(keysOfCommand('npm run build')).not.toContain('npm run');
@@ -55,6 +58,7 @@ describe('keysOfCommand', () => {
       '& "C:\\x y\\upload-skill.ps1" -Slug a',
       'sudo   rm   -rf   /var/www/old\nnpm publish --access public',
       'npm run build && docker compose up -d && gh pr create --fill && npm run',
+      'curl -s https://x.test | grep -n foo; rm -rf build; node --check a.js; tail -f log',
       "cat > x.py <<'PYEOF'\nimport io\np='src/search/index.ts'\nopen(p)\nPYEOF\npython x.py && git status",
       '',
     ]) expect(hookKeys(c).sort(), c).toEqual(keysOfCommand(c).sort());

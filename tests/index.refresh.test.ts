@@ -78,6 +78,24 @@ describe('SearchEngine.init() on an index that is already loaded', () => {
   });
 });
 
+describe('an index file written by a process that never saw a neuron', () => {
+  it('is newer than the neuron and does not contain it — the neuron is indexed anyway', async () => {
+    const a = await mk();
+    await a.engine.init();
+    await a.cortex.learn('Visto', 'fact', 'Lo que el proceso viejo sí tenía en su índice.');
+    // Another process adds a neuron on disk only, then the old one writes ITS index over everything, later.
+    const b = await mk();
+    await b.engine.init();
+    await b.cortex.learn('Plegada', 'fact', 'La neurona resumen que el proceso viejo nunca indexó.');
+    await new Promise(r => setTimeout(r, 1100));
+    await a.engine.persist();                       // newer than every neuron file, and without 'Plegada'
+
+    const c = await mk();                           // the next boot: nothing looks stale by date
+    await c.engine.init();
+    expect((await c.engine.search('neurona resumen proceso viejo nunca indexó'))[0]?.name).toBe('Plegada');
+  });
+});
+
 describe('a freshly loaded index catches up from its own file date', () => {
   it('finds a neuron written inside the one-second slack and never flushed (a process killed mid-debounce)', async () => {
     const a = await mk();
