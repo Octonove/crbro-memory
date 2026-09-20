@@ -4,6 +4,7 @@
 import { readJSON, updateJSON, listJSONFiles, moveFile, deleteJSON, fileExists, now, today } from '../utils/fs.js';
 import { sweepStaleLocks } from '../utils/lock.js';
 import { entryId } from '../sync/ops.js';
+import { inferEntryDay, isDayPrecision } from './dates.js';
 import type { Brain } from './brain.js';
 import type { Cortex } from './cortex.js';
 import type { Synapses } from './synapses.js';
@@ -40,6 +41,12 @@ export interface MaintenanceReport {
   repaired: number;
   /** One line per fix applied. */
   repairs: string[];
+  /** Patterns, preferences, errors and debts with no date: written before 1.13 stamped them. */
+  undated_entries: number;
+  /** How many of those state a date in their own text — what backfill_dates recovers. */
+  datable_entries: number;
+  /** Dates written by this run (0 unless backfill_dates:true and not a dry run). */
+  dates_backfilled: number;
   notes: string[];
 }
 
@@ -68,7 +75,7 @@ export class Maintenance {
    */
   async run(
     dryRun: boolean = false,
-    options?: { archive?: boolean; purgeBoilerplate?: boolean; repair?: boolean; unarchive?: string[] | 'all' }
+    options?: { archive?: boolean; purgeBoilerplate?: boolean; repair?: boolean; unarchive?: string[] | 'all'; backfillDates?: boolean }
   ): Promise<MaintenanceReport> {
     const report: MaintenanceReport = {
       archived_neurons: 0,
@@ -88,6 +95,9 @@ export class Maintenance {
       repairable: 0,
       repaired: 0,
       repairs: [],
+      undated_entries: 0,
+      datable_entries: 0,
+      dates_backfilled: 0,
       notes: [],
     };
 
@@ -193,6 +203,23 @@ export class Maintenance {
         `${report.repairable} integrity issue(s) found. Pass repair:true to fix dangling connections, ` +
         'orphan synapses, stale sidecar keys and manifest counters.'
       );
+    }
+
+    // 4c. Entries from before 1.13 have no date, so recall cannot say which of
+    // two tellings is the recent one. Counting is free; writing is opt-in, and
+    // only what the entry's own text proves is ever written (see dates.ts).
+    const fechas = await this.backfillDates(!!options?.backfillDates && !dryRun);
+    report.undated_entries = fechas.undated;
+    report.datable_entries = fechas.datable;
+    report.dates_backfilled = fechas.written;
+    if (fechas.written > 0) {
+      report.notes.push(
+        `Dated ${fechas.written} entr${fechas.written === 1 ? 'y' : 'ies'} from the date stated in their own text, ` +
+        `to the day. ${fechas.undated - fechas.written} state none and stay undated: nothing was guessed.`);
+    } else if (fechas.datable > 0) {
+      report.notes.push(
+        `${fechas.undated} pattern/preference/error/debt entr${fechas.undated === 1 ? 'y has' : 'ies have'} no date ` +
+        `(written before 1.13); ${fechas.datable} state one in their own text. Pass backfill_dates:true to record it.`);
     }
 
     // The debt ledger: a deferral that never named its revisit condition is
@@ -550,6 +577,66 @@ export class Maintenance {
     }
 
     return issues;
+  }
+
+  /**
+   * Count the undated patterns, preferences, errors and debts, and — when
+   * `write` — date the ones whose own text says when they happened.
+   *
+   * The ceiling is the first instant learn() ever stamped on this brain: an
+   * entry written after that would carry a stamp, so a later date in an
+   * undated entry is a deadline, not the day it was written. Day-precision
+   * values are skipped when looking for it — they are earlier backfills, and
+   * counting them would drag the ceiling back on every run.
+   */
+  private async backfillDates(write: boolean): Promise<{ undated: number; datable: number; written: number }> {
+    const KINDS = ['patterns', 'preferences', 'errors', 'debts'] as const;
+    const ids = await this.cortex.allIds();
+    const neuronas: Neuron[] = [];
+    let techo = '';
+    for (const id of ids) {
+      let n: Neuron | null;
+      try {
+        n = await readJSON<Neuron>(this.brain.paths.neuron(id));
+      } catch {
+        continue;   // corrupted: the integrity check reports it
+      }
+      if (!n) continue;
+      neuronas.push(n);
+      for (const v of Object.values(n.entry_dates || {})) {
+        if (v && !isDayPrecision(v) && (!techo || v < techo)) techo = v;
+      }
+    }
+    if (!techo) techo = today();
+
+    let undated = 0, datable = 0, written = 0;
+    for (const n of neuronas) {
+      const nuevas: Record<string, string> = {};
+      for (const k of KINDS) {
+        for (const t of n[k] || []) {
+          if (!t || n.entry_dates?.[entryId(t)]) continue;
+          undated++;
+          const dia = inferEntryDay(t, n.created, techo);
+          if (!dia) continue;
+          datable++;
+          nuevas[entryId(t)] = dia;
+        }
+      }
+      if (!write || Object.keys(nuevas).length === 0) continue;
+      await updateJSON<Neuron>(this.brain.paths.neuron(n.id), current => {
+        if (!current) return null;
+        if (!current.entry_dates) current.entry_dates = {};
+        let tocado = false;
+        for (const [k, dia] of Object.entries(nuevas)) {
+          if (current.entry_dates[k]) continue;   // stamped by someone else since the scan
+          current.entry_dates[k] = dia;
+          tocado = true;
+          written++;
+        }
+        return tocado ? current : null;
+      });
+    }
+    return { undated, datable, written };
   }
 
   /**
