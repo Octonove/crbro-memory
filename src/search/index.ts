@@ -278,6 +278,13 @@ export class SearchEngine {
   private embedding: Promise<void> | null = null;
   /** One init at a time: two clients booting together must not load the index twice. */
   private initing: Promise<void> | null = null;
+  /**
+   * A rebuild in progress. rebuild() empties the live index and fills it over
+   * seconds; anything that read or wrote it meanwhile saw a fraction of the
+   * brain and said nothing (a recall during the daemon's warm-up came back
+   * empty). Readers and writers wait for it instead.
+   */
+  private rebuilding: Promise<number> | null = null;
   /** When the cortex was last read into this index, in ms. Files newer than this are somebody else's writes. */
   private syncedAt = 0;
 
@@ -370,6 +377,7 @@ export class SearchEngine {
    */
   async refresh(): Promise<{ reindexed: number; removed: number }> {
     if (!this.db) { await this.init(); return { reindexed: 0, removed: 0 }; }
+    await this.settled();
     const desde = this.syncedAt - 1000;   // the same second of slack isStale() allows
     const empezado = Date.now();
     let reindexed = 0, removed = 0;
@@ -381,8 +389,7 @@ export class SearchEngine {
       try {
         const neuron = await readJSON<Neuron>(this.brain.paths.neuron(id));
         if (!neuron) continue;
-        await this.removeNeuronChunks(id);
-        await this.insertNeuronChunks(neuron);
+        await this.reindexInPlace(neuron);
         reindexed++;
       } catch { /* unreadable: leave what we have */ }
     }
@@ -401,14 +408,23 @@ export class SearchEngine {
     for (const key of [...this.chunksByNeuron.keys()]) {
       const gone = key.startsWith('session:') ? !diasVivos.has(key) : !vivos.has(key);
       if (!gone) continue;
+      // The listing above is a snapshot, and this method awaits between taking
+      // it and using it: a neuron learned meanwhile is in the index and not in
+      // the snapshot. Ask the disk, now, before calling anything gone.
+      const file = key.startsWith('session:') ? this.brain.paths.session(key.slice('session:'.length)) : this.brain.paths.neuron(key);
+      if (await fileExists(file)) continue;
       await this.removeNeuronChunks(key);
       removed++;
     }
 
     this.syncedAt = empezado;
     if (reindexed > 0 || removed > 0) {
-      await this.flushEmbeddings();
       this.markDirty();
+      // Off the boot path, like rebuild(): every client waits on init(), and
+      // the first embedding after a cold start waits ~13 s for the model.
+      // Chained, so awaitEmbeddings() still covers a rebuild's own job.
+      const previa = this.embedding ?? Promise.resolve();
+      this.embedding = previa.then(() => this.flushEmbeddings()).then(() => this.markDirty()).catch(() => undefined);
     }
     return { reindexed, removed };
   }
@@ -441,6 +457,17 @@ export class SearchEngine {
    * to assume well-formed.
    */
   async rebuild(): Promise<number> {
+    if (this.rebuilding) return this.rebuilding;
+    this.rebuilding = this.doRebuild().finally(() => { this.rebuilding = null; });
+    return this.rebuilding;
+  }
+
+  /** Let a running rebuild finish before touching the index. Never throws. */
+  private async settled(): Promise<void> {
+    if (this.rebuilding) await this.rebuilding.catch(() => undefined);
+  }
+
+  private async doRebuild(): Promise<number> {
     this.syncedAt = Date.now();
     this.db = create({ schema: SCHEMA });
     this.docCount = 0;
@@ -483,12 +510,29 @@ export class SearchEngine {
   async indexNeuron(neuron: Neuron): Promise<void> {
     if (!this.db) await this.init();
     if (!this.db) return;
+    await this.settled();
 
-    await this.removeNeuronChunks(neuron.id);
-    await this.insertNeuronChunks(neuron);
+    await this.reindexInPlace(neuron);
     // Ids are content hashes: only the neuron's NEW lines get embedded.
     await this.flushEmbeddings();
     this.markDirty();
+  }
+
+  /**
+   * Replace a neuron's chunks, keeping the vector of every line that is still
+   * there. Removing all of them first — what this did until 2.5 — threw away
+   * the embedding of every unchanged line and paid for it again: harmless on
+   * one learn, a full re-embed of every neuron merely READ since the last
+   * boot once refresh() started re-indexing by file date.
+   */
+  private async reindexInPlace(neuron: Neuron): Promise<void> {
+    const antes = await this.removeNeuronChunks(neuron.id, { keepVectors: true });
+    await this.insertNeuronChunks(neuron);
+    if (this.semantic && antes.size > 0) {
+      const ahora = this.chunksByNeuron.get(neuron.id) || new Set<string>();
+      const idos = [...antes].filter(id => !ahora.has(id));
+      if (idos.length > 0) this.semantic.remove(idos);
+    }
   }
 
   /**
@@ -497,6 +541,7 @@ export class SearchEngine {
    */
   async removeNeuron(neuronId: string): Promise<void> {
     if (!this.db) return;
+    await this.settled();
     if (!this.chunksByNeuron.has(neuronId)) return;
     await this.removeNeuronChunks(neuronId);
     this.markDirty();
@@ -546,6 +591,7 @@ export class SearchEngine {
   ): Promise<SearchResult[]> {
     if (!this.db) await this.init();
     if (!this.db) return [];
+    await this.settled();
 
     const limit = options?.limit || 10;
     const terms = queryTerms(query);
@@ -1170,6 +1216,7 @@ export class SearchEngine {
   async indexSession(log: { session_id: string; date?: string; summary?: string }): Promise<void> {
     if (!this.db) await this.init();
     if (!this.db) return;
+    await this.settled();
     await this.removeNeuronChunks(`session:${log.session_id}`);
     if (log.summary) await this.insertSessionChunks(log);
     this.markDirty();
@@ -1227,10 +1274,10 @@ export class SearchEngine {
    * threw nothing, so removal reported success while removing zero chunks,
    * and everything ever revised or forgotten stayed searchable.
    */
-  private async removeNeuronChunks(neuronId: string): Promise<void> {
-    if (!this.db) return;
+  private async removeNeuronChunks(neuronId: string, options?: { keepVectors?: boolean }): Promise<Set<string>> {
+    if (!this.db) return new Set();
     const ids = this.chunksByNeuron.get(neuronId);
-    if (!ids) return;
+    if (!ids) return new Set();
     for (const id of ids) {
       try {
         // remove() returns false (it does not throw) for an absent id, so
@@ -1241,8 +1288,9 @@ export class SearchEngine {
         // Already gone.
       }
     }
-    if (this.semantic) this.semantic.remove(ids);
+    if (this.semantic && !options?.keepVectors) this.semantic.remove(ids);
     this.chunksByNeuron.delete(neuronId);
+    return ids;
   }
 
   /**

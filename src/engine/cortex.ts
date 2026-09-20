@@ -26,8 +26,13 @@ const NAME_MATCH_THRESHOLD = 0.85;
 
 export interface SessionTally { facts: number; decisions: number; topics: Set<string> }
 export const newTally = (): SessionTally => ({ facts: 0, decisions: 0, topics: new Set<string>() });
-/** The connection a request belongs to, carried through every await. Empty outside the daemon. */
-export const sessionScope = new AsyncLocalStorage<{ tally: SessionTally }>();
+/**
+ * The connection a request belongs to, carried through every await. Empty
+ * outside the daemon. `resumed`: this backend took over a conversation that
+ * was already running (its daemon died), so the tally starts at zero although
+ * the conversation did not — consolidate must not present that zero as the truth.
+ */
+export const sessionScope = new AsyncLocalStorage<{ tally: SessionTally; resumed?: boolean }>();
 
 /**
  * Dice coefficient over character bigrams. Cheap, order-insensitive enough

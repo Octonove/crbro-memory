@@ -527,7 +527,14 @@ if (command === 'init') {
       const out = [];
       for (const st of await ep.listStates(root)) {
         const reply = await controlDaemon(root, 'status', st.build);
-        if (reply) out.push({ st, reply });
+        if (reply) { out.push({ st, reply }); continue; }
+        // No answer is not proof of death: a daemon in the middle of a rebuild
+        // answers late, and deleting its state file would orphan it — alive,
+        // holding the brain, and unreachable by every client. Only a pid the
+        // system says is gone loses its file.
+        let alive = true;
+        try { process.kill(st.pid, 0); } catch (e) { alive = e.code === 'EPERM'; }
+        if (alive) out.push({ st, reply: null });
         else { try { fs.rmSync(ep.stateFile(root, st.build), { force: true }); } catch { /* stale file, best effort */ } }
       }
       return out;
@@ -542,13 +549,13 @@ if (command === 'init') {
         console.log('     launches the daemon; the rest attach to it. One index, one model, one writer.');
         console.log('     Clients older than 2.5 keep running their own server — update them to get the benefit.');
       } else {
-        for (const { st } of await running()) await controlDaemon(root, 'stop', st.build);
+        for (const { st, reply } of await running()) if (reply) await controlDaemon(root, 'stop', st.build);
         console.log('  ✅ Daemon mode OFF. Clients go back to one full server each the next time they start.');
       }
       console.log('');
     } else if (sub === 'stop') {
       const list = await running();
-      for (const { st } of list) await controlDaemon(root, 'stop', st.build);
+      for (const { st, reply } of list) if (reply) await controlDaemon(root, 'stop', st.build);
       console.log(list.length ? `\n  ✅ Asked ${list.length} daemon(s) to stop. Connected clients carry on: they start a new one on their next call.\n`
                               : '\n  No daemon is running for this brain.\n');
     } else {
@@ -559,7 +566,8 @@ if (command === 'init') {
       console.log(`  Brain:    ${root}`);
       console.log(`  Mode:     ${ep.daemonEnabled(root) ? '✅ on' : 'off  (npx crbro-memory daemon on)'}`);
       if (list.length === 0) console.log('  Running:  none' + (ep.daemonEnabled(root) ? ' — the next client to start launches it' : ''));
-      for (const { reply } of list) {
+      for (const { st, reply } of list) {
+        if (!reply) { console.log(`  Running:  pid ${st.pid} · ${st.version} (${st.build}) · alive but not answering right now (busy, or another user's)`); continue; }
         console.log(`  Running:  pid ${reply.pid} · ${reply.version} (${reply.build}) · ${reply.connections} conversation(s) · ${reply.rss_mb} MB · up ${Math.round(reply.uptime_s / 60)} min · idle exit ${reply.idle_minutes} min`);
       }
       if (list.length > 1) console.log('  ⚠️  More than one build is serving this brain. Point every client at the same install to share one.');

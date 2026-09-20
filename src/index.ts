@@ -26,6 +26,7 @@ async function main() {
       output: process.stdout,
       brainRoot,
       spawnDaemon: () => spawnDetachedDaemon(brainRoot),
+      isEnabled: () => daemonEnabled(brainRoot),
       log: line => process.stderr.write(`[crbro] ${line}\n`),   // stdout is the MCP wire
     });
     await proxy.closed;
