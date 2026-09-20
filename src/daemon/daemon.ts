@@ -113,6 +113,9 @@ export async function startDaemon(options: DaemonOptions = {}): Promise<DaemonHa
   const token = newToken();
   const idleMs = idleDelayMs(options.idleMinutes);
   const config = configFingerprint();
+  // Read once. package.json on disk can change under a running daemon (npx refreshes its cache in place),
+  // and a daemon that reported the NEW version while running the OLD code was seen doing exactly that.
+  const version = packageVersion();
 
   await fs.mkdir(daemonDir(brainRoot), { recursive: true, mode: 0o700 });
 
@@ -180,7 +183,7 @@ export async function startDaemon(options: DaemonOptions = {}): Promise<DaemonHa
           return kill('bad hello');
         }
         nonce = newNonce();
-        say({ crbro: 'hello', protocol: DAEMON_PROTOCOL, version: packageVersion(), build, pid: process.pid, config, proof: proof(token, 'daemon', m.nonce), nonce });
+        say({ crbro: 'hello', protocol: DAEMON_PROTOCOL, version, build, pid: process.pid, config, proof: proof(token, 'daemon', m.nonce), nonce });
         stage = 'auth';
         return;
       }
@@ -195,7 +198,7 @@ export async function startDaemon(options: DaemonOptions = {}): Promise<DaemonHa
       if (m?.crbro === 'control') {
         clearTimeout(timer);
         if (m.op === 'status') {
-          say({ crbro: 'status', pid: process.pid, version: packageVersion(), build, brain: brainRoot, endpoint, config,
+          say({ crbro: 'status', pid: process.pid, version, build, brain: brainRoot, endpoint, config,
             connections: conversations(), uptime_s: Math.round(process.uptime()), rss_mb: Math.round(process.memoryUsage().rss / 1048576),
             semantic_vectors: engines.searchEngine.semanticCount(), idle_minutes: Math.round(idleMs / 6_000) / 10 });
           socket.end();
@@ -286,7 +289,7 @@ export async function startDaemon(options: DaemonOptions = {}): Promise<DaemonHa
     }
     await clearBlocked(brainRoot, build);
     state = {
-      protocol: DAEMON_PROTOCOL, pid: process.pid, version: packageVersion(), build, endpoint, token,
+      protocol: DAEMON_PROTOCOL, pid: process.pid, version, build, endpoint, token,
       started: new Date().toISOString(), brain: brainRoot,
     };
     await writeState(brainRoot, state);
