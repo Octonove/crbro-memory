@@ -911,7 +911,11 @@ export function createServer(): McpServer {
     domain: z.string().optional().describe('Replace the neuron domain unconditionally, e.g. "proyectos-web".'),
     tags: z.array(z.string()).optional().describe('Replace the WHOLE tag list (trimmed, deduplicated). On protocol neurons re-send the priority: and source: tags or they are gone.'),
     name: z.string().optional().describe('Rename the neuron. Its id, file, synapses and shared state stay the same.'),
+    move_to: z.string().optional().describe('Split: move the entries listed in facts/entries (ids from crbro_inspect, or exact text; any kind) to this neuron — id or name, created if missing with the same type and domain. They keep their dates, keys and retirement; the source is quarantined first and the two neurons are linked. status and note are ignored. Refused while `neuron` is shared.'),
   }).superRefine((v, ctx) => {
+    if (v.move_to !== undefined && !(v.facts?.length || v.entries?.length)) {
+      ctx.addIssue({ code: 'custom', message: 'move_to needs what to move: pass facts and/or entries (ids from crbro_inspect view=neuron, or exact text).' });
+    }
     const any = [v.facts, v.entries, v.summary, v.domain, v.tags, v.name].some(x => x !== undefined);
     if (!any) {
       ctx.addIssue({
@@ -925,7 +929,7 @@ export function createServer(): McpServer {
     'crbro_revise',
     {
       title: 'Revise a neuron',
-      description: 'Write: change what a neuron says without deleting anything. Stage 2 of the lifecycle: something stopped being true, or was never true, and nothing replaces it → crbro_revise (kept in the file, gone from recall, reversible with status active). If a replacement exists, crbro_learn with supersedes does both; for what must not exist on disk use crbro_forget. facts retires facts by id or exact text; entries retires decisions, patterns, errors and debts by exact text; status active reactivates either (local only on a shared neuron: the next sync re-applies the retirement, shared_warning says so). summary, domain, tags and name edit metadata in the same call (tags replaces the whole list; the id never changes). Anything in unmatched is STILL LIVE — fix and re-run.',
+      description: 'Write: change what a neuron says without deleting anything. Stage 2 of the lifecycle: something stopped being true, or was never true, and nothing replaces it → crbro_revise (kept in the file, gone from recall, reversible with status active). If a replacement exists, crbro_learn with supersedes does both; for what must not exist on disk use crbro_forget. facts retires facts by id or exact text; entries retires decisions, patterns, errors and debts by exact text; status active reactivates either (local only on a shared neuron: the next sync re-applies the retirement, shared_warning says so). summary, domain, tags and name edit metadata in the same call (tags replaces the whole list; the id never changes). move_to splits: the listed entries go to another neuron with their dates. Anything in unmatched is STILL LIVE — fix and re-run.',
       inputSchema: reviseSchema,
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
@@ -936,6 +940,36 @@ export function createServer(): McpServer {
           return textResult(`Neuron not found: "${args.neuron}". Use crbro_recall to find the right neuron id first.`);
         }
         const status = args.status || 'superseded';
+
+        // ── move_to: split, not retire ──
+        if (args.move_to !== undefined) {
+          const compartida = (await sharedMap(brain))[target.id];
+          if (compartida) {
+            return textResult(`"${target.id}" is shared in space "${compartida}": moving entries out would be undone by the next sync. crbro_share unshare first.`, true);
+          }
+          const r = await cortex.moveEntries(target.id, [...(args.facts || []), ...(args.entries || [])], args.move_to, { domain: args.domain });
+          if (r.into && r.into === r.from) {
+            return textResult(`"${args.move_to}" is the same neuron as "${target.id}"; nothing to move.`, true);
+          }
+          if (r.moved > 0 && r.into) {
+            try {
+              await synapses.connect(target.id, r.into, 'hierarchy', `split from ${target.name} (${dia(new Date().toISOString())})`,
+                { initialStrength: 0.6, keepExistingContext: true });
+            } catch { /* the link is a courtesy; the move already happened */ }
+          }
+          return jsonResult({
+            neuron_id: target.id,
+            moved_to: r.into,
+            created: r.created,
+            moved: r.moved,
+            unmatched: r.unmatched.length > 0 ? r.unmatched : undefined,
+            backup: r.backup,
+            message: r.moved > 0
+              ? `${r.moved} entr${r.moved === 1 ? 'y' : 'ies'} moved from "${target.name}" to "${r.into}"${r.created ? ' (created)' : ''}, dates kept. A copy of the source as it was is in quarantine.` +
+                (r.unmatched.length > 0 ? ` WARNING: ${r.unmatched.length} target(s) matched nothing and stayed where they were.` : '')
+              : 'Nothing matched, nothing moved. Pass entry ids from crbro_inspect view=neuron, or the exact text.',
+          });
+        }
 
         let revisedFacts = 0;
         let revisedEntries = 0;

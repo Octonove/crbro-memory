@@ -1548,10 +1548,19 @@ export class Cortex {
     });
     const final = (saved || into) as Neuron;
     await this.reindex(final);
+    await this.emitAdded(antes, final);
 
-    // Emit what moved, by diffing the result against what `into` had. The
-    // union is pure, so this is exact: nothing the target already held is
-    // re-announced.
+    await this.deleteNeuronFile(from.id);
+
+    return { from: from.id, into: into.id, backup, moved };
+  }
+
+  /**
+   * Emit what a union added, by diffing the result against what the target
+   * had. The union is pure, so this is exact: nothing the target already held
+   * is re-announced. The emitter no-ops when the target is not shared.
+   */
+  private async emitAdded(antes: Neuron, final: Neuron): Promise<void> {
     const cuando = now();
     const teniaFact = new Set(antes.facts.map(f => f.id || factId(f.text)));
     for (const f of final.facts) {
@@ -1583,10 +1592,81 @@ export class Cortex {
       if (!teniaDebt.has(normalizeText(d))) await this.emit(final.id, { kind: 'debt', text: d, at: fecha(d) });
     }
     // Preferences are never emitted, here as in learn.
+  }
 
-    await this.deleteNeuronFile(from.id);
+  /**
+   * Move entries from one neuron to another, whole: text, date, keys,
+   * confidence, retirement. The way to split a neuron that grew past what one
+   * read can carry — learn + forget would do it too, but every entry would be
+   * reborn today and lose the one thing recall uses to tell old from new.
+   *
+   * `targets` are entry ids (factId for facts, entryId for the rest) or exact
+   * texts, any kind. The target neuron is created when missing, with the
+   * source's type and domain. Order is union first, removal second: a crash
+   * in between leaves an entry in both places, never in neither. The source
+   * is quarantined by forget() before anything leaves it. The map never
+   * moves: it describes the system, not an entry.
+   */
+  async moveEntries(fromRef: string, targets: string[], intoRef: string, options?: { domain?: string }): Promise<{
+    from: string | null;
+    into: string | null;
+    created: boolean;
+    moved: number;
+    unmatched: string[];
+    backup: string | null;
+  }> {
+    const from = (await this.peek(fromRef)) || (await this.findByName(fromRef));
+    if (!from) return { from: null, into: null, created: false, moved: 0, unmatched: targets, backup: null };
 
-    return { from: from.id, into: into.id, backup, moved };
+    const wanted = new Set(targets.map(t => t.trim().toLowerCase()).filter(Boolean));
+    const usados = new Set<string>();
+    const pide = (id: string, text: string) => {
+      const a = id.toLowerCase(), b = text.trim().toLowerCase();
+      if (wanted.has(a)) { usados.add(a); return true; }
+      if (wanted.has(b)) { usados.add(b); return true; }
+      return false;
+    };
+    const parte: Neuron = {
+      ...from,
+      facts: (from.facts || []).filter(f => pide(f.id || factId(f.text), f.text)).map(copyFact),
+      decisions: (from.decisions || []).filter(d => pide(d.id || entryId(d.text), d.text)).map(d => ({ ...d })),
+      patterns: (from.patterns || []).filter(t => pide(entryId(t), t)),
+      preferences: (from.preferences || []).filter(t => pide(entryId(t), t)),
+      errors: (from.errors || []).filter(t => pide(entryId(t), t)),
+      debts: (from.debts || []).filter(t => pide(entryId(t), t)),
+      tags: [], connections: [], summary: '', heat: 0, access_count: 0,
+      entry_dates: { ...(from.entry_dates || {}) },
+      entry_status: { ...(from.entry_status || {}) },
+    };
+    delete parte.map;
+    const textos = [
+      ...parte.facts.map(f => f.id || factId(f.text)),
+      ...parte.decisions.map(d => d.text), ...parte.patterns, ...parte.preferences,
+      ...(parte.errors || []), ...(parte.debts || []),
+    ];
+    const unmatched = targets.filter(t => !usados.has(t.trim().toLowerCase()));
+    if (textos.length === 0) return { from: from.id, into: null, created: false, moved: 0, unmatched, backup: null };
+
+    let into = (await this.peek(intoRef)) || (await this.findByName(intoRef));
+    let created = false;
+    if (!into) {
+      into = await this.create(intoRef, from.type, options?.domain || from.domain);
+      created = true;
+    }
+    if (into.id === from.id) return { from: from.id, into: into.id, created: false, moved: 0, unmatched, backup: null };
+
+    let antes: Neuron = into;
+    const saved = await updateJSON<Neuron>(this.brain.paths.neuron(into.id), current => {
+      antes = current || into!;
+      return unionNeuron(antes, parte).neuron;
+    });
+    const final = (saved || into) as Neuron;
+    await this.reindex(final);
+    await this.emitAdded(antes, final);
+    this.tally.topics.add(final.id);
+
+    const r = await this.forget(from.id, textos);
+    return { from: from.id, into: final.id, created, moved: r.removed, unmatched, backup: r.backup };
   }
 
   /**
