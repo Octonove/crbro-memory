@@ -768,7 +768,7 @@ export class SearchEngine {
     porNeurona.sort((a, b) => b[0].score - a[0].score);
     const candidatos = porNeurona.slice(0, Math.max(limit * 3, limit + 8));
 
-    const resultados: Array<{ r: SearchResult; extra: ChunkHit[] }> = [];
+    const resultados: Array<{ r: SearchResult; extra: ChunkHit[]; vecinas: string[] }> = [];
 
     for (const chunks of candidatos) {
       const neuronId = chunks[0].neuron;
@@ -840,7 +840,21 @@ export class SearchEngine {
           ...(neuron?.map?.text ? { has_map: true } : {}),
         },
         extra: contenido.filter(c => c !== elegido).slice(0, 2),
+        vecinas: neuron?.connections || [],
       });
+    }
+
+    // EXPERIMENT (benchmarks/synapse-activation/PREREGISTRO.md): a neuron is
+    // lifted when a synapse neighbour also scored. Off unless CRBRO_SYNAPSE>0.
+    const wSyn = Number(process.env.CRBRO_SYNAPSE);
+    if (Number.isFinite(wSyn) && wSyn > 0 && resultados.length > 1) {
+      const base = new Map(resultados.map(x => [x.r.neuron_id, x.r.relevance_score]));
+      const tope = Math.max(...base.values());
+      for (const x of resultados) {
+        let mejor = 0;
+        for (const v of x.vecinas) { const sv = base.get(v); if (sv !== undefined && sv > mejor) mejor = sv; }
+        if (mejor > 0 && tope > 0) x.r.relevance_score = Math.round(x.r.relevance_score * (1 + wSyn * mejor / tope) * 1000) / 1000;
+      }
     }
 
     resultados.sort((a, b) => b.r.relevance_score - a.r.relevance_score);
