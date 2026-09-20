@@ -45,7 +45,11 @@ export function resolveBrainDir(
   return raw;
 }
 
-const CRBRO_DIR = resolveBrainDir();
+// Resolved when a brain is built, never when this module is imported. It used
+// to be a module constant, and a test that imported Brain before setting
+// CRBRO_PATH got a server bound to the real ~/.crbro: five test entries and a
+// fake neuron landed in a live brain (2.5 development). The environment at
+// construction time is the only one that means anything.
 const MANIFEST_FILE = 'manifest.json';
 // The brain FORMAT, not the release. It moves only when the on-disk layout
 // changes in a way that needs a migration, which is why it has stayed at 1.0.0
@@ -70,7 +74,7 @@ export class BrainPaths {
   readonly prompts: string;
 
   constructor(rootDir?: string) {
-    this.root = rootDir || CRBRO_DIR;
+    this.root = rootDir || resolveBrainDir();
     this.cortex = path.join(this.root, 'cortex');
     this.synapses = path.join(this.root, 'synapses');
     this.hippocampus = path.join(this.root, 'hippocampus');

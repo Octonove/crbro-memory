@@ -27,7 +27,7 @@ import { Synapses } from './engine/synapses.js';
 import { HeatEngine } from './engine/heat.js';
 import { Hippocampus } from './engine/hippocampus.js';
 import { Prefrontal } from './engine/prefrontal.js';
-import { SearchEngine } from './search/index.js';
+import { SearchEngine, RECALL_KINDS } from './search/index.js';
 import { semanticStatus } from './search/semantic.js';
 import { fitToBudget, DEFAULT_BUDGET_CHARS, type BudgetOptions } from './utils/budget.js';
 import { redact } from './engine/secrets.js';
@@ -38,6 +38,23 @@ const SUMMARY_NUDGE_MIN_ENTRIES = 25;
 
 /** Listings carry the day, not the millisecond: "2026-09-07" says what "2026-09-07T14:02:11.483Z" says, in a third of the tokens. Full stamps stay on single-entry reads. */
 const dia = <T>(iso: T): T | string => (typeof iso === 'string' && iso.length >= 10 ? iso.slice(0, 10) : iso);
+
+/**
+ * recall's `since`: a day ("2026-09-01") or a span back from today ("30d",
+ * "2w", "6m"). Returns the day, or null when it is neither — the caller is
+ * told, never silently given an unfiltered answer.
+ */
+export function resolveSince(raw: string, nowMs: number = Date.now()): string | null {
+  const v = raw.trim().toLowerCase();
+  const span = /^(\d{1,4})\s*([dwm])$/.exec(v);
+  if (span) {
+    const n = Number(span[1]);
+    const days = span[2] === 'd' ? n : span[2] === 'w' ? n * 7 : n * 30;
+    return new Date(nowMs - days * 86_400_000).toISOString().slice(0, 10);
+  }
+  if (/^\d{4}-\d{2}-\d{2}/.test(v) && Number.isFinite(Date.parse(v.slice(0, 10)))) return v.slice(0, 10);
+  return null;
+}
 import { Maintenance } from './engine/maintenance.js';
 import {
   createSpace, joinSpace, listSpaces, readSpace, prepareShare, commitShare,
@@ -766,6 +783,8 @@ export function createServer(): McpServer {
         queries: z.array(z.string()).optional().describe('Alternative phrasings of the same question, searched together with query and fused by rank. Use synonyms, the other language and the concrete product name; 2-4 is plenty.'),
         domain: z.string().optional().describe('Only neurons in this domain (exact match, e.g. "proyectos-web"). Day logs have no domain: sessions_matched is listed regardless.'),
         limit: z.number().int().positive().optional().describe('Max neurons returned (default 5, ranked; ask for more only when the top five did not answer).'),
+        since: z.string().optional().describe('Only entries dated on or after this: a day ("2026-09-01") or a span back from today ("7d", "2w", "3m"). For "what changed lately" and to keep an old telling out. Undated entries cannot prove they are recent: they are left out and counted in undated_skipped.'),
+        kind: z.array(z.enum(RECALL_KINDS)).optional().describe('Only these entry kinds, e.g. ["error"] for past mistakes before repeating one, ["decision"] for what was agreed and why, ["debt"] for what was deferred. Day logs are left out when set.'),
       },
       outputSchema: {
         query: z.string(),
@@ -786,6 +805,8 @@ export function createServer(): McpServer {
         has_more: z.boolean().optional(),
         sessions_matched: z.array(z.object({}).loose()).optional(),
         sessions_total: z.number().optional(),
+        filters: z.object({ since: z.string().optional(), kind: z.array(z.string()).optional() }).optional(),
+        undated_skipped: z.number().optional().describe('With since: matching entries left out for having no date'),
         hint: z.string(),
         truncated: z.object({}).loose().optional(),
       },
@@ -793,13 +814,23 @@ export function createServer(): McpServer {
     },
     async (args) => {
       try {
+        let since: string | undefined;
+        if (args.since !== undefined && args.since.trim() !== '') {
+          const d = resolveSince(args.since);
+          if (!d) throw new Error(`since "${args.since}" is neither a day (2026-09-01) nor a span (7d, 2w, 3m).`);
+          since = d;
+        }
+        const kinds = args.kind && args.kind.length > 0 ? [...new Set(args.kind)] : undefined;
+
         // Five by default, down from ten: results are ranked and each one
         // carries its entry, so ten cost ~12,000 tokens on a dense brain for
         // answers that live in the top three (recall@3 is the metric).
-        const { results, matched_neurons, sessions, sessions_total } = await searchEngine.searchManyWithStats(
+        const { results, matched_neurons, sessions, sessions_total, undated_skipped } = await searchEngine.searchManyWithStats(
           [args.query, ...(args.queries || [])],
-          { domain: args.domain, limit: args.limit ?? 5 },
+          { domain: args.domain, limit: args.limit ?? 5, since, kinds },
         );
+        const filtrado = !!since || !!kinds;
+        const sinFecha = undated_skipped ?? 0;
 
         // A hit carries its entry, but not without limit: one 6,000-character
         // fact must not cost more than the five results around it. Past the
@@ -827,6 +858,10 @@ export function createServer(): McpServer {
           returned: results.length,
           matched_neurons,
           has_more: sobran > 0,
+          // The filter as it was understood ("30d" becomes a day), so a narrowed
+          // answer never reads as the whole brain.
+          ...(filtrado ? { filters: { ...(since ? { since } : {}), ...(kinds ? { kind: kinds } : {}) } } : {}),
+          ...(since ? { undated_skipped: sinFecha } : {}),
           results: rows,
           // The diary, searched since 2.2: day logs whose summary mentions the
           // question, in a list of their own so narrative never outranks a fact.
@@ -836,11 +871,15 @@ export function createServer(): McpServer {
             ? (sessions.length
               // A day mentions it and no fact does: point at the day, not at rephrasing.
               ? `No stored fact matched; ${sessions_total} day log${sessions_total === 1 ? '' : 's'} mention it (sessions_matched): read one whole with crbro_inspect view=sessions session=<session_id>. If it is a fact worth keeping, save it with crbro_learn.`
-              : 'Nothing matched. Try fewer, more distinctive words - names, ids, filenames - rather than a full sentence.')
+              : (filtrado
+                ? 'Nothing matched inside the filter. Drop since/kind and ask again before concluding it is not stored.'
+                : 'Nothing matched. Try fewer, more distinctive words - names, ids, filenames - rather than a full sentence.'))
             : 'weak: verify. Newer wins on conflict. entry_id → crbro_inspect view=neuron entries=[id]. has_map → crbro_map first.'
               + (sobran > 0 ? ` ${sobran} more neuron${sobran === 1 ? '' : 's'} matched: raise limit or narrow the query.` : '')
               + (cortados > 0 ? ' content_truncated → read the entry by entry_id.' : '')
               + (sessions.length ? ' sessions_matched: day logs that mention it; read one whole with crbro_inspect view=sessions session=<session_id>.' : ''))
+            + (filtrado && results.length > 0 ? ' Filtered: entries outside since/kind were not searched.' : '')
+            + (sinFecha > 0 ? ` ${sinFecha} matching entr${sinFecha === 1 ? 'y has' : 'ies have'} no date and were left out by since (crbro_maintenance backfill_dates dates the ones that state a day).` : '')
             + (sessions_total > sessions.length ? ` ${sessions_total - sessions.length} more day${sessions_total - sessions.length === 1 ? '' : 's'} mention it: narrow the query.` : ''),
         };
         // Recall is the one read whose size the caller sets, with limit: ten
@@ -1386,13 +1425,14 @@ export function createServer(): McpServer {
     'crbro_maintenance',
     {
       title: 'Brain maintenance',
-      description: 'Write: brain housekeeping — recalculate heat, prune weak synapses, check integrity, rebuild the search index. Returns a report (counts, integrity_issues, repairable, notes) and flags debts without a revisit trigger. dry_run:true writes nothing at all (the global map is computed live, never cached). Extras are OFF unless asked: archive cold neurons (on a mature brain most look cold, and archived ones stop being searchable), unarchive them back, purge_boilerplate left by early miners, repair what the integrity check found. For session close use crbro_consolidate; to only read the brain use crbro_inspect.',
+      description: 'Write: brain housekeeping — recalculate heat, prune weak synapses, check integrity, rebuild the search index. Returns a report (counts, integrity_issues, repairable, notes) and flags debts without a revisit trigger. dry_run:true writes nothing at all (the global map is computed live, never cached). Extras are OFF unless asked: archive cold neurons (on a mature brain most look cold, and archived ones stop being searchable), unarchive them back, purge_boilerplate left by early miners, repair what the integrity check found, backfill_dates for entries older than 1.13. For session close use crbro_consolidate; to only read the brain use crbro_inspect.',
       inputSchema: {
         dry_run: z.boolean().optional().describe('true = report only: no heat recalc, archiving, unarchiving, purge, repair, lock sweep, pruning or index rebuild, and no file written. Counts, debts and integrity checks still run.'),
         archive: z.boolean().optional().describe('Also move cold neurons (heat < 0.05, untouched 90+ days) out of the cortex into archives/. Off by default; run dry_run first and read archivable_neurons. Undo with unarchive.'),
         unarchive: z.union([z.array(z.string()), z.literal('all')]).optional().describe('Move these neuron ids (or "all") from archives/ back into the cortex and reindex them. Off in dry_run; the report says archives_count and unarchived_neurons; unknown ids are listed in notes.'),
         purge_boilerplate: z.boolean().optional().describe('Also delete contentless facts left by early miner versions ("Referenced in: file.md"). Off by default; every run reports how many there are. Neurons left empty are kept.'),
         repair: z.boolean().optional().describe('Fix what the integrity check found: dangling connection ids, synapse files pointing at missing neurons, entry_dates/entry_status keys with no live entry, manifest counters. Off in dry_run; the report lists repairs[] one line each.'),
+        backfill_dates: z.boolean().optional().describe('Date the patterns, preferences, errors and debts written before 1.13 (recall shows them with an empty matched_added), using only a date stated in the text of the entry itself, to the day; the rest stay undated — nothing is guessed. Every run reports undated_entries and datable_entries; this writes them (dates_backfilled). Off in dry_run.'),
       },
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
     },
@@ -1403,6 +1443,7 @@ export function createServer(): McpServer {
           purgeBoilerplate: args.purge_boilerplate,
           repair: args.repair,
           unarchive: args.unarchive,
+          backfillDates: args.backfill_dates,
         });
 
         return jsonResult({

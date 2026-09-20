@@ -67,6 +67,48 @@ function semanticFloor(): number {
 }
 /** At or above this cosine a vector-only match is reported as strong. */
 const SEMANTIC_STRONG = 0.86;
+/**
+ * Recency (2.5): a tiebreak, never a signal. Until now neither date nor heat
+ * touched the ranking, so two tellings of one thing competed as equals and
+ * the older one won as often as not. A chunk's LEXICAL score is lifted by at
+ * most this fraction — today 4%, a month old 3.2%, four months 2%, a year 1%,
+ * undated 0 — which only reorders chunks that were within a few percent of
+ * each other to begin with. It is applied before semantic fusion, so in fused
+ * mode it can move a chunk inside the lexical list and nothing else: RRF
+ * scores sit ~1.6% apart per rank, and a bonus applied after fusion would
+ * reorder by date instead of breaking ties. CRBRO_RECENCY=0 turns it off.
+ */
+const RECENCY_WEIGHT_DEFAULT = 0.04;
+/** Age at which the lift is half of what a chunk written today gets. */
+const RECENCY_HALF_DAYS = 120;
+function recencyWeight(): number {
+  const raw = process.env.CRBRO_RECENCY;
+  if (raw === undefined || raw === '') return RECENCY_WEIGHT_DEFAULT;
+  const v = Number(raw);
+  return Number.isFinite(v) && v >= 0 && v <= 0.25 ? v : RECENCY_WEIGHT_DEFAULT;
+}
+/** 1 for today, 0.5 at RECENCY_HALF_DAYS, 0 for no date. Exported for the tests. */
+export function recencyOf(added: string | undefined, nowMs: number): number {
+  if (!added) return 0;
+  const t = Date.parse(added);
+  if (!Number.isFinite(t)) return 0;
+  const days = Math.max(0, (nowMs - t) / 86_400_000);
+  return 1 / (1 + days / RECENCY_HALF_DAYS);
+}
+
+/** Entry kinds recall can be narrowed to. The header is identity, never a kind to ask for. */
+export const RECALL_KINDS = ['fact', 'decision', 'pattern', 'preference', 'error', 'debt', 'map'] as const;
+export type RecallKind = typeof RECALL_KINDS[number];
+
+/**
+ * Narrowing a search (2.5). `since` keeps entries dated on or after that day
+ * — an undated entry cannot prove it is recent, so it is left out, and the
+ * caller is told how many were. `kinds` keeps only those entry kinds.
+ */
+export interface SearchFilter {
+  since?: string;
+  kinds?: readonly string[];
+}
 
 /**
  * An also_matched line: a preview and a handle, not the body. As full text
@@ -110,6 +152,8 @@ export interface SearchStats {
   sessions?: SessionMatch[];
   /** How many day logs had a hit at all, before the cap on sessions: three never reads as "only three". */
   sessions_total?: number;
+  /** With `since`: matching entries left out because they carry no date at all. */
+  undated_skipped?: number;
 }
 
 /**
@@ -412,7 +456,7 @@ export class SearchEngine {
    */
   async search(
     query: string,
-    options?: { domain?: string; limit?: number; stats?: SearchStats }
+    options?: { domain?: string; limit?: number; stats?: SearchStats } & SearchFilter
   ): Promise<SearchResult[]> {
     if (!this.db) await this.init();
     if (!this.db) return [];
@@ -423,6 +467,21 @@ export class SearchEngine {
 
     const perChunk = new Map<string, ChunkHit>();
     const perSession = new Map<string, SessionHit>();
+
+    // Narrowing: decided per document, before it can rank or lend breadth.
+    const desde = (options?.since || '').slice(0, 10);
+    const clases = options?.kinds && options.kinds.length > 0 ? new Set(options.kinds) : null;
+    const sinFecha = new Set<string>();
+    const admite = (doc: { id?: string; kind?: string; added?: string }): boolean => {
+      if (clases && !clases.has(String(doc.kind || ''))) return false;
+      if (desde) {
+        if (doc.kind === 'header') return false;   // dated by the neuron's birth, which says nothing about its content
+        const dia = String(doc.added || '').slice(0, 10);
+        if (!dia) { if (doc.id) sinFecha.add(String(doc.id)); return false; }
+        if (dia < desde) return false;
+      }
+      return true;
+    };
 
     for (const term of terms) {
       const hits = await this.searchTerm(term, options?.domain);
@@ -439,11 +498,15 @@ export class SearchEngine {
         // of their own, so a long narrative cannot outrank the fact that
         // answers, and the neuron path below never sees them.
         if (doc.kind === 'session') {
+          if (clases) continue;                                   // a day log is not an entry kind
+          if (desde && String(doc.added || '').slice(0, 10) < desde) continue;
           const prev = perSession.get(key);
           if (prev) { prev.score += normalised; prev.matched += 1; }
           else perSession.set(key, { session: String(doc.name || ''), date: String(doc.added || ''), text: String(doc.text || ''), eid: String(doc.eid || ''), score: normalised, matched: 1 });
           continue;
         }
+
+        if (!admite(doc)) continue;
 
         const existing = perChunk.get(key);
         if (existing) {
@@ -473,11 +536,22 @@ export class SearchEngine {
       chunk.score = chunk.score * Math.pow(coverage, COVERAGE_EXPONENT);
     }
 
+    // Recency: a few percent on the lexical score, so near-ties fall to the
+    // newer telling. Before fusion on purpose — see RECENCY_WEIGHT_DEFAULT.
+    const peso = recencyWeight();
+    if (peso > 0) {
+      const ahora = Date.now();
+      for (const chunk of perChunk.values()) {
+        if (chunk.kind !== 'header') chunk.score *= 1 + peso * recencyOf(chunk.added, ahora);
+      }
+    }
+
     // Semantic fusion — only when the opt-in layer is installed, enabled and
     // holds vectors. Off, this is a no-op and the scores above stand.
     if (this.semantic && this.semantic.ready() && this.semantic.count() > 0) {
-      await this.fuseSemantic(query, perChunk, options?.domain);
+      await this.fuseSemantic(query, perChunk, options?.domain, admite);
     }
+    if (options?.stats && desde) options.stats.undated_skipped = sinFecha.size;
 
     if (options?.stats) {
       const top = topSessions(perSession, terms.length);
@@ -510,7 +584,7 @@ export class SearchEngine {
    */
   async searchMany(
     queries: string[],
-    options: { domain?: string; limit?: number; stats?: SearchStats } = {}
+    options: { domain?: string; limit?: number; stats?: SearchStats } & SearchFilter = {}
   ): Promise<SearchResult[]> {
     const distintas = [...new Set(queries.map(q => (q || '').trim()).filter(Boolean))];
     if (distintas.length === 0) return [];
@@ -543,6 +617,7 @@ export class SearchEngine {
         .map(f => ({ ...f.row, confidence: f.strong ? 'strong' as const : f.row.confidence }));
       // Each phrasing counted its own days: the union is at least the largest count.
       options.stats.sessions_total = Math.max(fusion.size, ...porConsulta.map(s => s.sessions_total || 0));
+      if (options.since) options.stats.undated_skipped = Math.max(0, ...porConsulta.map(s => s.undated_skipped || 0));
     }
     type Also = NonNullable<SearchResult['also_matched']>[number];
     const fused = new Map<string, { score: number; best: SearchResult; bestRank: number; strong: boolean; also: Map<string, Also> }>();
@@ -594,12 +669,16 @@ export class SearchEngine {
    */
   async searchManyWithStats(
     queries: string[],
-    options: { domain?: string; limit?: number } = {}
-  ): Promise<{ results: SearchResult[]; matched_neurons: number; sessions: SessionMatch[]; sessions_total: number }> {
+    options: { domain?: string; limit?: number } & SearchFilter = {}
+  ): Promise<{ results: SearchResult[]; matched_neurons: number; sessions: SessionMatch[]; sessions_total: number; undated_skipped?: number }> {
     const stats: SearchStats = {};
     const results = await this.searchMany(queries, { ...options, stats });
     const sessions = stats.sessions ?? [];
-    return { results, matched_neurons: stats.matched_neurons ?? results.length, sessions, sessions_total: stats.sessions_total ?? sessions.length };
+    return {
+      results, matched_neurons: stats.matched_neurons ?? results.length, sessions,
+      sessions_total: stats.sessions_total ?? sessions.length,
+      ...(stats.undated_skipped !== undefined ? { undated_skipped: stats.undated_skipped } : {}),
+    };
   }
 
   /**
@@ -612,7 +691,8 @@ export class SearchEngine {
   private async fuseSemantic(
     query: string,
     perChunk: Map<string, ChunkHit>,
-    domain?: string
+    domain?: string,
+    admite: (doc: { id?: string; kind?: string; added?: string }) => boolean = () => true
   ): Promise<void> {
     let sem: SemanticHit[];
     try {
@@ -630,6 +710,7 @@ export class SearchEngine {
       try { doc = await getByID(this.db as AnyOrama, h.id); } catch { doc = undefined; }
       if (!doc || doc.kind === 'header' || doc.kind === 'session') continue;
       if (domain && doc.domain !== domain) continue;
+      if (!admite(doc)) continue;
       perChunk.set(h.id, {
         neuron: doc.neuron, name: doc.name, domain: doc.domain, text: doc.text,
         kind: doc.kind, eid: doc.eid || '', added: doc.added, heat: doc.heat || 0, score: 0, matched: 0,
