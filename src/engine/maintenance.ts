@@ -4,7 +4,9 @@
 import { readJSON, updateJSON, listJSONFiles, moveFile, deleteJSON, fileExists, now, today } from '../utils/fs.js';
 import { sweepStaleLocks } from '../utils/lock.js';
 import { entryId } from '../sync/ops.js';
-import { inferEntryDay, isDayPrecision } from './dates.js';
+import { inferEntryDay, isDayPrecision, datesInText } from './dates.js';
+import { fold } from '../search/tokenize.js';
+import { factId } from '../utils/hash.js';
 import type { Brain } from './brain.js';
 import type { Cortex } from './cortex.js';
 import type { Synapses } from './synapses.js';
@@ -47,8 +49,44 @@ export interface MaintenanceReport {
   datable_entries: number;
   /** Dates written by this run (0 unless backfill_dates:true and not a dry run). */
   dates_backfilled: number;
+  /** Live entries that named a day still ahead of them when written, and that day has passed. */
+  expired_entries: number;
+  /** The longest-expired of them, to review: keep, crbro_revise, or crbro_learn supersedes. Never touched by maintenance. */
+  expired_sample: ExpiredEntry[];
+  /** Neurons past SPLIT_MIN_ENTRIES live entries, each with the groups its own words suggest. */
+  split_candidates: SplitCandidate[];
   notes: string[];
 }
+
+export interface ExpiredEntry {
+  neuron_id: string;
+  entry_id: string;
+  kind: string;
+  /** When the entry was written. */
+  added: string;
+  /** The day it looked forward to, now behind us. */
+  due: string;
+  preview: string;
+}
+
+export interface SplitCandidate {
+  neuron_id: string;
+  name: string;
+  entries: number;
+  /** Words that gather a sizeable share of the entries without gathering all of them. */
+  groups: Array<{ term: string; entries: number }>;
+}
+
+/** A neuron this big no longer fits one read: crbro_inspect pages it, and every recall hit from it competes with 80 siblings. */
+const SPLIT_MIN_ENTRIES = 80;
+const SPLIT_MAX_CANDIDATES = 8;
+const SPLIT_GROUPS = 5;
+const EXPIRED_SAMPLE = 10;
+/** Too common to name a subtopic. Short on purpose: the share bounds below do most of the work. */
+const SPLIT_STOP = new Set(('para como pero este esta estos estas desde hasta entre sobre cuando donde porque tambien todos todas cada '
+  + 'tiene tienen hace hacer puede pueden debe deben usar solo antes despues ahora siempre nunca mismo misma nueva nuevo '
+  + 'with from that this those these when where which while into over under after before there their have does must should '
+  + 'only always never using used more than then also each both were been being').split(' '));
 
 /** Every text an entry_dates / entry_status key may legitimately point at. */
 function liveEntryKeys(n: Neuron): Set<string> {
@@ -98,6 +136,9 @@ export class Maintenance {
       undated_entries: 0,
       datable_entries: 0,
       dates_backfilled: 0,
+      expired_entries: 0,
+      expired_sample: [],
+      split_candidates: [],
       notes: [],
     };
 
@@ -220,6 +261,25 @@ export class Maintenance {
       report.notes.push(
         `${fechas.undated} pattern/preference/error/debt entr${fechas.undated === 1 ? 'y has' : 'ies have'} no date ` +
         `(written before 1.13); ${fechas.datable} state one in their own text. Pass backfill_dates:true to record it.`);
+    }
+
+    // 4d. What the brain still says as current although its own words put a
+    // date on it, and what has outgrown a single read. Read-only, both: what
+    // to do with a line is a judgement, and maintenance does not make it.
+    const revision = await this.reviewEntries();
+    report.expired_entries = revision.expired;
+    report.expired_sample = revision.sample;
+    report.split_candidates = revision.splits;
+    if (revision.expired > 0) {
+      report.notes.push(
+        `${revision.expired} live entr${revision.expired === 1 ? 'y names' : 'ies name'} a day that was still ahead when written and has ` +
+        'since passed — a deadline, a "until", a planned step. expired_sample lists the oldest: confirm each is still true, ' +
+        'or retire it with crbro_revise / replace it with crbro_learn supersedes.');
+    }
+    if (revision.splits.length > 0) {
+      report.notes.push(
+        `${revision.splits.length} neuron(s) hold ${SPLIT_MIN_ENTRIES}+ live entries (split_candidates, with the groups their own words suggest). ` +
+        'To split one: crbro_inspect view=neuron for the entry ids, then crbro_revise move_to — the entries keep their dates.');
     }
 
     // The debt ledger: a deferral that never named its revisit condition is
@@ -577,6 +637,130 @@ export class Maintenance {
     }
 
     return issues;
+  }
+
+  /**
+   * Two read-only reviews in one pass over the cortex.
+   *
+   * Expired: a live, dated entry whose text states a day LATER than the day
+   * it was written — so it was looking forward — and that day is now behind
+   * us. Language-independent on purpose: no list of "hasta / until / vence"
+   * to maintain, just two dates and today. An entry that only mentions past
+   * days is history, not a promise, and is never flagged. Undated entries
+   * cannot be judged and are skipped (backfill_dates first).
+   *
+   * Split: a neuron with SPLIT_MIN_ENTRIES+ live entries, with the words
+   * that gather between 8% and 45% of them — frequent enough to be a
+   * subtopic, not so frequent that they are just the neuron's own name.
+   */
+  private async reviewEntries(): Promise<{ expired: number; sample: ExpiredEntry[]; splits: SplitCandidate[] }> {
+    const hoy = today();
+    const vencidas: ExpiredEntry[] = [];
+    const gordas: SplitCandidate[] = [];
+    const enNeuronas = new Map<string, number>();
+    const grandes: Array<{ n: Neuron; vivas: number; palabras: Array<Set<string>>; propias: Set<string> }> = [];
+    let total = 0;
+
+    for (const id of await this.cortex.allIds()) {
+      let n: Neuron | null;
+      try {
+        n = await readJSON<Neuron>(this.brain.paths.neuron(id));
+      } catch {
+        continue;
+      }
+      if (!n || n.type === 'protocol') continue;
+
+      const retirada = (t: string) => !!n!.entry_status?.[entryId(t)];
+      const vivas: Array<{ eid: string; kind: string; text: string; added: string }> = [];
+      for (const f of n.facts || []) {
+        if (!f?.text || (f.status && f.status !== 'active')) continue;
+        vivas.push({ eid: f.id || factId(f.text), kind: 'fact', text: f.text, added: f.added || '' });
+      }
+      for (const d of n.decisions || []) {
+        if (!d?.text || retirada(d.text)) continue;
+        vivas.push({ eid: d.id || entryId(d.text), kind: 'decision', text: d.text, added: d.date || '' });
+      }
+      const sueltas: Array<[string, string[] | undefined]> = [
+        ['pattern', n.patterns], ['preference', n.preferences], ['error', n.errors], ['debt', n.debts],
+      ];
+      for (const [kind, lista] of sueltas) {
+        for (const t of lista || []) {
+          if (!t || retirada(t)) continue;
+          vivas.push({ eid: entryId(t), kind, text: t, added: n.entry_dates?.[entryId(t)] || '' });
+        }
+      }
+
+      for (const e of vivas) {
+        const escrita = e.added.slice(0, 10);
+        if (!escrita) continue;
+        // Two days of margin, not one: stamps are UTC and people write local
+        // dates, so an entry saved at 00:30 on the 13th in Madrid is stamped
+        // the 12th and says "13/06". On the reference brain that alone was
+        // 250 of 277 flags — every one of them a false alarm.
+        const desde = new Date(Date.parse(escrita) + 2 * 86_400_000).toISOString().slice(0, 10);
+        let due = '';
+        for (const f of datesInText(e.text)) {
+          if (f.alt) continue;   // reads two ways: not evidence of anything
+          if (f.day >= desde && f.day < hoy && f.day > due) due = f.day;
+        }
+        if (!due) continue;
+        vencidas.push({
+          neuron_id: n.id, entry_id: e.eid, kind: e.kind, added: escrita, due,
+          preview: e.text.length > 160 ? `${e.text.slice(0, 160).trimEnd()}…` : e.text,
+        });
+      }
+
+      // Words per entry, once: they feed this neuron's groups and the
+      // brain-wide count that tells a subtopic from a habit of speech.
+      const propias = new Set(fold(n.name).split(/[^a-z0-9]+/).filter(Boolean));
+      const palabras = vivas.map(e => new Set(
+        fold(e.text).split(/[^a-z0-9]+/).filter(w => w.length >= 5 && !SPLIT_STOP.has(w) && !/^\d+$/.test(w))));
+      total++;
+      for (const w of new Set(palabras.flatMap(set => [...set]))) enNeuronas.set(w, (enNeuronas.get(w) || 0) + 1);
+
+      if (vivas.length >= SPLIT_MIN_ENTRIES) {
+        grandes.push({ n, vivas: vivas.length, palabras, propias });
+      }
+    }
+
+    // A word found in many neurons is how this person writes ("verificado",
+    // "usuario"), not what this neuron is about. Measured on the reference
+    // brain, the top group of its largest neuron was "verificado (180)".
+    const comun = Math.max(10, Math.ceil(total * 0.04));
+    for (const { n, vivas, palabras, propias } of grandes) {
+      {
+        const donde = new Map<string, Set<number>>();
+        palabras.forEach((set, i) => {
+          for (const w of set) {
+            if (propias.has(w) || (enNeuronas.get(w) || 0) > comun) continue;
+            const d = donde.get(w);
+            if (d) d.add(i); else donde.set(w, new Set([i]));
+          }
+        });
+        const min = Math.ceil(vivas * 0.08), max = Math.floor(vivas * 0.45);
+        // Greedy, by size: a word joins only if most of its entries are not
+        // already gathered by a word chosen before it — otherwise the five
+        // groups are five names for the same one ("newsletter", "envio", ...).
+        const cubiertas = new Set<number>();
+        const groups: Array<{ term: string; entries: number }> = [];
+        const orden = [...donde.entries()]
+          .filter(([, set]) => set.size >= min && set.size <= max)
+          .sort((a, b) => b[1].size - a[1].size || (a[0] < b[0] ? -1 : 1));
+        for (const [term, set] of orden) {
+          if (groups.length >= SPLIT_GROUPS) break;
+          let repetidas = 0;
+          for (const i of set) if (cubiertas.has(i)) repetidas++;
+          if (repetidas > set.size / 2) continue;
+          groups.push({ term, entries: set.size });
+          for (const i of set) cubiertas.add(i);
+        }
+        gordas.push({ neuron_id: n.id, name: n.name, entries: vivas, groups });
+      }
+    }
+
+    vencidas.sort((a, b) => (a.due < b.due ? -1 : a.due > b.due ? 1 : a.entry_id < b.entry_id ? -1 : 1));
+    gordas.sort((a, b) => b.entries - a.entries);
+    return { expired: vencidas.length, sample: vencidas.slice(0, EXPIRED_SAMPLE), splits: gordas.slice(0, SPLIT_MAX_CANDIDATES) };
   }
 
   /**
