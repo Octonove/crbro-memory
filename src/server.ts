@@ -31,6 +31,10 @@ import { SearchEngine } from './search/index.js';
 import { semanticStatus } from './search/semantic.js';
 import { fitToBudget, DEFAULT_BUDGET_CHARS, type BudgetOptions } from './utils/budget.js';
 import { redact } from './engine/secrets.js';
+import { autoBackupIfDue, resolveBackupDir } from './engine/backup.js';
+
+/** A neuron this size with no summary is worth two lines from whoever is closing the session. */
+const SUMMARY_NUDGE_MIN_ENTRIES = 25;
 
 /** Listings carry the day, not the millisecond: "2026-09-07" says what "2026-09-07T14:02:11.483Z" says, in a third of the tokens. Full stamps stay on single-entry reads. */
 const dia = <T>(iso: T): T | string => (typeof iso === 'string' && iso.length >= 10 ? iso.slice(0, 10) : iso);
@@ -1330,11 +1334,39 @@ export function createServer(): McpServer {
         // Send the session's notes to the team before the lights go out.
         const compartidos = await syncAll(brain, cortex, 10_000);
 
+        // A backup nobody has to remember to make (2.5). The audited brain had
+        // 1,200 neurons and 97 sessions on one disk and the only "backups"
+        // folder held config files. Once a day, never throws, and says where it
+        // went so the user can point CRBRO_BACKUP_DIR somewhere that is synced.
+        const copia = await autoBackupIfDue(brain.paths);
+
+        // Large neurons nobody has described (2.5). `summary` exists since 1.0
+        // and was empty in 1,199 of 1,200 neurons: the server has no model to
+        // write one, but the assistant closing the session has the whole context
+        // in front of it. Only neurons this session touched, only the big ones,
+        // read with peek so asking does not warm them.
+        const sinResumen: Array<{ neuron_id: string; entries: number }> = [];
+        for (const id of result.topics_logged) {
+          const n = await cortex.peek(id);
+          if (!n || (n.summary || '').trim()) continue;
+          const entries = n.facts.length + n.decisions.length + n.patterns.length
+            + n.preferences.length + (n.errors?.length || 0) + (n.debts?.length || 0);
+          if (entries >= SUMMARY_NUDGE_MIN_ENTRIES) sinResumen.push({ neuron_id: id, entries });
+        }
+        sinResumen.sort((a, b) => b.entries - a.entries);
+
         return jsonResult({
           ...result,
           shared_spaces: compartidos.length > 0
             ? compartidos.map(c => ({ space: c.space, state: c.state, pushed: c.pushed }))
             : undefined,
+          backup: copia.made
+            ? { made: true, file: copia.file, dir: resolveBackupDir(brain.paths.root) }
+            : (copia.reason.startsWith('failed') ? { made: false, reason: copia.reason } : undefined),
+          ...(sinResumen.length > 0 ? {
+            missing_summaries: sinResumen.slice(0, 3),
+            missing_summaries_hint: 'These neurons you touched are large and have no summary. Write two or three lines on what each one IS with crbro_revise neuron=<id> summary="…": it is what boot shows next to the name and what recall matches when the question is about the topic as a whole.',
+          } : {}),
           message: 'Session consolidated. Brain state persisted.',
           summary_chars: summary.length,
           ...(summary.length > SUMMARY_LONG ? {

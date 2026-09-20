@@ -852,6 +852,67 @@ if (command === 'init') {
     process.exit(1);
   });
 
+} else if (command === 'backup') {
+  // ─── Backup: one gzipped file per copy, rotated ────────────────
+  // `backup` makes one · `backup list` · `backup restore FILE [--into DIR]`
+  const sub = args[1] && !args[1].startsWith('--') ? args[1] : 'create';
+  const flag = (name) => { const i = args.indexOf(name); return i !== -1 ? args[i + 1] : undefined; };
+  Promise.all([import('../dist/engine/brain.js'), import('../dist/engine/backup.js')]).then(async ([{ BrainPaths }, bk]) => {
+    const paths = new BrainPaths();
+    const dir = flag('--dir') || bk.resolveBackupDir(paths.root);
+    const kb = (n) => `${(n / 1024).toFixed(0)} KB`;
+    try {
+      if (sub === 'create') {
+        const keep = flag('--keep') ? Number(flag('--keep')) : undefined;
+        const r = await bk.createBackup(paths, { dir, keep });
+        console.log('');
+        console.log(`  ✅ Backup written: ${r.path}`);
+        console.log(`     ${r.counts.neurons} neurons · ${r.counts.sessions} sessions · ${r.counts.synapses} synapses · ${kb(r.counts.bytes)} of text → ${kb(r.size_bytes)} on disk`);
+        if (r.rotated_out.length) console.log(`     Rotated out: ${r.rotated_out.join(', ')}`);
+        console.log('     Left out on purpose: the quarantine, machine tokens, the search index and the semantic runtime.');
+        if (!process.env.CRBRO_BACKUP_DIR) {
+          console.log('');
+          console.log('  ⚠️  This folder is on the same disk as the brain. It survives a bad write or a wrong');
+          console.log('     forget, not a dead disk. Point CRBRO_BACKUP_DIR at a folder that is already synced');
+          console.log('     (Drive in mirror mode, Dropbox, an external disk) to cover that too.');
+        }
+        console.log('');
+      } else if (sub === 'list') {
+        const all = await bk.listBackups(dir);
+        console.log('');
+        console.log(`  Backups in ${dir}`);
+        if (!all.length) console.log('    (none yet — run: npx crbro-memory backup)');
+        for (const b of all) console.log(`    ${b.file}   ${b.created.slice(0, 16).replace('T', ' ')} UTC   ${kb(b.size_bytes)}`);
+        console.log('');
+      } else if (sub === 'restore') {
+        const file = args[2];
+        if (!file || file.startsWith('--')) {
+          console.error('  Usage: npx crbro-memory backup restore FILE [--into DIR]');
+          process.exit(1);
+        }
+        const src = existsSync(file) ? file : join(dir, file);
+        const into = flag('--into') || join(homedir(), `.crbro-restored-${Date.now()}`);
+        const r = await bk.restoreBackup(src, into);
+        console.log('');
+        console.log(`  ✅ Restored ${r.files} files into ${r.into}`);
+        console.log('     Nothing was written over your live brain. To switch to the restored copy, close every');
+        console.log('     client using CRBRO, move ~/.crbro aside, rename this folder to ~/.crbro, then run:');
+        console.log('       npx crbro-memory reindex');
+        console.log('');
+      } else {
+        console.error('  Usage: npx crbro-memory backup [list | restore FILE [--into DIR]] [--dir DIR] [--keep N]');
+        process.exit(1);
+      }
+    } catch (err) {
+      console.error(`  ❌ ${err.message}`);
+      process.exit(1);
+    }
+  }).catch(err => {
+    console.error('  ❌ Build required. Run: npm run build');
+    console.error('  ', err.message);
+    process.exit(1);
+  });
+
 } else if (command === '--help' || command === '-h') {
   // ─── Help ──────────────────────────────────────────────────────
   console.log('');
@@ -868,6 +929,12 @@ if (command === 'init') {
   console.log('    npx crbro-memory setup-miner      Install scheduled auto-miner');
   console.log('    npx crbro-memory miner-status     Check auto-miner status');
   console.log('    npx crbro-memory remove-miner     Remove auto-miner');
+  console.log('');
+  console.log('  Backup (one gzipped file per copy; consolidate makes one a day on its own):');
+  console.log('    npx crbro-memory backup           Back the brain up now (keeps the newest 7)');
+  console.log('    npx crbro-memory backup list      What there is, newest first');
+  console.log('    npx crbro-memory backup restore FILE   Unpack into a NEW folder, never over the live brain');
+  console.log('    CRBRO_BACKUP_DIR=<synced folder>  Put them somewhere that survives the disk');
   console.log('');
   console.log('  Search:');
   console.log('    npx crbro-memory reindex          Rebuild the search index');
