@@ -32,6 +32,7 @@ import { semanticStatus } from './search/semantic.js';
 import { fitToBudget, DEFAULT_BUDGET_CHARS, type BudgetOptions } from './utils/budget.js';
 import { redact } from './engine/secrets.js';
 import { autoBackupIfDue, resolveBackupDir } from './engine/backup.js';
+import { writeTriggerIndex } from './engine/triggers.js';
 
 /** A neuron this size with no summary is worth two lines from whoever is closing the session. */
 const SUMMARY_NUDGE_MIN_ENTRIES = 25;
@@ -1412,6 +1413,9 @@ export function createServer(): McpServer {
         // folder held config files. Once a day, never throws, and says where it
         // went so the user can point CRBRO_BACKUP_DIR somewhere that is synced.
         const copia = await autoBackupIfDue(brain.paths);
+        // The command → lesson lookup the PreToolUse guard reads. Derived data,
+        // rebuilt here because this is when the ledgers have just changed.
+        await writeTriggerIndex(brain);
 
         // Large neurons nobody has described (2.5). `summary` exists since 1.0
         // and was empty in 1,199 of 1,200 neurons: the server has no model to
@@ -1479,10 +1483,12 @@ export function createServer(): McpServer {
           unarchive: args.unarchive,
           backfillDates: args.backfill_dates,
         });
+        const disparadores = args.dry_run ? null : await writeTriggerIndex(brain);
 
         return jsonResult({
           mode: args.dry_run ? 'DRY RUN' : 'EXECUTED',
           ...report,
+          ...(disparadores && !('error' in disparadores) ? { trigger_index: disparadores } : {}),
         });
       } catch (err) {
         return errorResult('maintenance', err);
