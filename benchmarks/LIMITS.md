@@ -29,11 +29,15 @@ ello — ni en el README, ni en la web.
 6. **Telemetría de clientes como «evidencia».** No es un experimento controlado
    y tiene problema de privacidad. Nunca.
 
-## Los benchmarks agénticos (pendientes, no falsos)
+## Los benchmarks agénticos (construido, sin ejecutar)
 
 Lo determinista de `benchmarks/` mide componentes. La afirmación insignia —«una
-sesión nueva no vuelve a preguntar lo que ya sabe»— necesita un agente real, y
-está diseñada pero no construida. Cuando se haga, estas trampas la gobiernan:
+sesión nueva no vuelve a preguntar lo que ya sabe»— necesita un agente real.
+Desde la 2.5 está construido en [`agentic/`](agentic/PREREGISTRO.md): 12 tareas
+congeladas, puntuador con tests, cuatro umbrales pre-registrados y un ejecutor
+que aísla cada celda y aborta si un brazo está contaminado. **No se ha
+ejecutado**, y hasta que haya un `results/agentic-*.json` commiteado no existe
+ninguna cifra suya en ningún sitio. Estas trampas lo gobiernan:
 
 - **Efecto del modelo subyacente:** todo resultado fija modelo + versión de
   Claude Code. Las conductas de prompt (la dieta, la carta) pueden no transferir

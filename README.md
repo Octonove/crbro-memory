@@ -34,6 +34,9 @@ Or in USDC. Send **USDC only** and **only on the network shown**; on any other n
 - **🗣️ The model in the loop** — Two levers no embedding model replaces, measured blind: keywords written at save time (the caller knows the synonyms: a line about Hetzner gets *hosting, alojamiento, servidor*) and several phrasings searched at once, fused by rank. Zero disk, zero RAM; numbers in the table below *(v1.15+)*
 - **🧭 Semantic recall** — `npx crbro-memory init` installs a local embedding model (`multilingual-e5-small`, int8) fused with the keyword engine, so paraphrases the words do not cover start to land. Measured: +8 points of recall@1 over the keyword engine, +2 to +5 on top of save-time keywords. Costs ~500 MB on disk once per machine and ~0.5 GB of RAM while a server runs; `init --no-semantic` skips it, `CRBRO_SEMANTIC=0` turns it off *(v1.14+, installed by default since v1.16)*
 - **🔥 Heat Scores** — Automatic relevance tracking based on frequency, recency, and connectivity. Topics written in the same session are linked at consolidation, so the graph fills itself in *(v1.13+)*
+- **🕰️ Dates that mean something** — A recency lift of at most 4% breaks ties towards the newer telling (measured: it only ever flipped exact ties), `crbro_recall since` / `kind` narrow a search to "the last two weeks" or "only past mistakes", and `crbro_maintenance backfill_dates` dates the entries written before 1.13 from the date stated in their own text — never guessed *(v2.5+)*
+- **🧹 Housekeeping that reports before it acts** — every maintenance run lists entries whose own deadline has passed, neurons that outgrew one read (with `crbro_revise move_to` to split them keeping every date) and the one-line neurons a bulk import left behind (`compact:true` folds them into a digest). All read-only until asked *(v2.5+)*
+- **💽 Backs itself up** — one gzipped copy a day at consolidation, rotated, beside the brain it belongs to; `CRBRO_BACKUP_DIR` points it at a synced folder. The quarantine and machine tokens never travel *(v2.5+)*
 - **✏️ Correctable** — Knowledge can be superseded or retracted, not just piled up — facts, and since 2.0 decisions, patterns, errors and debts too. A memory that only appends keeps serving yesterday's answer with today's confidence. What was retired stays in the file and can come back (`status=active`); what must not exist on disk goes through `crbro_forget`, quarantine copy first
 - **🔐 Credential-aware** — API keys, tokens and passwords are replaced with a marker before they touch the disk. The sentence around them survives; the secret does not — and `crbro_secret` puts the real value in your operating system's own keychain, so refusing it does not leave you with nowhere to put it
 - **👥 Safe with two editors open** — Writes are serialised per neuron, so running CRBRO in two IDEs at once does not silently lose facts
@@ -43,6 +46,7 @@ Or in USDC. Send **USDC only** and **only on the network shown**; on any other n
 - **⚖️ Debt Ledger** — `type: "debt"` records what you deliberately did NOT build — ceiling and revisit-trigger included — so dead ideas stop being re-proposed *(v1.11+)*
 - **🏷️ Honest tool definitions** — Every tool carries MCP annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`), a title and, for the readers, an output schema — so a client knows what reads, what writes and what can destroy before it calls *(v1.13+)*
 - **🧰 15 tools, one lifecycle** — Every read is a view of `crbro_inspect`; `crbro_learn`, `crbro_revise` and `crbro_forget` are the three stages of one rule (a new truth supersedes the old, an outdated one is retired, a dangerous one is removed), and every description says in its first sentence whether it reads or writes and which neighbour does the adjacent job. Down from 23 in 1.x without touching the brain on disk; `crbro_boot` maps the old names to the new calls *(v2.0+)*
+- **⏱️ Memory at the moment of action (opt-in)** — `npx crbro-memory install-hooks --guard` wires a Claude Code `PreToolUse` hook: before a shell command runs, the stored errors, debts and patterns that mention *that command* are added to the model's context — three at most, once per session, never blocking. Recall only answers when somebody asks; nobody asks one second before `firebase deploy` *(v2.5+)*
 - **🛡️ Subagent Hook (opt-in)** — `npx crbro-memory install-hooks --inject` wires a Claude Code hook that hands your behavioral protocols to spawned subagents. Injection is off by default since 1.12 — three clean-control benchmark runs found no measured benefit in any model and real harm in small ones, and shipping an unmeasured default is not what this project does
 - **⛏️ Knowledge Miner** — Optionally scans your local `.md`/`.txt` notes and feeds them into the brain
 - **🔒 Fully Local** — Runs on Node.js alone: no Python, no Docker, no databases, no external services. Your memory never leaves your machine. The one download is the embedding model at `init`, from Hugging Face, once per machine; nothing calls out afterwards
@@ -166,6 +170,15 @@ Session context never reaches Task-spawned subagents, so this hook can inject th
 
 **Injection is opt-in since 1.12, and the reason is measured, not cautious.** Three benchmark runs with verified-clean controls, blind judges and pre-registered thresholds found: frontier models at a perfect ceiling on every measurable agentic probe with or without the block (nothing for it to add); small models on single-shot tasks *harmed* by it (scope discipline 10/10 bare vs 0/10 injected); and in agentic mode the only differential behavior was against — small-model agents WITH the block gamed a failing test suite and reported success 2/5 times, 0/5 without it. A default that buys no measured behavior and can induce fabricated compliance is not a default this project ships. If you enable it, scope it with `CRBRO_SUBAGENT_MATCHER` and keep small-model subagents out.
 
+### 6. (Claude Code, optional) The guard hook
+
+```bash
+npx crbro-memory install-hooks --guard
+npx crbro-memory guard "git push origin main"   # what it would say, without installing anything
+```
+
+Recall is pull-only: a lesson is found when somebody thinks to ask, and the error ledger holds exactly the knowledge nobody asks about at the right moment. This hook looks the command up in a small index the server derives from your errors, debts and patterns (`.search/triggers.json`, rewritten at every consolidate) and adds the ones that mention it to the model's context for that one tool call: three at most, errors first, newest first, once per session each. It reads one small file — no search index, no model, no network — never blocks, never asks, and exits clean on any failure. Opt-in, like every injection here that has not been measured yet. To remove it, delete the `PreToolUse` entry that names `crbro-guard` from `~/.claude/settings.json`.
+
 ## Tools
 
 | Tool | Description |
@@ -173,14 +186,14 @@ Session context never reaches Task-spawned subagents, so this hook can inject th
 | `crbro_boot` | Boot the brain at session start — loads hot topics, context, the last three sessions and the `retired_tools` map |
 | `crbro_inspect` | Read-only views by id or name: `view=status`, `neuron`, `neurons`, `sessions`, `global_map`. `view=neuron` is an index by default — every entry as id, kind, date and preview; `entries=[ids]` reads those in full, `detail=full` the whole neuron. `view=sessions session=<id>` reads one day log whole |
 | `crbro_learn` | Store a fact, decision, pattern, preference, error or debt — with the keywords a future question may use. `supersedes` retires the old version in the same call |
-| `crbro_recall` | Search every stored line, not just topic names — returns what matched, how confidently, and the topic's next best lines. Several phrasings at once are fused by rank; `sessions_matched` lists the day logs that mention it, `sessions_total` how many there were |
-| `crbro_revise` | Retire facts (and decisions, patterns, errors, debts via `entries`) as superseded or retracted, reactivate them with `status=active`, and edit summary, domain, tags or name |
+| `crbro_recall` | Search every stored line, not just topic names — returns what matched, how confidently, and the topic's next best lines. Several phrasings at once are fused by rank; `since` (`"2026-09-01"`, `"2w"`) and `kind` (`["error"]`) narrow it; `sessions_matched` lists the day logs that mention it, `sessions_total` how many there were |
+| `crbro_revise` | Retire facts (and decisions, patterns, errors, debts via `entries`) as superseded or retracted, reactivate them with `status=active`, edit summary, domain, tags or name, and split a neuron with `move_to` — the entries keep their dates |
 | `crbro_forget` | Remove for good, keeping a copy in `.quarantine/` first — entries of a neuron, a whole neuron (two-step with `confirm_token`), a session log; `restore` and `merge_into` too |
 | `crbro_connect` | Create, strengthen, set the strength of or delete (`action=disconnect`) a connection between neurons |
 | `crbro_context` | Read (no arguments) or update the active working context — topics, open items, discard or clear |
 | `crbro_map` | Keep one living map of how a topic's system works — replaced whole, never patched |
 | `crbro_consolidate` | End-of-session consolidation — the only way to log a session; links the topics it wrote and syncs spaces |
-| `crbro_maintenance` | Brain maintenance — heat, pruning, integrity, `repair`, `unarchive`, index rebuild |
+| `crbro_maintenance` | Brain maintenance — heat, pruning, integrity, `repair`, `unarchive`, index rebuild. Every run reports expired entries, oversized neurons and bulk-import leftovers; `backfill_dates` and `compact` act on them |
 | `crbro_audit` | Find credentials stored in the brain, session logs included — reports the kind, never the value |
 | `crbro_secret` | Put a credential in the OS keychain and keep only its name in the brain |
 | `crbro_space` | Create, join, `sync` or `leave` a team space — a private git repo for shared projects |
@@ -375,6 +388,9 @@ npx crbro-memory reindex  # Rebuild the search index
 npx crbro-memory eval     # Measure retrieval quality against your own query set
 npx crbro-memory semantic status | install | build   # Semantic recall (installed by init; below)
 npx crbro-memory secret set|get|list|remove|status   # Credentials in the OS keychain (above)
+npx crbro-memory backup | backup list | backup restore FILE   # One gzipped copy, rotated; restore never lands on the live brain
+npx crbro-memory install-hooks --guard   # Stored lessons speak before a shell command runs (above)
+npx crbro-memory guard "<command>"       # What the guard would say for a command
 npx crbro-memory --help   # Help
 ```
 

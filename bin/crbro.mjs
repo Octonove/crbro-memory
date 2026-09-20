@@ -1022,6 +1022,10 @@ if (command === 'init') {
   console.log('    npx crbro-memory backup restore FILE   Unpack into a NEW folder, never over the live brain');
   console.log('    CRBRO_BACKUP_DIR=<synced folder>  Put them somewhere that survives the disk');
   console.log('');
+  console.log('  Guard (opt-in, Claude Code): stored lessons speak before a shell command runs:');
+  console.log('    npx crbro-memory install-hooks --guard   Wire the PreToolUse hook (adds context, never blocks)');
+  console.log('    npx crbro-memory guard "<command>"       What it would say for a command · --rebuild writes the index');
+  console.log('');
   console.log('  Search:');
   console.log('    npx crbro-memory reindex          Rebuild the search index');
   console.log('    npx crbro-memory eval             Measure retrieval against .crbro/.eval/queries.json');

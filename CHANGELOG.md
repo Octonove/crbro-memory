@@ -2,6 +2,165 @@
 
 All notable changes to CRBRO.
 
+## [2.5.0] — 2026-09-20
+
+An audit of one real brain — 1,200 neurons, 97 sessions, five months of daily
+use — and what it showed. Nothing here was designed from a whiteboard: every
+item started as a number that looked wrong.
+
+### The brain had no backup
+
+1,200 neurons on one disk, and the only folder called "backups" held config
+files. `crbro_forget` quarantines what it removes, but nothing protected the
+brain from a bad write, a wrong merge or a dead disk.
+
+```bash
+npx crbro-memory backup            # one gzipped file, keeps the newest 7
+npx crbro-memory backup list
+npx crbro-memory backup restore FILE   # into a NEW folder, never over the live brain
+```
+
+`crbro_consolidate` makes one a day on its own and says so (`backup`). The copy
+leaves out, on purpose, the quarantine (it holds credentials that were forgotten
+deliberately), the machine token, the licence cache, the search index and the
+semantic runtime. The folder is a *sibling of the brain it belongs to*
+(`~/.crbro` → `~/.crbro-backups/brain`), not a fixed path under home: rotation
+keeps the newest N of whatever shares a folder, so two brains in one folder
+would rotate each other out — and the test suite would have rotated a real
+user's backups. `CRBRO_BACKUP_DIR` points it at a synced folder, which is the
+only thing that survives the disk; `CRBRO_AUTOBACKUP=0` turns the daily copy off.
+
+### 1,199 of 1,200 neurons had no summary
+
+The field exists since 1.0 and nothing ever asked for it. `crbro_consolidate`
+now names the large neurons the session touched that still have none
+(`missing_summaries`, 25+ entries, three at most) with the call that writes it.
+
+### Half the ledgers had no date
+
+Patterns, preferences, errors and debts are dated since 1.13; everything older
+answers `matched_added: ""`, so "prefer the more recent" had nothing to stand on
+in exactly the ledgers where it matters — 249 of 457 entries.
+
+`crbro_maintenance backfill_dates:true` dates them **from the date stated in
+their own text** ("Hallazgo (2026-08-30): …", "el 14-sep-2026 …", six
+languages), to the day, inside the window [neuron created, first stamp on this
+brain]. A day-precision value (`2026-08-30`) is a recovered date; a full instant
+is a `learn()` stamp — the value says how it was obtained. The obvious fallback,
+the neuron's `created`, was measured and thrown away: for the entries with no
+date in their text the window had a median of **117 days**. That is not a date.
+128 of 249 are recovered; 121 are counted and stay undated. Nothing is guessed.
+
+### No date ever touched the ranking
+
+Two tellings of one thing competed as equals, and which one spoke for the
+neuron was an accident of file order. Recall now lifts a chunk's *lexical*
+score by at most 4% for recency (today 4%, a month 3.2%, four months 2%, a year
+1%, undated 0), before semantic fusion — RRF scores sit ~1.6% apart per rank,
+so a lift applied after fusion would sort by date instead of breaking ties.
+On 115 queries over a copy of the reference brain it changed the top neuron 3
+times, all three exact score ties. The blind benchmark is unchanged
+(71% / 77% / 0.744). `CRBRO_RECENCY=0` turns it off.
+
+### Recall can be narrowed
+
+`crbro_recall since` — a day (`"2026-09-01"`) or a span (`"7d"`, `"2w"`, `"3m"`)
+— and `kind` (`["error"]` before repeating a mistake, `["decision"]` for what
+was agreed). An undated entry cannot prove it is recent: `since` leaves it out
+and counts it in `undated_skipped`. The filter is echoed back as it was
+understood, and an empty filtered answer says to drop the filter before
+concluding nothing is stored.
+
+### Maintenance notices what nobody was looking at
+
+All three are read-only reports in every run; acting on them is a judgement.
+
+- **`expired_entries`** — live, dated entries whose text names a day that was
+  still ahead when they were written and has since passed. Two dates and today,
+  no keyword list. A two-day margin absorbs the gap between UTC stamps and the
+  local dates people write, which alone was 232 of 277 flags; what is left (45)
+  is scheduled posts and deadlines.
+- **`split_candidates`** — neurons with 80+ live entries, with the
+  non-overlapping word groups their own text suggests. Words common across the
+  brain are dropped: the first proposal for the largest neuron was
+  "verificado (180)", a habit of speech, not a subtopic.
+- **`compact_groups`** — see below.
+
+### Splitting a neuron without rebirthing its entries
+
+`crbro_revise move_to` moves entries of any kind (by id or exact text) to
+another neuron, created if missing, **with their dates, keys and retirement**.
+learn + forget could always split a neuron, at the cost of every moved entry
+being reborn today. Union first, removal second — a crash in between leaves an
+entry in both places, never in neither — the source is quarantined, and the two
+neurons get a `hierarchy` synapse. Refused on a shared source.
+
+### 766 of 1,200 neurons were born on one day
+
+A transcript miner that made a neuron out of every checklist line: one line
+each, no tags, no links, 482 repeating a text another one has. Recall gives one
+result per neuron, so three identical lines took the top three places of an
+answer.
+
+`crbro_maintenance compact:true` folds each such burst — 25+ one-line neurons
+born the same day in one domain, no tags, links, summary or map, not shared,
+30+ days old — into one digest neuron (tag `digest`) in a single pass: every
+source quarantined, union in memory, one write, one reindex. Identical lines
+are kept once, dates travel, and the source's name, the only context a one-line
+neuron had, becomes the search keys of its line. A lone one-fact neuron is
+somebody's note and is never touched. A digest earns no breadth bonus in
+ranking: twenty lines of a pile matching "verify" put the pile above the
+project that answered. On a restored copy of the reference brain: 754 neurons
+folded in 6.8 s, 1,200 → 447, 0 integrity issues, real queries unchanged.
+Run `dry_run` first and read the samples.
+
+### Memory at the moment of action (opt-in)
+
+Recall only answers when somebody asks, and nobody asks "have I broken this
+before?" one second before `firebase deploy`. The same deploy mistake was in
+the error ledger twice, recorded by sessions that never recalled it.
+
+```bash
+npx crbro-memory install-hooks --guard
+npx crbro-memory guard "firebase deploy --only hosting"   # what it would say
+```
+
+The server derives a command → lesson lookup from the error, debt and pattern
+ledgers (backticked commands, known programs with their next word, scripts by
+name) and writes it to `.search/triggers.json` at every consolidate and
+maintenance run — 119 KB for 256 lessons. A Claude Code `PreToolUse` hook reads
+that one file before a Bash or PowerShell call and adds the matching lessons as
+`additionalContext`: three at most, errors first, newest first, once per
+session each. It never blocks, never asks, and exits 0 on any failure. Opt-in,
+like every injection this project has not measured.
+
+### Two experiments, pre-registered
+
+- **Synapses in the ranking: discarded.** Hypothesis, the one mechanism, arms,
+  data and the decision rule were committed before any code. 633 known-item
+  queries on a copy of the reference brain, 339 on neurons that have synapses:
+  recall@3 moved by 0.15 points at most; the rule asked for +1.0. The mechanism
+  was removed from the engine rather than left asleep behind a variable.
+  [`benchmarks/synapse-activation/`](benchmarks/synapse-activation/RESULTADO.md).
+- **The agentic benchmark: built, not run.** `LIMITS.md` designed it and left
+  it unbuilt. [`benchmarks/agentic/`](benchmarks/agentic/PREREGISTRO.md) holds
+  12 frozen tasks (4 memory, 4 with a retired value as a trap, 4 controls where
+  CRBRO must not win), a tested scorer, four thresholds, and a runner that
+  isolates every cell and aborts on a contaminated arm. No figure from it
+  exists anywhere until a results file is committed.
+
+### Fixed
+
+- **The brain path was resolved at import, not at construction.** `brain.ts`
+  kept `resolveBrainDir()` in a module constant, so whatever imported `Brain`
+  before `CRBRO_PATH` was set bound every later `new Brain()` to `~/.crbro`.
+  Found the hard way: a new test wrote a fake neuron into a live brain. It is
+  resolved when a Brain is built, and the test setup now sandboxes
+  `CRBRO_PATH`, `HOME` and `USERPROFILE`, so a test that forgets the variable —
+  or deletes it in its `afterAll` — cannot reach a real brain.
+
+388 tests: 384 run everywhere, 4 need the semantic runtime. Baseline before this release: 312.
+
 ## [2.4.0] — 2026-09-10
 
 ### The memory was installed and never woke up
