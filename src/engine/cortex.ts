@@ -1670,6 +1670,69 @@ export class Cortex {
   }
 
   /**
+   * Fold many small neurons into one digest neuron, in a single pass.
+   *
+   * mergeNeurons would do it one at a time, reindexing a growing target on
+   * every call — quadratic, and minutes on the 766 leftovers this was written
+   * for. Here every source is quarantined, the union is built in memory,
+   * written once and indexed once; only then do the sources go. A source's
+   * NAME is the only context a one-line neuron had ("Phase 1 homepage audit
+   * francortes…"), so its words travel as the fact's keys: searchable, never
+   * shown. The caller picks the sources; nothing here judges them. Unshared
+   * and unconnected sources only — there is no rewiring in this path.
+   */
+  async compact(sourceIds: string[], digestName: string, options: { type: NeuronType; domain: string }): Promise<{
+    into: string | null;
+    folded: string[];
+    skipped: string[];
+    entries: number;
+  }> {
+    const sources: Neuron[] = [];
+    const skipped: string[] = [];
+    for (const id of sourceIds) {
+      const n = await this.peek(id);
+      if (!n || (n.connections || []).length > 0) { skipped.push(id); continue; }
+      sources.push(n);
+    }
+    if (sources.length === 0) return { into: null, folded: [], skipped, entries: 0 };
+
+    let target = await this.findByName(digestName);
+    if (!target) {
+      target = await this.create(digestName, options.type, options.domain);
+      await this.addTags(target.id, ['digest']);
+    }
+    const targetId = target.id;
+    for (const n of sources) await this.quarantine(n);
+
+    const saved = await updateJSON<Neuron>(this.brain.paths.neuron(targetId), current => {
+      let acc = (current || target) as Neuron;
+      for (const n of sources) {
+        if (n.id === targetId) continue;
+        const pistas = normalizeKeys(n.name.split(/[^\p{L}\p{N}]+/u).filter(w => w.length >= 4).slice(0, 8));
+        const conPistas: Neuron = {
+          ...n,
+          facts: (n.facts || []).map(f => ({ ...copyFact(f), keys: normalizeKeys([...(f.keys || []), ...pistas]) })),
+          tags: [], summary: '',
+        };
+        acc = unionNeuron(acc, conPistas).neuron;
+      }
+      return acc;
+    });
+    const final = (saved || target) as Neuron;
+    await this.reindex(final);
+
+    const folded: string[] = [];
+    for (const n of sources) {
+      if (n.id === targetId) continue;
+      await this.deleteNeuronFile(n.id);
+      folded.push(n.id);
+    }
+    const entries = final.facts.length + final.decisions.length + final.patterns.length
+      + final.preferences.length + (final.errors || []).length + (final.debts || []).length;
+    return { into: targetId, folded, skipped, entries };
+  }
+
+  /**
    * Which neurons hold something that looks like a credential.
    * Reports the kind and where it is, never the value.
    */

@@ -807,7 +807,12 @@ export class SearchEngine {
       const contenido = vivos.filter(c => c.kind !== 'header');
       const elegido = contenido[0] || vivos[0];
 
-      const breadth = Math.min((chunks.length - 1) * BREADTH_BONUS, BREADTH_CAP);
+      // Breadth says "this neuron is about the question". A digest (2.5: the
+      // lines a bulk import left, folded together) is about nothing: twenty of
+      // its lines matching "verify" is a property of the pile, and on the
+      // reference brain it put the pile above the project that answered.
+      const esDigest = !!neuron && (neuron.tags || []).includes('digest');
+      const breadth = esDigest ? 0 : Math.min((chunks.length - 1) * BREADTH_BONUS, BREADTH_CAP);
 
       // A keyword engine answers almost any question with something. The
       // label says how much of the question the answer actually covers, so

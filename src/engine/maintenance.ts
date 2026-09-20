@@ -55,6 +55,12 @@ export interface MaintenanceReport {
   expired_sample: ExpiredEntry[];
   /** Neurons past SPLIT_MIN_ENTRIES live entries, each with the groups its own words suggest. */
   split_candidates: SplitCandidate[];
+  /** One-line neurons left by a bulk import, by the day they were created. compact:true folds each group into one digest neuron. */
+  compact_groups: CompactGroup[];
+  /** How many neurons those groups add up to. */
+  compactable_neurons: number;
+  /** Neurons folded by this run (0 unless compact:true and not a dry run). */
+  compacted_neurons: number;
   notes: string[];
 }
 
@@ -76,6 +82,28 @@ export interface SplitCandidate {
   /** Words that gather a sizeable share of the entries without gathering all of them. */
   groups: Array<{ term: string; entries: number }>;
 }
+
+export interface CompactGroup {
+  day: string;
+  domain: string;
+  neurons: number;
+  /** Distinct texts among them: the rest are the same line under another name. */
+  unique_entries: number;
+  /** The digest neuron they fold into. */
+  digest: string;
+  sample: string[];
+}
+
+/**
+ * A bulk import, not a person: this many one-line neurons born the same day
+ * in the same domain. On the reference brain one day holds 766 of them — a
+ * transcript miner that made a neuron out of every checklist line — and 482
+ * repeat a text another one already has. Three of those with identical text
+ * took the top three places of a recall.
+ */
+const COMPACT_MIN_GROUP = 25;
+/** Young neurons are left alone: one entry today may be the start of a topic. */
+const COMPACT_MIN_AGE_DAYS = 30;
 
 /** A neuron this big no longer fits one read: crbro_inspect pages it, and every recall hit from it competes with 80 siblings. */
 const SPLIT_MIN_ENTRIES = 80;
@@ -113,7 +141,7 @@ export class Maintenance {
    */
   async run(
     dryRun: boolean = false,
-    options?: { archive?: boolean; purgeBoilerplate?: boolean; repair?: boolean; unarchive?: string[] | 'all'; backfillDates?: boolean }
+    options?: { archive?: boolean; purgeBoilerplate?: boolean; repair?: boolean; unarchive?: string[] | 'all'; backfillDates?: boolean; compact?: boolean; sharedIds?: ReadonlySet<string> }
   ): Promise<MaintenanceReport> {
     const report: MaintenanceReport = {
       archived_neurons: 0,
@@ -139,6 +167,9 @@ export class Maintenance {
       expired_entries: 0,
       expired_sample: [],
       split_candidates: [],
+      compact_groups: [],
+      compactable_neurons: 0,
+      compacted_neurons: 0,
       notes: [],
     };
 
@@ -261,6 +292,29 @@ export class Maintenance {
       report.notes.push(
         `${fechas.undated} pattern/preference/error/debt entr${fechas.undated === 1 ? 'y has' : 'ies have'} no date ` +
         `(written before 1.13); ${fechas.datable} state one in their own text. Pass backfill_dates:true to record it.`);
+    }
+
+    // 4e. What a bulk import left behind: hundreds of one-line neurons.
+    // Reported always; folded only when asked, and never in a dry run.
+    const grupos = await this.findCompactGroups(options?.sharedIds);
+    report.compact_groups = grupos.map(({ ids: _ids, type: _type, ...g }) => g);
+    report.compactable_neurons = grupos.reduce((a, g) => a + g.neurons, 0);
+    if (options?.compact && !dryRun) {
+      for (const g of grupos) {
+        const r = await this.cortex.compact(g.ids, g.digest, { type: g.type, domain: g.domain });
+        report.compacted_neurons += r.folded.length;
+      }
+      if (report.compacted_neurons > 0) {
+        report.notes.push(
+          `Folded ${report.compacted_neurons} one-line neuron(s) into ${grupos.length} digest neuron(s) (tag "digest"); each source's name ` +
+          'travels as the keys of its line, identical lines are kept once, and a copy of every source is in .quarantine ' +
+          '(crbro_forget restore brings one back).');
+      }
+    } else if (report.compactable_neurons > 0) {
+      report.notes.push(
+        `${report.compactable_neurons} one-line neuron(s) were created in bulk (compact_groups: same day, same domain, no tags, ` +
+        'no links, never written again). They crowd recall — one result per neuron — with near-identical lines. ' +
+        'Pass compact:true to fold each group into one digest neuron; run dry_run first and read the samples.');
     }
 
     // 4d. What the brain still says as current although its own words put a
@@ -640,6 +694,51 @@ export class Maintenance {
   }
 
   /**
+   * The signature of a bulk import, all of it required: exactly one live
+   * entry and nothing else (no map, no summary, no tags, no connections),
+   * not a protocol, not shared, older than COMPACT_MIN_AGE_DAYS, and born
+   * the same day in the same domain as at least COMPACT_MIN_GROUP others
+   * like it. A lone one-fact neuron is somebody's note and is never touched.
+   */
+  private async findCompactGroups(sharedIds?: ReadonlySet<string>): Promise<Array<CompactGroup & { ids: string[]; type: Neuron['type'] }>> {
+    const limite = new Date(Date.now() - COMPACT_MIN_AGE_DAYS * 86_400_000).toISOString();
+    const porGrupo = new Map<string, Neuron[]>();
+    for (const id of await this.cortex.allIds()) {
+      let n: Neuron | null;
+      try {
+        n = await readJSON<Neuron>(this.brain.paths.neuron(id));
+      } catch {
+        continue;
+      }
+      if (!n || n.type === 'protocol' || sharedIds?.has(n.id)) continue;
+      if (n.map?.text || n.summary || (n.tags || []).length || (n.connections || []).length) continue;
+      if (!n.created || n.created > limite) continue;
+      const entradas = (n.facts || []).length + (n.decisions || []).length + (n.patterns || []).length
+        + (n.preferences || []).length + (n.errors || []).length + (n.debts || []).length;
+      if (entradas !== 1 || (n.facts || []).length !== 1) continue;
+      if (n.facts[0].status && n.facts[0].status !== 'active') continue;
+      const k = `${n.created.slice(0, 10)}|${n.domain || 'general'}`;
+      const lista = porGrupo.get(k);
+      if (lista) lista.push(n); else porGrupo.set(k, [n]);
+    }
+    const out: Array<CompactGroup & { ids: string[]; type: Neuron['type'] }> = [];
+    for (const [k, lista] of porGrupo) {
+      if (lista.length < COMPACT_MIN_GROUP) continue;
+      const [day, domain] = k.split('|');
+      lista.sort((a, b) => (a.id < b.id ? -1 : 1));
+      out.push({
+        day, domain, neurons: lista.length,
+        unique_entries: new Set(lista.map(n => n.facts[0].text.trim().toLowerCase())).size,
+        digest: `Imported notes ${day} (${domain})`,
+        sample: [0, Math.floor(lista.length / 2), lista.length - 1].map(i => `${lista[i].name}: ${lista[i].facts[0].text.slice(0, 80)}`),
+        ids: lista.map(n => n.id),
+        type: 'project',
+      });
+    }
+    return out.sort((a, b) => b.neurons - a.neurons);
+  }
+
+  /**
    * Two read-only reviews in one pass over the cortex.
    *
    * Expired: a live, dated entry whose text states a day LATER than the day
@@ -718,7 +817,7 @@ export class Maintenance {
       total++;
       for (const w of new Set(palabras.flatMap(set => [...set]))) enNeuronas.set(w, (enNeuronas.get(w) || 0) + 1);
 
-      if (vivas.length >= SPLIT_MIN_ENTRIES) {
+      if (vivas.length >= SPLIT_MIN_ENTRIES && !(n.tags || []).includes('digest')) {
         grandes.push({ n, vivas: vivas.length, palabras, propias });
       }
     }

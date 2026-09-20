@@ -1463,7 +1463,7 @@ export function createServer(): McpServer {
     'crbro_maintenance',
     {
       title: 'Brain maintenance',
-      description: 'Write: brain housekeeping — recalculate heat, prune weak synapses, check integrity, rebuild the search index. Returns a report (counts, integrity_issues, repairable, notes) and flags debts without a revisit trigger. dry_run:true writes nothing at all (the global map is computed live, never cached). Extras are OFF unless asked: archive cold neurons (on a mature brain most look cold, and archived ones stop being searchable), unarchive them back, purge_boilerplate left by early miners, repair what the integrity check found, backfill_dates for entries older than 1.13. For session close use crbro_consolidate; to only read the brain use crbro_inspect.',
+      description: 'Write: brain housekeeping — recalculate heat, prune weak synapses, check integrity, rebuild the search index. Returns a report (counts, integrity_issues, repairable, notes) and flags debts without a revisit trigger. dry_run:true writes nothing at all (the global map is computed live, never cached). Extras are OFF unless asked: archive cold neurons (on a mature brain most look cold, and archived ones stop being searchable), unarchive them back, purge_boilerplate left by early miners, repair what the integrity check found, backfill_dates for entries older than 1.13, compact what a bulk import left. For session close use crbro_consolidate; to only read the brain use crbro_inspect.',
       inputSchema: {
         dry_run: z.boolean().optional().describe('true = report only: no heat recalc, archiving, unarchiving, purge, repair, lock sweep, pruning or index rebuild, and no file written. Counts, debts and integrity checks still run.'),
         archive: z.boolean().optional().describe('Also move cold neurons (heat < 0.05, untouched 90+ days) out of the cortex into archives/. Off by default; run dry_run first and read archivable_neurons. Undo with unarchive.'),
@@ -1471,6 +1471,7 @@ export function createServer(): McpServer {
         purge_boilerplate: z.boolean().optional().describe('Also delete contentless facts left by early miner versions ("Referenced in: file.md"). Off by default; every run reports how many there are. Neurons left empty are kept.'),
         repair: z.boolean().optional().describe('Fix what the integrity check found: dangling connection ids, synapse files pointing at missing neurons, entry_dates/entry_status keys with no live entry, manifest counters. Off in dry_run; the report lists repairs[] one line each.'),
         backfill_dates: z.boolean().optional().describe('Date the patterns, preferences, errors and debts written before 1.13 (recall shows them with an empty matched_added), using only a date stated in the text of the entry itself, to the day; the rest stay undated — nothing is guessed. Every run reports undated_entries and datable_entries; this writes them (dates_backfilled). Off in dry_run.'),
+        compact: z.boolean().optional().describe('Fold the one-line neurons a bulk import left (compact_groups: 25+ born the same day in one domain, no tags, links or summary, 30+ days old) into one digest neuron per group. Identical lines are kept once, each source name becomes search keys of its line, every source is copied to quarantine first. Shared neurons are never touched. Off in dry_run — run that first and read the samples.'),
       },
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
     },
@@ -1482,6 +1483,8 @@ export function createServer(): McpServer {
           repair: args.repair,
           unarchive: args.unarchive,
           backfillDates: args.backfill_dates,
+          compact: args.compact,
+          sharedIds: new Set(Object.keys(await sharedMap(brain))),
         });
         const disparadores = args.dry_run ? null : await writeTriggerIndex(brain);
 
