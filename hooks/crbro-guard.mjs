@@ -30,6 +30,9 @@ import { homedir, tmpdir } from 'node:os';
 const MAX_LESSONS = 3;
 const WRAPPERS = new Set(['npx', 'bunx', 'pnpx', 'sudo', 'time', 'call', 'exec', 'start']);
 const INTERPRETERS = new Set(['node', 'deno', 'bun', 'python', 'python3', 'py', 'bash', 'sh', 'zsh', 'powershell', 'pwsh', 'tsx', 'ts-node', 'php', 'ruby', 'perl']);
+/** Two words that still name nothing: `npm run` is not an action, `npm run build` is. */
+const DEEP = new Set(('npm run|yarn run|pnpm run|bun run|docker compose|wp plugin|wp post|wp option|wp theme|wp user|wp cache|wp db|'
+  + 'gh pr|gh issue|gh repo|gh release|gh run|gcloud run|gcloud auth|gcloud functions|gcloud app|git remote').split('|'));
 const SCRIPT = /\.(ps1|sh|bash|py|mjs|cjs|js|ts|bat|cmd|rb|php)$/;
 
 function brainDir() {
@@ -72,7 +75,8 @@ export function keysOfCommand(command) {
     if (t.length === 0) continue;
     if (SCRIPT.test(t[0])) keys.add(t[0]);
     if (t[1]) {
-      keys.add(`${t[0]} ${t[1]}`);
+      const pair = `${t[0]} ${t[1]}`;
+      keys.add(DEEP.has(pair) && t[2] && !t[2].startsWith('-') ? `${pair} ${t[2]}` : pair);
       if (INTERPRETERS.has(t[0])) {
         const file = t.slice(1).find(x => !x.startsWith('-'));
         if (file && SCRIPT.test(file)) keys.add(file);

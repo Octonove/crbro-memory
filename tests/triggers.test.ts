@@ -28,6 +28,10 @@ describe('keysOfCommand', () => {
     expect(keysOfCommand('npx firebase deploy')).toEqual(expect.arrayContaining(['npx firebase', 'firebase deploy']));
     expect(keysOfCommand('NODE_ENV=prod sudo systemctl restart nginx')).toContain('systemctl restart');
     expect(keysOfCommand('rm -rf build')).toContain('rm -rf');
+    // `npm run` names nothing; the script does. A lesson about `npm run dev` stays quiet before a build.
+    expect(keysOfCommand('npm run build 2>&1 | tail -1')).toContain('npm run build');
+    expect(keysOfCommand('npm run build')).not.toContain('npm run');
+    expect(keysOfEntry('Los servidores `npm run dev` lanzados en segundo plano no sobreviven al turno.')).toEqual(['npm run dev']);
   });
 
   it('names a script when it is what runs', () => {
@@ -50,6 +54,7 @@ describe('keysOfCommand', () => {
       'FOO=1 BAR=2 python3 tools/build_site.py; git stash -u',
       '& "C:\\x y\\upload-skill.ps1" -Slug a',
       'sudo   rm   -rf   /var/www/old\nnpm publish --access public',
+      'npm run build && docker compose up -d && gh pr create --fill && npm run',
       "cat > x.py <<'PYEOF'\nimport io\np='src/search/index.ts'\nopen(p)\nPYEOF\npython x.py && git status",
       '',
     ]) expect(hookKeys(c).sort(), c).toEqual(keysOfCommand(c).sort());

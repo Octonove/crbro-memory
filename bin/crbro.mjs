@@ -504,6 +504,70 @@ if (command === 'init') {
     console.log('');
   }).catch(console.error);
 
+} else if (command === 'daemon') {
+  // ─── One process owns the brain for every client (opt-in) ──────
+  //
+  //   crbro daemon status     is it on, who is running, how much it holds
+  //   crbro daemon on         every client of this brain becomes a thin proxy
+  //   crbro daemon off        back to one full server per client, and stop what runs
+  //   crbro daemon stop       stop the running daemon(s); clients start a new one on demand
+  //
+  // The switch is a flag inside the brain, so every client flips together the
+  // next time it starts. Nothing is lost by turning it off, or by the daemon
+  // dying: a client that cannot reach one serves itself, as before 2.5.
+  (async () => {
+    const { resolveBrainDir } = await import('../dist/engine/brain.js');
+    const ep = await import('../dist/daemon/endpoint.js');
+    const { controlDaemon } = await import('../dist/daemon/proxy.js');
+    const fs = await import('fs');
+    const root = resolveBrainDir();
+    const sub = args[1] || 'status';
+
+    const running = async () => {
+      const out = [];
+      for (const st of await ep.listStates(root)) {
+        const reply = await controlDaemon(root, 'status', st.build);
+        if (reply) out.push({ st, reply });
+        else { try { fs.rmSync(ep.stateFile(root, st.build), { force: true }); } catch { /* stale file, best effort */ } }
+      }
+      return out;
+    };
+
+    if (sub === 'on' || sub === 'off') {
+      await ep.setDaemonEnabled(root, sub === 'on');
+      console.log('');
+      if (sub === 'on') {
+        console.log('  ✅ Daemon mode ON for ' + root);
+        console.log('     Restart your MCP clients (Claude Code, Claude Desktop, Codex...). The first one to start');
+        console.log('     launches the daemon; the rest attach to it. One index, one model, one writer.');
+        console.log('     Clients older than 2.5 keep running their own server — update them to get the benefit.');
+      } else {
+        for (const { st } of await running()) await controlDaemon(root, 'stop', st.build);
+        console.log('  ✅ Daemon mode OFF. Clients go back to one full server each the next time they start.');
+      }
+      console.log('');
+    } else if (sub === 'stop') {
+      const list = await running();
+      for (const { st } of list) await controlDaemon(root, 'stop', st.build);
+      console.log(list.length ? `\n  ✅ Asked ${list.length} daemon(s) to stop. Connected clients carry on: they start a new one on their next call.\n`
+                              : '\n  No daemon is running for this brain.\n');
+    } else {
+      const list = await running();
+      console.log('');
+      console.log('  🧠 CRBRO daemon');
+      console.log('  ───────────────');
+      console.log(`  Brain:    ${root}`);
+      console.log(`  Mode:     ${ep.daemonEnabled(root) ? '✅ on' : 'off  (npx crbro-memory daemon on)'}`);
+      if (list.length === 0) console.log('  Running:  none' + (ep.daemonEnabled(root) ? ' — the next client to start launches it' : ''));
+      for (const { reply } of list) {
+        console.log(`  Running:  pid ${reply.pid} · ${reply.version} (${reply.build}) · ${reply.connections} conversation(s) · ${reply.rss_mb} MB · up ${Math.round(reply.uptime_s / 60)} min · idle exit ${reply.idle_minutes} min`);
+      }
+      if (list.length > 1) console.log('  ⚠️  More than one build is serving this brain. Point every client at the same install to share one.');
+      console.log(`  Log:      ${root}${root.includes('\\') ? '\\' : '/'}.daemon${root.includes('\\') ? '\\' : '/'}daemon.log`);
+      console.log('');
+    }
+  })().catch(e => { console.error(e.message); process.exit(1); });
+
 } else if (command === 'guard') {
   // ─── What the PreToolUse guard would say for a command ─────────
   //
@@ -1025,6 +1089,11 @@ if (command === 'init') {
   console.log('  Guard (opt-in, Claude Code): stored lessons speak before a shell command runs:');
   console.log('    npx crbro-memory install-hooks --guard   Wire the PreToolUse hook (adds context, never blocks)');
   console.log('    npx crbro-memory guard "<command>"       What it would say for a command · --rebuild writes the index');
+  console.log('');
+  console.log('  Daemon (opt-in): one process owns the brain for every client — one index, one model, one writer:');
+  console.log('    npx crbro-memory daemon on | off  Switch every client of this brain, the next time each starts');
+  console.log('    npx crbro-memory daemon status    Is it on, who is running, how much it holds');
+  console.log('    npx crbro-memory daemon stop      Stop it; clients start a new one on demand');
   console.log('');
   console.log('  Search:');
   console.log('    npx crbro-memory reindex          Rebuild the search index');

@@ -1,6 +1,7 @@
 // ─── CRBRO Cortex Engine ─────────────────────────────────────────
 // Neuron CRUD — create, read, update, list neurons
 
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { readJSON, writeJSON, updateJSON, deleteJSON, listJSONFiles, now } from '../utils/fs.js';
 import { neuronId, inferNeuronType, toSnakeCase, legacySnakeCase } from '../utils/ids.js';
 import { factId } from '../utils/hash.js';
@@ -22,6 +23,11 @@ const NEAR_DUP_MIN_LENGTH = 60;
 
 /** Minimum similarity before we accept a near-miss as "the same topic". */
 const NAME_MATCH_THRESHOLD = 0.85;
+
+export interface SessionTally { facts: number; decisions: number; topics: Set<string> }
+export const newTally = (): SessionTally => ({ facts: 0, decisions: 0, topics: new Set<string>() });
+/** The connection a request belongs to, carried through every await. Empty outside the daemon. */
+export const sessionScope = new AsyncLocalStorage<{ tally: SessionTally }>();
 
 /**
  * Dice coefficient over character bigrams. Cheap, order-insensitive enough
@@ -277,8 +283,17 @@ export class Cortex {
   private emitter: Emitter | null = null;
   private remover: Remover | null = null;
 
-  /** What this session has actually written, for an honest consolidate(). */
-  private tally = { facts: 0, decisions: 0, topics: new Set<string>() };
+  /**
+   * What this session has actually written, for an honest consolidate().
+   * One per Cortex when a process serves one conversation; in the daemon one
+   * Cortex serves every client, so the tally in force is the one the
+   * connection carries (sessionScope) — otherwise whoever consolidated first
+   * would log, and link with synapses, what the other conversations wrote.
+   */
+  private ownTally: SessionTally = newTally();
+  private get tally(): SessionTally {
+    return sessionScope.getStore()?.tally ?? this.ownTally;
+  }
 
   constructor(private brain: Brain) {}
 
@@ -292,7 +307,10 @@ export class Cortex {
   }
 
   resetSessionTally(): void {
-    this.tally = { facts: 0, decisions: 0, topics: new Set<string>() };
+    const t = this.tally;
+    t.facts = 0;
+    t.decisions = 0;
+    t.topics.clear();
   }
 
   setIndexer(indexer: Indexer | null): void {

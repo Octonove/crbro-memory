@@ -124,23 +124,24 @@ function errorResult(where: string, err: unknown) {
 const NEURON_TYPES = ['project', 'tech', 'lang', 'person', 'domain', 'process', 'protocol'] as const;
 const INSPECT_VIEWS = ['status', 'neuron', 'neurons', 'sessions', 'global_map'] as const;
 
-export function createServer(): McpServer {
-  // Served at initialize for the clients that read it (Claude Desktop does
-  // not, as of anthropics/claude-code#43749; there the tool descriptions
-  // carry the same message). It is the one place to say how the memory is
-  // meant to be used, before any tool is called.
-  const server = new McpServer({
-    name: 'crbro-memory',
-    version: runningVersion(),
-  }, {
-    instructions:
-      'CRBRO is this user\'s persistent memory, kept on their own machine. Start every conversation with crbro_boot: it loads what earlier sessions left — protocols to follow, open items, hot topics. ' +
-      'Before answering anything about the user, their projects, preferences, decisions or past work, call crbro_recall: the answer is usually stored, and making them repeat it is the failure this memory exists to prevent. ' +
-      'Questions about CRBRO itself (version, counts, whether semantic recall is on) are crbro_inspect view=status. Read one entry, not a whole neuron: view=neuron gives an index, entries=[ids] the text. ' +
-      'Save with crbro_learn as you go, and close with crbro_consolidate before the conversation ends.',
-  });
+/** Everything that owns the brain in a process. One set per process, however many servers speak for it. */
+export interface Engines {
+  brain: Brain;
+  cortex: Cortex;
+  synapses: Synapses;
+  heatEngine: HeatEngine;
+  hippocampus: Hippocampus;
+  prefrontal: Prefrontal;
+  searchEngine: SearchEngine;
+  maintenance: Maintenance;
+}
 
-  // ─── Initialize engines ──────────────────────────────────────
+/**
+ * Build the engines and wire them to each other. Separate from createServer
+ * since 2.5: the daemon builds them once and gives every connected client its
+ * own McpServer over the same index, the same model and the same writer.
+ */
+export function createEngines(): Engines {
   const brain = new Brain();
   const cortex = new Cortex(brain);
   const synapses = new Synapses(brain);
@@ -165,6 +166,28 @@ export function createServer(): McpServer {
   // to this machine's own log. Nobody ever writes to anyone else's file, so
   // two people working at once have nothing to collide over.
   attachSync(brain, cortex);
+
+  return { brain, cortex, synapses, heatEngine, hippocampus, prefrontal, searchEngine, maintenance };
+}
+
+export function createServer(shared?: Engines): McpServer {
+  // Served at initialize for the clients that read it (Claude Desktop does
+  // not, as of anthropics/claude-code#43749; there the tool descriptions
+  // carry the same message). It is the one place to say how the memory is
+  // meant to be used, before any tool is called.
+  const server = new McpServer({
+    name: 'crbro-memory',
+    version: runningVersion(),
+  }, {
+    instructions:
+      'CRBRO is this user\'s persistent memory, kept on their own machine. Start every conversation with crbro_boot: it loads what earlier sessions left — protocols to follow, open items, hot topics. ' +
+      'Before answering anything about the user, their projects, preferences, decisions or past work, call crbro_recall: the answer is usually stored, and making them repeat it is the failure this memory exists to prevent. ' +
+      'Questions about CRBRO itself (version, counts, whether semantic recall is on) are crbro_inspect view=status. Read one entry, not a whole neuron: view=neuron gives an index, entries=[ids] the text. ' +
+      'Save with crbro_learn as you go, and close with crbro_consolidate before the conversation ends.',
+  });
+
+  // ─── Engines: this server's own, or the ones the daemon shares ──
+  const { brain, cortex, synapses, heatEngine, hippocampus, prefrontal, searchEngine, maintenance } = shared ?? createEngines();
 
   // v1.4.0: CRBRO is fully free — no license, no network calls. The former
   // license engine (Firestore-backed freemium) lives in git history before

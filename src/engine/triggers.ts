@@ -48,6 +48,9 @@ const HEADS = new Set(('git npm npx pnpm yarn bun bunx node deno python python3 
 const WRAPPERS = new Set(['npx', 'bunx', 'pnpx', 'sudo', 'time', 'call', 'exec', 'start']);
 /** Run a file: the file is the action. */
 const INTERPRETERS = new Set(['node', 'deno', 'bun', 'python', 'python3', 'py', 'bash', 'sh', 'zsh', 'powershell', 'pwsh', 'tsx', 'ts-node', 'php', 'ruby', 'perl']);
+/** Two words that still name nothing: `npm run` is not an action, `npm run build` is. */
+const DEEP = new Set(('npm run|yarn run|pnpm run|bun run|docker compose|wp plugin|wp post|wp option|wp theme|wp user|wp cache|wp db|'
+  + 'gh pr|gh issue|gh repo|gh release|gh run|gcloud run|gcloud auth|gcloud functions|gcloud app|git remote').split('|'));
 const SCRIPT = /\.(ps1|sh|bash|py|mjs|cjs|js|ts|bat|cmd|rb|php)$/;
 /** After a program's name in a sentence these are grammar, not a subcommand ("python en Windows", "git is"). */
 const PROSE = new Set(('a al con de del el en es la las lo los no o para por que se si sin su un una y ya '
@@ -94,7 +97,8 @@ export function keysOfCommand(command: string): string[] {
     if (t.length === 0) continue;
     if (SCRIPT.test(t[0])) keys.add(t[0]);
     if (t[1]) {
-      keys.add(`${t[0]} ${t[1]}`);
+      const pair = `${t[0]} ${t[1]}`;
+      keys.add(DEEP.has(pair) && t[2] && !t[2].startsWith('-') ? `${pair} ${t[2]}` : pair);
       if (INTERPRETERS.has(t[0])) {
         const file = t.slice(1).find(x => !x.startsWith('-'));
         if (file && SCRIPT.test(file)) keys.add(file);
@@ -118,7 +122,9 @@ export function keysOfEntry(text: string): string[] {
     if (SCRIPT.test(w) && w.length >= 5) keys.add(w);
     if (!HEADS.has(w)) continue;
     const next = word(words[i + 1] || '');
-    if (next && SUBCOMMAND.test(next) && !PROSE.has(next)) keys.add(`${w} ${next}`);
+    if (!next || !SUBCOMMAND.test(next) || PROSE.has(next)) continue;
+    const third = word(words[i + 2] || '');
+    keys.add(DEEP.has(`${w} ${next}`) && third && SUBCOMMAND.test(third) && !third.startsWith('-') && !PROSE.has(third) ? `${w} ${next} ${third}` : `${w} ${next}`);
   }
   // A script is only a trigger as the thing that runs; a program pair needs a known program.
   return [...keys].filter(k => (k.includes(' ') ? HEADS.has(k.split(' ')[0]) || WRAPPERS.has(k.split(' ')[0]) : SCRIPT.test(k)));
