@@ -79,12 +79,117 @@ export function endpointFor(brainRoot: string, build: string = buildId()): strin
   const key = endpointKey(brainRoot, build);
   if (process.platform === 'win32') return `\\\\.\\pipe\\crbro-${key}`;
   const inBrain = path.join(daemonDir(brainRoot), `${key}.sock`);
-  // sun_path is ~104 bytes on macOS and 108 on Linux: a deep brain path falls back to tmp.
-  return Buffer.byteLength(inBrain) < 100 ? inBrain : path.join(os.tmpdir(), `crbro-${key}.sock`);
+  // sun_path is ~104 bytes on macOS and 108 on Linux: a deep brain path falls back to tmp —
+  // into a folder of this user's own, because tmp itself is everybody's.
+  return Buffer.byteLength(inBrain) < 100 ? inBrain : path.join(privateTmpDir(), `${key}.sock`);
+}
+
+/** <tmp>/crbro-<uid>: where the socket goes when the brain path is too long for one. */
+export function privateTmpDir(): string {
+  const uid = typeof process.getuid === 'function' ? process.getuid() : 'u';
+  return path.join(os.tmpdir(), `crbro-${uid}`);
+}
+
+/**
+ * Make the socket's folder and make sure it is ours alone. In the brain that
+ * is a given; in tmp somebody else may have made `crbro-<our uid>` first, as a
+ * folder they own or as a link to one — and a socket placed there is theirs.
+ */
+export async function secureSocketDir(endpoint: string): Promise<void> {
+  if (process.platform === 'win32') return;
+  const dir = path.dirname(endpoint);
+  await fs.mkdir(dir, { recursive: true, mode: 0o700 });
+  const st = await fs.lstat(dir);
+  const mine = typeof process.getuid !== 'function' || st.uid === process.getuid();
+  if (!st.isDirectory() || st.isSymbolicLink() || !mine || (st.mode & 0o077) !== 0) {
+    if (mine && st.isDirectory() && !st.isSymbolicLink()) { await fs.chmod(dir, 0o700); return; }
+    throw new Error(`DAEMON_ENDPOINT_BLOCKED: ${dir} is not a private folder of this user`);
+  }
 }
 
 export function stateFile(brainRoot: string, build: string = buildId()): string {
   return path.join(daemonDir(brainRoot), `${endpointKey(brainRoot, build)}.json`);
+}
+
+/**
+ * What a daemon would do differently from the client asking for it. One
+ * process serves every client, but each client was configured on its own —
+ * CRBRO_BACKUP_DIR pointing at a synced folder in one, CRBRO_SEMANTIC=0 in
+ * another — and whose settings win must not depend on who happened to start
+ * first. A client whose fingerprint differs from the daemon's serves itself,
+ * exactly as it did before daemons: its settings keep meaning what they said.
+ */
+export function configFingerprint(env: NodeJS.ProcessEnv = process.env): string {
+  const v = (k: string) => (env[k] || '').trim();
+  const semantic = ['0', 'off', 'false', 'no'].includes(v('CRBRO_SEMANTIC').toLowerCase()) ? 'off'
+    : ['1', 'on', 'true', 'yes', 'force'].includes(v('CRBRO_SEMANTIC').toLowerCase()) ? 'on' : 'auto';
+  const parts = [
+    semantic, v('CRBRO_SEMANTIC_MODEL'), v('CRBRO_SEMANTIC_DTYPE'), v('CRBRO_SEMANTIC_HOME'), v('CRBRO_SEMANTIC_FLOOR'),
+    v('CRBRO_RECENCY'), v('CRBRO_SYNONYMS'), v('CRBRO_AUTOBACKUP') === '0' ? 'nobackup' : '', v('CRBRO_BACKUP_DIR'),
+  ];
+  return createHash('sha256').update(parts.join('\u0000')).digest('hex').slice(0, 12);
+}
+
+// ─── Two small files that keep start-up honest ───────────────────
+
+/** Written by a daemon that found its endpoint held by something that is not a CRBRO daemon of this brain. */
+export function blockedFile(brainRoot: string, build: string = buildId()): string {
+  return path.join(daemonDir(brainRoot), `${endpointKey(brainRoot, build)}.blocked`);
+}
+
+export async function markBlocked(brainRoot: string, build: string, reason: string): Promise<void> {
+  try {
+    await fs.mkdir(daemonDir(brainRoot), { recursive: true, mode: 0o700 });
+    await fs.writeFile(blockedFile(brainRoot, build), JSON.stringify({ pid: process.pid, at: Date.now(), reason }));
+  } catch { /* the marker is a courtesy to the proxy's patience */ }
+}
+
+/** A marker newer than `since` (ms): the daemon we just asked for could not be had, and waiting will not change it. */
+export async function blockedSince(brainRoot: string, build: string, since: number): Promise<string | null> {
+  try {
+    const m = JSON.parse(await fs.readFile(blockedFile(brainRoot, build), 'utf8'));
+    return typeof m?.at === 'number' && m.at >= since ? String(m.reason || 'blocked') : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function clearBlocked(brainRoot: string, build: string): Promise<void> {
+  await fs.rm(blockedFile(brainRoot, build), { force: true }).catch(() => undefined);
+}
+
+const START_LOCK_STALE_MS = 10_000;
+
+/**
+ * One daemon at a time through the dangerous part of starting: finding the
+ * endpoint busy, deciding the holder is dead, unlinking its socket, listening.
+ * Two starters doing that interleaved can each delete the other's live socket.
+ * The lock names its holder, so a starter that was killed does not hold it forever.
+ */
+export async function acquireStartLock(brainRoot: string, build: string): Promise<(() => Promise<void>) | null> {
+  const file = path.join(daemonDir(brainRoot), `${endpointKey(brainRoot, build)}.lock`);
+  await fs.mkdir(daemonDir(brainRoot), { recursive: true, mode: 0o700 });
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const h = await fs.open(file, 'wx', 0o600);
+      await h.writeFile(String(process.pid));
+      await h.close();
+      return async () => { await fs.rm(file, { force: true }).catch(() => undefined); };
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+      let stale = false;
+      try {
+        const st = await fs.stat(file);
+        const pid = Number((await fs.readFile(file, 'utf8')).trim());
+        let alive = true;
+        try { if (pid > 0) process.kill(pid, 0); else alive = false; } catch (e) { alive = (e as NodeJS.ErrnoException).code === 'EPERM'; }
+        stale = !alive || Date.now() - st.mtimeMs > START_LOCK_STALE_MS;
+      } catch { stale = true; }
+      if (!stale) return null;
+      await fs.rm(file, { force: true }).catch(() => undefined);
+    }
+  }
+  return null;
 }
 
 export function newToken(): string {

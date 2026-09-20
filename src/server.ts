@@ -22,7 +22,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { Brain } from './engine/brain.js';
-import { Cortex } from './engine/cortex.js';
+import { Cortex, sessionScope } from './engine/cortex.js';
 import { Synapses } from './engine/synapses.js';
 import { HeatEngine } from './engine/heat.js';
 import { Hippocampus } from './engine/hippocampus.js';
@@ -1421,6 +1421,9 @@ export function createServer(shared?: Engines): McpServer {
         const SUMMARY_LONG = 3_000;
         const summary = redact(args.summary).text;
         const result = await maintenance.consolidate(summary, { topicsTouched: args.topics_touched });
+        // In daemon mode the counters belong to the connection. One that took over a
+        // running conversation (the daemon it was on died) starts them at zero.
+        const contadoresIncompletos = sessionScope.getStore()?.resumed === true;
         // The day just logged joins the search index at once (2.2): the diary
         // is searchable, and a recall tomorrow can point at today.
         const logHoy = await readJSON<any>(brain.paths.session(result.session_id));
@@ -1463,6 +1466,10 @@ export function createServer(shared?: Engines): McpServer {
           backup: copia.made
             ? { made: true, file: copia.file, dir: resolveBackupDir(brain.paths.root) }
             : (copia.reason.startsWith('failed') ? { made: false, reason: copia.reason } : undefined),
+          ...(contadoresIncompletos ? {
+            tally_incomplete: true,
+            tally_incomplete_hint: 'CRBRO restarted during this conversation, so facts_saved, decisions_saved and topics_touched only count what came after. Everything written before is on disk; if it matters that the log names those topics, call crbro_consolidate again with topics_touched=[their neuron ids].',
+          } : {}),
           ...(sinResumen.length > 0 ? {
             missing_summaries: sinResumen.slice(0, 3),
             missing_summaries_hint: 'These neurons you touched are large and have no summary. Write two or three lines on what each one IS with crbro_revise neuron=<id> summary="…": it is what boot shows next to the name and what recall matches when the question is about the topic as a whole.',

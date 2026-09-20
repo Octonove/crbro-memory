@@ -5,7 +5,7 @@ All notable changes to CRBRO.
 ## [2.5.0] — 2026-09-20
 
 An audit of one real brain — 1,200 neurons, 97 sessions, five months of daily
-use — and what it showed. Nothing here was designed from a whiteboard: every
+use — and of the machine it runs on, and what they showed. Nothing here was designed from a whiteboard: every
 item started as a number that looked wrong.
 
 ### The brain had no backup
@@ -134,6 +134,103 @@ that one file before a Bash or PowerShell call and adds the matching lessons as
 session each. It never blocks, never asks, and exits 0 on any failure. Opt-in,
 like every injection this project has not measured.
 
+### One process owns the brain (opt-in)
+
+Every client used to start its own CRBRO. On the audited machine that was
+Claude Code, Claude Desktop and Codex: three copies of a 40 MB index, three
+loads of the embedding model, three in-memory indexes each written over the
+others' when its client closed — so a line saved in one chat could be invisible
+in the next — and two of the three were running a different build from the
+third, writing the same brain.
+
+```bash
+npx crbro-memory daemon on        # every client of this brain, the next time it starts
+npx crbro-memory daemon status    # who is running, how many conversations, how much it holds
+npx crbro-memory daemon off | stop
+```
+
+In daemon mode what a client launches is a **proxy**: it loads no index and no
+model (55 MB), finds the daemon or starts it detached, proves who it is, and
+from then on copies lines. The daemon builds the engines once and gives every
+connection its own MCP server over them, and its own session scope, so each
+conversation consolidates what *it* wrote.
+
+Measured on a copy of the reference brain (447 neurons, 5,180 vectors, the
+semantic layer on, three clients, Windows 11 —
+[`benchmarks/daemon/`](benchmarks/daemon/results.json)):
+
+| | classic | daemon |
+|---|---|---|
+| memory, three clients | 2,153 MB | **1,140 MB** (975 daemon + 3 × 55) |
+| second and third client ready | ~1,780 ms | **~330 ms** |
+| a line saved by one client, recalled by another | after that client's next boot | **at once** |
+
+The first client costs the same either way (~6 s: somebody has to load the
+index), and a single client gains nothing: this is for people who keep several
+assistants open on one brain.
+
+The rule the design answers to: **losing the daemon may cost speed, never the
+memory.**
+
+- A client that cannot reach or start a daemon serves itself in-process —
+  CRBRO exactly as it was.
+- A daemon that dies mid-conversation is replaced under the client's feet: the
+  proxy kept the client's `initialize`, replays it on the replacement and
+  swallows the second answer; calls that were in flight get a JSON-RPC error
+  ("call it again") instead of a silence that hangs until a timeout. Three
+  losses in a minute and the proxy stops trusting daemons and serves itself.
+- The endpoint (a named pipe on Windows, a unix socket in `.daemon/`
+  elsewhere) is *derived* from the brain path and the build, never configured:
+  clients of the same brain on the same build find each other, and a client on
+  another build gets its own daemon — so you are served by the code you
+  launched, and an upgrade kills nothing: the old daemon exits when idle
+  (20 min, `CRBRO_DAEMON_IDLE_MIN`).
+- Both sides prove knowledge of a token kept in `<brain>/.daemon/` with an HMAC
+  over a fresh nonce, and the daemon goes first: a process that merely took the
+  pipe's name learns nothing from a client. `.daemon/` never travels in a
+  backup.
+- The switch is a flag inside the brain, so every client flips together;
+  `CRBRO_DAEMON=0` keeps one process out, `=1` forces one in.
+
+Two things in the engine had to change for a process that serves everyone, and
+both help classic mode too. `crbro_boot` calls `init()` on every boot, which
+used to reload or rebuild the whole index; an index already in memory now
+**catches up with the files that changed** instead. And a freshly loaded index
+catches up from its own file's timestamp — which closed a hole the end-to-end
+test found by killing a daemon on purpose: a line written inside the one second
+of slack `isStale()` allows, by a process killed before its 5-second persist
+debounce, stayed invisible to recall for good.
+
+It was reviewed before it shipped, adversarially: three reviewers with one
+parcel each (lifecycle, trust, shared state) and, for every finding, a skeptic
+told to refute it. Fourteen findings survived, nine of them reproduced, and
+each is now a test in `tests/daemon.review.test.ts`. The ones worth knowing:
+
+- a client that sent its last `crbro_learn` and closed stdin at once lost the
+  write *and* the answer — the proxy let go the moment stdin ended. It now
+  leaves only when every call it accepted has been answered and written out;
+- a recall that arrived while the index was being rebuilt answered from a
+  fraction of the brain, in silence. Readers and writers now wait for a rebuild;
+- the catch-up listed the cortex, awaited, and then removed whatever was not in
+  the listing — including a neuron learned in between;
+- re-indexing a neuron threw away the vector of every line and paid for it
+  again, which the catch-up turned into "re-embed everything anyone read";
+- `crbro daemon off` was undone in 200 ms by the first proxy that noticed its
+  daemon gone; they now ask again whether daemons are wanted;
+- `crbro daemon status` deleted the state file of a live daemon that was merely
+  slow to answer, orphaning it; only a pid the system says is gone loses its file;
+- a daemon started by one client inherited *that client's* `CRBRO_BACKUP_DIR`
+  and `CRBRO_SEMANTIC` for everybody: clients whose settings differ from the
+  daemon's now serve themselves, so their settings keep meaning what they said;
+- something else holding the pipe's name made every client wait 12 s per start;
+  the daemon now says why it could not take its endpoint and the proxy stops
+  waiting at once. On unix, a start lock and an inode check keep a slow starter
+  from unlinking a live daemon's socket.
+
+Off by default in 2.5. `benchmarks/daemon/e2e.mjs` runs the whole story with
+real processes on a throwaway brain: detached spawn, the daemon outliving the
+client that started it, a hard kill under another client, the replacement.
+
 ### Two experiments, pre-registered
 
 - **Synapses in the ranking: discarded.** Hypothesis, the one mechanism, arms,
@@ -159,7 +256,7 @@ like every injection this project has not measured.
   `CRBRO_PATH`, `HOME` and `USERPROFILE`, so a test that forgets the variable —
   or deletes it in its `afterAll` — cannot reach a real brain.
 
-388 tests: 384 run everywhere, 4 need the semantic runtime. Baseline before this release: 312.
+419 tests: 415 run everywhere, 4 need the semantic runtime. Baseline before this release: 312.
 
 ## [2.4.0] — 2026-09-10
 

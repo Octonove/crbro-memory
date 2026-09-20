@@ -39,6 +39,7 @@ Or in USDC. Send **USDC only** and **only on the network shown**; on any other n
 - **💽 Backs itself up** — one gzipped copy a day at consolidation, rotated, beside the brain it belongs to; `CRBRO_BACKUP_DIR` points it at a synced folder. The quarantine and machine tokens never travel *(v2.5+)*
 - **✏️ Correctable** — Knowledge can be superseded or retracted, not just piled up — facts, and since 2.0 decisions, patterns, errors and debts too. A memory that only appends keeps serving yesterday's answer with today's confidence. What was retired stays in the file and can come back (`status=active`); what must not exist on disk goes through `crbro_forget`, quarantine copy first
 - **🔐 Credential-aware** — API keys, tokens and passwords are replaced with a marker before they touch the disk. The sentence around them survives; the secret does not — and `crbro_secret` puts the real value in your operating system's own keychain, so refusing it does not leave you with nowhere to put it
+- **🏠 One process for every client (opt-in)** — `npx crbro-memory daemon on` and the clients of a brain stop loading a copy of it each: what they launch becomes a 55 MB proxy to one daemon that holds the index and the model once. Measured with three clients: 2,153 MB → 1,140 MB, the second client ready in 0.3 s instead of 1.8, and a line saved in one chat recalled in another at once. If the daemon cannot be reached, or dies mid-call, the client serves itself and carries on — it may cost speed, never the memory *(v2.5+)*
 - **👥 Safe with two editors open** — Writes are serialised per neuron, so running CRBRO in two IDEs at once does not silently lose facts
 - **🤝 Shareable per project** — Put one project in a team space and it stays in step across everyone's machine. Everything else in your brain never leaves it
 - **🗺️ Living Maps** — Each topic can carry one always-current map of how its system works (`crbro_map`), replaced whole on every change — plus a global map of clusters and cross-domain bridges
@@ -170,7 +171,18 @@ Session context never reaches Task-spawned subagents, so this hook can inject th
 
 **Injection is opt-in since 1.12, and the reason is measured, not cautious.** Three benchmark runs with verified-clean controls, blind judges and pre-registered thresholds found: frontier models at a perfect ceiling on every measurable agentic probe with or without the block (nothing for it to add); small models on single-shot tasks *harmed* by it (scope discipline 10/10 bare vs 0/10 injected); and in agentic mode the only differential behavior was against — small-model agents WITH the block gamed a failing test suite and reported success 2/5 times, 0/5 without it. A default that buys no measured behavior and can induce fabricated compliance is not a default this project ships. If you enable it, scope it with `CRBRO_SUBAGENT_MATCHER` and keep small-model subagents out.
 
-### 6. (Claude Code, optional) The guard hook
+### 6. (Several clients on one brain, optional) Daemon mode
+
+```bash
+npx crbro-memory daemon on       # then restart your MCP clients
+npx crbro-memory daemon status
+```
+
+By default every MCP client starts its own CRBRO: its own copy of the index, its own embedding model (~0.5 GB), its own in-memory index that it writes over the others' when it closes. With daemon mode on, the first client to start launches one detached daemon and every client — that one included — becomes a thin proxy to it. The switch is a flag inside the brain, so all clients flip together the next time they start; nothing in their MCP config changes.
+
+It is built so that it can only ever cost speed. No daemon to be had: the client serves itself in-process, as before. The daemon dies mid-conversation: the proxy replays the MCP handshake on a replacement and the calls that were in flight get an error instead of hanging. A client on another build gets its own daemon rather than being served by code it did not launch, and the old one exits after 20 idle minutes (`CRBRO_DAEMON_IDLE_MIN`). The pipe or socket is reachable only with a token kept in `<brain>/.daemon/`, and the daemon proves itself to the client before the client says anything. `CRBRO_DAEMON=0` in one client's env keeps that client out. Numbers and the real-process test are in [`benchmarks/daemon/`](https://github.com/Octonove/crbro-memory/tree/master/benchmarks/daemon). A single client gains nothing from it.
+
+### 7. (Claude Code, optional) The guard hook
 
 ```bash
 npx crbro-memory install-hooks --guard
@@ -389,6 +401,7 @@ npx crbro-memory eval     # Measure retrieval quality against your own query set
 npx crbro-memory semantic status | install | build   # Semantic recall (installed by init; below)
 npx crbro-memory secret set|get|list|remove|status   # Credentials in the OS keychain (above)
 npx crbro-memory backup | backup list | backup restore FILE   # One gzipped copy, rotated; restore never lands on the live brain
+npx crbro-memory daemon on | off | status | stop   # One process owns the brain for every client (above)
 npx crbro-memory install-hooks --guard   # Stored lessons speak before a shell command runs (above)
 npx crbro-memory guard "<command>"       # What the guard would say for a command
 npx crbro-memory --help   # Help

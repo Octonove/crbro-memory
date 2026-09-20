@@ -1,0 +1,73 @@
+{
+  "date": "2026-09-20",
+  "node": "v24.19.0",
+  "platform": "win32",
+  "clients": 3,
+  "classic": {
+    "mode": "classic",
+    "clients": [
+      {
+        "client": 1,
+        "ready_ms": 6024,
+        "first_recall_ms": 39,
+        "results": 5,
+        "warm_recall_ms": 56,
+        "rss_mb": 966
+      },
+      {
+        "client": 2,
+        "ready_ms": 1780,
+        "first_recall_ms": 57,
+        "results": 5,
+        "warm_recall_ms": 49,
+        "rss_mb": 593
+      },
+      {
+        "client": 3,
+        "ready_ms": 1775,
+        "first_recall_ms": 47,
+        "results": 5,
+        "warm_recall_ms": 59,
+        "rss_mb": 594
+      }
+    ],
+    "daemon": null,
+    "total_rss_mb": 2153
+  },
+  "daemon": {
+    "mode": "daemon",
+    "clients": [
+      {
+        "client": 1,
+        "ready_ms": 6339,
+        "first_recall_ms": 46,
+        "results": 5,
+        "warm_recall_ms": 55,
+        "rss_mb": 55
+      },
+      {
+        "client": 2,
+        "ready_ms": 343,
+        "first_recall_ms": 34,
+        "results": 5,
+        "warm_recall_ms": 36,
+        "rss_mb": 55
+      },
+      {
+        "client": 3,
+        "ready_ms": 324,
+        "first_recall_ms": 33,
+        "results": 5,
+        "warm_recall_ms": 43,
+        "rss_mb": 55
+      }
+    ],
+    "daemon": {
+      "pid": 59248,
+      "rss_mb": 975,
+      "conversations": 3,
+      "semantic_vectors": 5180
+    },
+    "total_rss_mb": 1140
+  }
+}
