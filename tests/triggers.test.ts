@@ -34,6 +34,11 @@ describe('keysOfCommand', () => {
     expect(keysOfCommand('node scripts/gen-catalog.cjs --check')).toContain('gen-catalog.cjs');
     expect(keysOfCommand('& "C:\\proyectos\\scripts\\upload-skill.ps1" -Slug x')).toContain('upload-skill.ps1');
     expect(keysOfCommand('powershell -File .\\upload-skill.ps1')).toContain('upload-skill.ps1');
+    // A heredoc body is data: the files a fed-in script mentions are not commands.
+    const here = keysOfCommand("cat > x.py <<'PYEOF'\nimport io\np='src/search/index.ts'\nnode deploy.mjs\nPYEOF\npython x.py && git status");
+    expect(here).toEqual(expect.arrayContaining(['x.py', 'git status']));
+    expect(here).not.toContain('index.ts');
+    expect(here).not.toContain('deploy.mjs');
     // Reading a file is not running it.
     expect(keysOfCommand('grep -n foo src/server.ts')).not.toContain('server.ts');
   });
@@ -45,6 +50,7 @@ describe('keysOfCommand', () => {
       'FOO=1 BAR=2 python3 tools/build_site.py; git stash -u',
       '& "C:\\x y\\upload-skill.ps1" -Slug a',
       'sudo   rm   -rf   /var/www/old\nnpm publish --access public',
+      "cat > x.py <<'PYEOF'\nimport io\np='src/search/index.ts'\nopen(p)\nPYEOF\npython x.py && git status",
       '',
     ]) expect(hookKeys(c).sort(), c).toEqual(keysOfCommand(c).sort());
   });
@@ -91,7 +97,9 @@ describe('the server writes the index and the hook reads it', () => {
   const runHook = (command: string, session: string, tool = 'Bash') => {
     const r = spawnSync(process.execPath, [HOOK], {
       input: JSON.stringify({ session_id: session, hook_event_name: 'PreToolUse', tool_name: tool, tool_input: { command } }),
-      env: { ...process.env, CRBRO_BRAIN_PATH: root }, encoding: 'utf8', timeout: 10_000,
+      // Its own temp folder too: the hook keeps its per-session state under tmpdir(), and a developer
+      // running this suite has the real hook installed and writing to the real one.
+      env: { ...process.env, CRBRO_BRAIN_PATH: root, TMP: holder, TEMP: holder, TMPDIR: holder }, encoding: 'utf8', timeout: 10_000,
     });
     expect(r.status).toBe(0);
     return r.stdout ? JSON.parse(r.stdout) : null;
@@ -115,7 +123,6 @@ describe('the server writes the index and the hook reads it', () => {
     await client?.close();
     delete process.env.CRBRO_PATH;
     await fs.rm(holder, { recursive: true, force: true });
-    await fs.rm(path.join(os.tmpdir(), 'crbro-guard'), { recursive: true, force: true }).catch(() => undefined);
   });
 
   it('is silent before the index exists', () => {

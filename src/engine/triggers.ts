@@ -62,13 +62,30 @@ function word(raw: string): string {
 }
 
 /**
+ * A heredoc body is data, not commands: a Python script fed through <<'EOF'
+ * named every file it mentioned and woke lessons that had nothing to do with
+ * the command. Procedural on purpose — no backreferences to get wrong.
+ */
+function stripHeredocs(command: string): string {
+  const out: string[] = [];
+  let end: string | null = null;
+  for (const line of command.split('\n')) {
+    if (end !== null) { if (line.trim() === end) end = null; continue; }
+    out.push(line);
+    const m = /<<-?\s*['"]?([A-Za-z_][A-Za-z0-9_]*)['"]?/.exec(line);
+    if (m) end = m[1];
+  }
+  return out.join('\n');
+}
+
+/**
  * The keys a COMMAND LINE asks about. Deliberately dumb and mirrored in
  * hooks/crbro-guard.mjs: per segment, the program and its next word, the word
  * after a wrapper, and a script when it is what runs.
  */
 export function keysOfCommand(command: string): string[] {
   const keys = new Set<string>();
-  for (const segment of command.split(/&&|\|\||[;|\n]/)) {
+  for (const segment of stripHeredocs(command).split(/&&|\|\||[;|\n]/)) {
     let t = segment.trim().split(/\s+/).map(word).filter(Boolean);
     while (t.length && (/^[a-z_][a-z0-9_]*=/.test(t[0]) || t[0] === '&' || WRAPPERS.has(t[0]))) {
       if (WRAPPERS.has(t[0]) && t[1] && !t[1].startsWith('-')) keys.add(`${t[0]} ${t[1]}`);
