@@ -276,6 +276,10 @@ export class SearchEngine {
   private pendingEmbed = new Map<string, string>();
   /** The background embedding job of the last rebuild, if any. */
   private embedding: Promise<void> | null = null;
+  /** One init at a time: two clients booting together must not load the index twice. */
+  private initing: Promise<void> | null = null;
+  /** When the cortex was last read into this index, in ms. Files newer than this are somebody else's writes. */
+  private syncedAt = 0;
 
   constructor(private brain: Brain) {
     if (semanticEnabled()) {
@@ -300,6 +304,27 @@ export class SearchEngine {
    * ourselves is the only reliable guard.
    */
   async init(): Promise<void> {
+    if (this.initing) return this.initing;
+    this.initing = this.doInit().finally(() => { this.initing = null; });
+    return this.initing;
+  }
+
+  private async doInit(): Promise<void> {
+    // Already in memory: catch up with what changed on disk instead of loading
+    // 40 MB again. crbro_boot calls init() on every boot, which was harmless
+    // when one process served one conversation; a process that serves every
+    // client (the daemon, 2.5) would reload or rebuild the whole index each
+    // time anyone opened a chat, and block the others while it did.
+    if (this.db && this.chunksByNeuron.size > 0) {
+      await this.refresh();
+      return;
+    }
+    const empezado = Date.now();
+    await this.loadOrRebuild();
+    this.syncedAt = empezado;
+  }
+
+  private async loadOrRebuild(): Promise<void> {
     if (this.semantic) {
       await this.semantic.load();
       // Warm the model off the critical path: boot returns at once and the
@@ -326,6 +351,59 @@ export class SearchEngine {
     }
 
     await this.rebuild();
+  }
+
+  /**
+   * Bring the in-memory index up to date with the disk: re-index the neurons
+   * and day logs whose files changed since the last sync, drop the chunks of
+   * what is gone. This is how writes from ANOTHER process (an older client, a
+   * CLI command, a second machine syncing a shared space) reach an index that
+   * is already loaded. A neuron that was only read is touched too (reads
+   * update its access count): re-indexing it is a few inserts, not a rebuild.
+   */
+  async refresh(): Promise<{ reindexed: number; removed: number }> {
+    if (!this.db) { await this.init(); return { reindexed: 0, removed: 0 }; }
+    const desde = this.syncedAt - 1000;   // the same second of slack isStale() allows
+    const empezado = Date.now();
+    let reindexed = 0, removed = 0;
+
+    const ids = await listJSONFiles(this.brain.paths.cortex);
+    const vivos = new Set(ids);
+    for (const id of ids) {
+      if ((await fileMtime(this.brain.paths.neuron(id))) <= desde) continue;
+      try {
+        const neuron = await readJSON<Neuron>(this.brain.paths.neuron(id));
+        if (!neuron) continue;
+        await this.removeNeuronChunks(id);
+        await this.insertNeuronChunks(neuron);
+        reindexed++;
+      } catch { /* unreadable: leave what we have */ }
+    }
+    const diarios = await listJSONFiles(this.brain.paths.hippocampus);
+    const diasVivos = new Set(diarios.map(d => `session:${d}`));
+    for (const id of diarios) {
+      if ((await fileMtime(this.brain.paths.session(id))) <= desde) continue;
+      try {
+        const log = await readJSON<{ session_id: string; date?: string; summary?: string }>(this.brain.paths.session(id));
+        if (!log?.session_id) continue;
+        await this.removeNeuronChunks(`session:${log.session_id}`);
+        if (log.summary) await this.insertSessionChunks(log);
+        reindexed++;
+      } catch { /* skip */ }
+    }
+    for (const key of [...this.chunksByNeuron.keys()]) {
+      const gone = key.startsWith('session:') ? !diasVivos.has(key) : !vivos.has(key);
+      if (!gone) continue;
+      await this.removeNeuronChunks(key);
+      removed++;
+    }
+
+    this.syncedAt = empezado;
+    if (reindexed > 0 || removed > 0) {
+      await this.flushEmbeddings();
+      this.markDirty();
+    }
+    return { reindexed, removed };
   }
 
   /**
@@ -356,6 +434,7 @@ export class SearchEngine {
    * to assume well-formed.
    */
   async rebuild(): Promise<number> {
+    this.syncedAt = Date.now();
     this.db = create({ schema: SCHEMA });
     this.docCount = 0;
     this.chunksByNeuron.clear();
