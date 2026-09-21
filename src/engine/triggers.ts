@@ -20,7 +20,7 @@ import { entryId } from '../sync/ops.js';
 import type { Brain } from './brain.js';
 import type { Neuron } from '../types/index.js';
 
-export const TRIGGER_INDEX_VERSION = 1;
+export const TRIGGER_INDEX_VERSION = 2;   // 2: path: keys, so exploring a project wakes its lessons
 export const TRIGGER_FILE = 'triggers.json';
 const PREVIEW = 320;
 /** Lessons handed over per command. More than this is a lecture, and lectures get skimmed. */
@@ -84,12 +84,38 @@ function stripHeredocs(command: string): string {
 }
 
 /**
+ * The project folders a text walks into, as `path:<folder>` keys.
+ *
+ * Command keys only fire on the program being run, so the first commands of a
+ * task — `ls`, `find`, `grep -r` over someone's repo — woke nothing, and the
+ * lesson about that repo arrived ten commands late, once a `git` line finally
+ * matched. A folder name is what those commands and the lesson have in common.
+ *
+ * Only hyphenated segments of six characters or more count (`crbro-memory`,
+ * `synthetica-decks`): plain words like `projects`, `src` or `docs` name
+ * everything and would wake everything.
+ */
+function pathKeys(text: string): string[] {
+  const keys = new Set<string>();
+  for (const m of text.matchAll(/[A-Za-z0-9._-]{2,}[\\/][A-Za-z0-9._\\/-]{2,}/g)) {
+    for (const seg of m[0].split(/[\\/]+/)) {
+      const s = seg.toLowerCase();
+      if (s.length >= 6 && s.includes('-') && !/^-|-$/.test(s) && !/\.[a-z0-9]{1,5}$/.test(s)) keys.add(`path:${s}`);
+    }
+  }
+  return [...keys];
+}
+
+/**
  * The keys a COMMAND LINE asks about. Deliberately dumb and mirrored in
  * hooks/crbro-guard.mjs: per segment, the program and its next word, the word
- * after a wrapper, and a script when it is what runs.
+ * after a wrapper, and a script when it is what runs, plus the project folders
+ * it touches.
  */
 export function keysOfCommand(command: string): string[] {
   const keys = new Set<string>();
+  const body = stripHeredocs(command);
+  for (const k of pathKeys(body)) keys.add(k);
   for (const segment of stripHeredocs(command).split(/&&|\|\||[;|\n]/)) {
     let t = segment.trim().split(/\s+/).map(word).filter(Boolean);
     while (t.length && (/^[a-z_][a-z0-9_]*=/.test(t[0]) || t[0] === '&' || WRAPPERS.has(t[0]))) {
@@ -117,6 +143,7 @@ export function keysOfCommand(command: string): string[] {
  */
 export function keysOfEntry(text: string): string[] {
   const keys = new Set<string>();
+  for (const k of pathKeys(text)) keys.add(k);
   for (const m of text.matchAll(/`([^`\n]{2,200})`/g)) for (const k of keysOfCommand(m[1])) keys.add(k);
   const words = text.split(/\s+/);
   for (let i = 0; i < words.length; i++) {
@@ -129,7 +156,7 @@ export function keysOfEntry(text: string): string[] {
     keys.add(DEEP.has(`${w} ${next}`) && third && SUBCOMMAND.test(third) && !third.startsWith('-') && !PROSE.has(third) ? `${w} ${next} ${third}` : `${w} ${next}`);
   }
   // A script is only a trigger as the thing that runs; a program pair needs a known program.
-  return [...keys].filter(k => (k.includes(' ') ? HEADS.has(k.split(' ')[0]) || WRAPPERS.has(k.split(' ')[0]) : SCRIPT.test(k)));
+  return [...keys].filter(k => k.startsWith('path:') || (k.includes(' ') ? HEADS.has(k.split(' ')[0]) || WRAPPERS.has(k.split(' ')[0]) : SCRIPT.test(k)));
 }
 
 export function buildTriggerIndex(neurons: Neuron[], builtAt: string = now()): TriggerIndex {
