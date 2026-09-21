@@ -66,9 +66,23 @@ function stripHeredocs(command) {
   return out.join('\n');
 }
 
+/** Mirrors pathKeys() in src/engine/triggers.ts: the project folders a text walks into. */
+function pathKeys(text) {
+  const keys = new Set();
+  for (const m of text.matchAll(/[A-Za-z0-9._-]{2,}[\\/][A-Za-z0-9._\\/-]{2,}/g)) {
+    for (const seg of m[0].split(/[\\/]+/)) {
+      const s = seg.toLowerCase();
+      if (s.length >= 6 && s.includes('-') && !/^-|-$/.test(s) && !/\.[a-z0-9]{1,5}$/.test(s)) keys.add(`path:${s}`);
+    }
+  }
+  return [...keys];
+}
+
 export function keysOfCommand(command) {
   const keys = new Set();
-  for (const segment of stripHeredocs(command).split(/&&|\|\||[;|\n]/)) {
+  const body = stripHeredocs(command);
+  for (const k of pathKeys(body)) keys.add(k);
+  for (const segment of body.split(/&&|\|\||[;|\n]/)) {
     let t = segment.trim().split(/\s+/).map(word).filter(Boolean);
     while (t.length && (/^[a-z_][a-z0-9_]*=/.test(t[0]) || t[0] === '&' || WRAPPERS.has(t[0]))) {
       if (WRAPPERS.has(t[0]) && t[1] && !t[1].startsWith('-')) keys.add(`${t[0]} ${t[1]}`);
@@ -121,7 +135,9 @@ function respond(input) {
   } catch {
     return null;   // no index yet: the next crbro_consolidate writes it
   }
-  if (!index || index.v !== 1 || !index.keys || !Array.isArray(index.entries)) return null;
+  // Mirrors TRIGGER_INDEX_VERSION in src/engine/triggers.ts. An older index simply
+  // says nothing until the next consolidate rewrites it.
+  if (!index || index.v !== 2 || !index.keys || !Array.isArray(index.entries)) return null;
 
   const store = seenStore(input.session_id);
   const fresh = lessonsFor(index, command).filter(l => !store.has(`${l.n}#${l.e}`)).slice(0, MAX_LESSONS);

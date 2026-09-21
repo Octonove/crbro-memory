@@ -2,6 +2,30 @@
 
 All notable changes to CRBRO.
 
+## [2.6.0] — 2026-09-21
+
+Memory that arrives before the work, not after it.
+
+- **`crbro_recall` is now asked for before acting, not only before answering.**
+  The server's instructions said "before answering anything about the user,
+  call crbro_recall". A session about to touch one of their projects is not
+  answering anything, so the rule did not cover the case that matters most:
+  the procedure for that project was stored, the session reconstructed it by
+  reading files instead, and did the steps in the wrong order. The sentence now
+  says "before answering OR ACTING ON", and spells out that acting includes the
+  first command that explores or changes a project of theirs.
+
+- **The guard hook wakes on the project, not only on the program.** Trigger
+  keys came from the command being run, so a task that opens with `ls`, `find`
+  or `grep -r` over a repo matched nothing; the lesson about that repo landed
+  ten commands later, when a `git` line finally hit a key. Entries and commands
+  now also produce `path:<folder>` keys for hyphenated folder names of six
+  characters or more (`crbro-memory`, `synthetica-decks`), which is what an
+  exploring command and a lesson about that repo have in common. Plain names
+  like `src`, `docs` or `node_modules` are excluded on purpose: they name
+  everything and would wake everything. Trigger index version 2 — an older
+  index stays silent until the next `crbro_consolidate` rewrites it.
+
 ## [2.5.1] — 2026-09-20
 
 Two things found by using 2.5.0 on the brain it was built from, the same night.

@@ -15,7 +15,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import { keysOfCommand, keysOfEntry, buildTriggerIndex, lessonsFor } from '../src/engine/triggers.js';
+import { keysOfCommand, keysOfEntry, buildTriggerIndex, lessonsFor, TRIGGER_INDEX_VERSION } from '../src/engine/triggers.js';
 // @ts-expect-error — a plain .mjs hook, no types on purpose
 import { keysOfCommand as hookKeys } from '../hooks/crbro-guard.mjs';
 
@@ -72,6 +72,25 @@ describe('keysOfEntry', () => {
   });
   it('makes nothing of prose without a command', () => {
     expect(keysOfEntry('Antonio prefiere los commits en español y las respuestas cortas.')).toEqual([]);
+  });
+});
+
+describe('path keys', () => {
+  // The first commands of a task explore; before this they matched nothing and
+  // the lesson about that very repo arrived ten commands late.
+  it('an exploring command and the lesson about that project meet on the folder', () => {
+    const lesson = keysOfEntry('La fuente de verdad son los .md de synthetica-decks/skills; nunca subas leyendo invokard-comic/data/catalog.json.');
+    const exploring = keysOfCommand('ls -la "C:/Users/x/Desktop/proyectos/invokard-comic"');
+    expect(lesson).toContain('path:invokard-comic');
+    expect(exploring).toContain('path:invokard-comic');
+    expect(lesson.filter(k => exploring.includes(k))).toEqual(['path:invokard-comic']);
+  });
+  it('plain folder names would wake everything, so they do not count', () => {
+    const k = keysOfCommand('grep -rn foo src/utils/index.ts docs/readme.md node_modules/x/y.js');
+    expect(k.filter(x => x.startsWith('path:'))).toEqual([]);
+  });
+  it('a file name is not a folder', () => {
+    expect(keysOfCommand('node scripts/p7-firestore-skills.mjs').filter(x => x.startsWith('path:'))).toEqual([]);
   });
 });
 
@@ -141,7 +160,7 @@ describe('the server writes the index and the hook reads it', () => {
   it('consolidate writes the index, outside what a backup carries', async () => {
     await call('crbro_consolidate', { summary: 'Sesión con un error de despliegue.' });
     const idx = JSON.parse(await fs.readFile(path.join(root, '.search', 'triggers.json'), 'utf8'));
-    expect(idx.v).toBe(1);
+    expect(idx.v).toBe(TRIGGER_INDEX_VERSION);
     expect(Object.keys(idx.keys)).toEqual(expect.arrayContaining(['firebase deploy', 'git pull', 'git fetch']));
   });
 
