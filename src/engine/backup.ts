@@ -36,7 +36,11 @@ export const DEFAULT_KEEP = 7;
 /** consolidate makes one on its own when the newest is older than this. */
 export const AUTO_BACKUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
-const SKIP_TOP = new Set(['.quarantine', '.search', '.semantic', '.device-token', '.license-cache.json', '.locks', '.daemon']);
+// checkpoints/ (2.7): the compaction checkpoints hold literal user requests,
+// the task list, the folder and the remote. They expire after seven days and
+// are rebuilt by the next compaction; a backup, often kept in a synced folder,
+// would keep them forever.
+const SKIP_TOP = new Set(['.quarantine', '.search', '.semantic', '.device-token', '.license-cache.json', '.locks', '.daemon', 'checkpoints']);
 const SKIP_ANYWHERE = new Set(['.git', 'node_modules']);
 const PREFIX = 'brain-';
 const SUFFIX = '.json.gz';

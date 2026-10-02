@@ -22,7 +22,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { Brain } from './engine/brain.js';
-import { Cortex, sessionScope } from './engine/cortex.js';
+import { Cortex, sessionScope, findPromotionCandidates, type PromotionCandidate } from './engine/cortex.js';
 import { Synapses } from './engine/synapses.js';
 import { HeatEngine } from './engine/heat.js';
 import { Hippocampus } from './engine/hippocampus.js';
@@ -32,7 +32,8 @@ import { semanticStatus } from './search/semantic.js';
 import { fitToBudget, DEFAULT_BUDGET_CHARS, type BudgetOptions } from './utils/budget.js';
 import { redact } from './engine/secrets.js';
 import { autoBackupIfDue, resolveBackupDir } from './engine/backup.js';
-import { writeTriggerIndex } from './engine/triggers.js';
+import { writeTriggerIndex, loadAllNeurons } from './engine/triggers.js';
+import { neuronId, inferNeuronType, techKeywordIn } from './utils/ids.js';
 
 /** A neuron this size with no summary is worth two lines from whoever is closing the session. */
 const SUMMARY_NUDGE_MIN_ENTRIES = 25;
@@ -198,6 +199,40 @@ export function createServer(shared?: Engines): McpServer {
   const resolveNeuron = async (ref: string): Promise<Neuron | null> =>
     (await cortex.peek(ref)) || (await cortex.findByName(ref));
 
+  /**
+   * Where a promotion candidate should go (2.7): an existing tech_ or process_
+   * neuron that recall already ties to the lesson, else a new one named after
+   * the technology the lesson names, else a process neuron for the domain the
+   * copies share. The topic is chosen so crbro_learn infers the same type.
+   */
+  const suggestTargets = async (
+    candidatos: PromotionCandidate[],
+    neuronas: Neuron[],
+  ): Promise<Array<PromotionCandidate & { suggested_target: { neuron_id: string; topic: string; exists: boolean } }>> => {
+    const porId = new Map(neuronas.map(n => [n.id, n]));
+    const out: Array<PromotionCandidate & { suggested_target: { neuron_id: string; topic: string; exists: boolean } }> = [];
+    for (const c of candidatos) {
+      let destino: { neuron_id: string; topic: string; exists: boolean } | null = null;
+      try {
+        const hits = await searchEngine.search(c.text, { limit: 5 });
+        const h = hits.find(r => /^(tech|process)_/.test(r.neuron_id) && r.confidence === 'strong');
+        if (h) destino = { neuron_id: h.neuron_id, topic: h.name, exists: true };
+      } catch { /* the index never breaks consolidate */ }
+      if (!destino) {
+        const dominios = [...new Set(c.neurons.map(id => porId.get(id)?.domain || 'general'))];
+        const tech = techKeywordIn(c.text);
+        let topic = tech
+          ?? (dominios.length === 1 && dominios[0] !== 'general' ? `${dominios[0]} workflow` : 'Cross-project workflow');
+        let tipo = inferNeuronType(topic);
+        if (tipo !== 'tech' && tipo !== 'process') { topic = 'Cross-project workflow'; tipo = 'process'; }
+        const id = neuronId(topic, tipo);
+        destino = { neuron_id: id, topic, exists: porId.has(id) };
+      }
+      out.push({ ...c, suggested_target: destino });
+    }
+    return out;
+  };
+
   // ═══════════════════════════════════════════════════════════════
   // TOOL 1: crbro_boot — Boot sequence
   // ═══════════════════════════════════════════════════════════════
@@ -205,11 +240,13 @@ export function createServer(shared?: Engines): McpServer {
     'crbro_boot',
     {
       title: 'Boot the brain',
-      description: 'Read the brain at session start — call it FIRST in every conversation, before any other work; writes only the boot stamp (and the brain itself on first use). Loads memory from earlier sessions: hot topics, active context with open_items and recently_closed (never report recently_closed as pending; verify open_items before repeating them), recent_sessions, counts, active protocols as a protocol_enforcement block you must follow, memory_discipline (the rules for using this memory well) and retired_tools (old tool names → their replacement). Readies the search index and syncs shared team spaces (offline is normal). Skipping it loses all context; close the session with crbro_consolidate.',
-      inputSchema: {},
+      description: 'Read the brain at session start — call it FIRST in every conversation, before any other work; writes only the boot stamp (and the brain itself on first use). Loads memory from earlier sessions: hot topics, active context with open_items and recently_closed (never report recently_closed as pending; verify open_items before repeating them), recent_sessions, counts, active protocols as a protocol_enforcement block you must follow, memory_discipline (the rules for using this memory well) and retired_tools (old tool names → their replacement). Readies the search index and syncs shared team spaces (offline is normal). Pass project (the working folder or repo name) to put that project\'s neurons first: project_neurons. Skipping it loses all context; close the session with crbro_consolidate.',
+      inputSchema: {
+        project: z.string().optional().describe('The folder or repository this session works in: a path ("C:/code/crbro-memory"), a repo name or a remote ("owner/repo"); only the last segment counts. Neurons whose name, system map or fact keywords name it come first in hot_topics and are listed in project_neurons (at most 5). Omit it and boot is exactly as without.'),
+      },
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },
-    async () => {
+    async (args) => {
       try {
         const result = await brain.boot();
         // Initialize search engine
@@ -249,9 +286,25 @@ export function createServer(shared?: Engines): McpServer {
         if (recientes.some((s: any) => String(s.summary || '').length > 240)) {
           response.sessions_note = 'recent_sessions carries the first 240 characters of each summary (summary_chars is the full size). crbro_inspect view=sessions limit=1 returns the latest one whole; limit=3 returns the three, each capped at 3,000 characters and declared.';
         }
+        // P5 (2.7): the session says where it works, and that project's
+        // neurons stop competing with everything else that is warm. Served
+        // from the index already in memory; without `project` nothing here runs.
+        let calientes: any[] = result.hot_topics || [];
+        const proyecto = (args?.project ?? '').trim();
+        if (proyecto) {
+          let delProyecto: Awaited<ReturnType<typeof searchEngine.projectNeurons>> = [];
+          try { delProyecto = await searchEngine.projectNeurons(proyecto, 10); } catch { /* the index never breaks boot */ }
+          const ids = new Set(delProyecto.map(p => p.id));
+          // Stable partition: the project's hot topics first, in their heat order.
+          calientes = [...calientes.filter(h => ids.has(h.id)), ...calientes.filter(h => !ids.has(h.id))];
+          response.project_neurons = delProyecto.slice(0, 5);
+          if (delProyecto.length === 0) {
+            response.project_hint = `Nothing stored names "${proyecto}" yet. crbro_recall it before working; what you learn about it is worth a neuron.`;
+          }
+        }
         // Ten hot topics with the day, not twenty with the millisecond: each
         // row is a pointer the model follows with recall, not a record.
-        response.hot_topics = (result.hot_topics || []).slice(0, 10)
+        response.hot_topics = calientes.slice(0, 10)
           .map((h: any) => ({ ...h, last_access: dia(h.last_access) }));
         // active_context repeated open_items and recently_closed, which boot
         // already serves at the top level: 1,414 characters said twice.
@@ -493,11 +546,14 @@ export function createServer(shared?: Engines): McpServer {
           type Row = {
             id: string; kind: string; text: string; added: string;
             status?: string; confidence?: number; rationale?: string; keys?: string[]; revision_note?: string; revised?: string;
+            confirmations?: number;
           };
           const rows: Row[] = [];
           for (const f of neuron.facts || []) {
             rows.push({ id: f.id || factId(f.text), kind: 'fact', text: f.text, added: f.added || '',
-              status: f.status, confidence: f.confidence, keys: f.keys, revision_note: f.revision_note, revised: f.revised });
+              status: f.status, confidence: f.confidence, keys: f.keys, revision_note: f.revision_note, revised: f.revised,
+              // Only when it says something: 1 is every fact's default (2.7).
+              ...((f.confirmations ?? 1) > 1 ? { confirmations: f.confirmations } : {}) });
           }
           for (const d of neuron.decisions || []) {
             const id = d.id || entryId(d.text);
@@ -587,6 +643,7 @@ export function createServer(shared?: Engines): McpServer {
               id: r.id, kind: r.kind, added: dia(r.added),
               preview: r.text.length > PREVIEW ? `${r.text.slice(0, PREVIEW).trimEnd()}…` : r.text,
               chars: r.text.length,
+              ...(r.confirmations ? { confirmations: r.confirmations } : {}),
               ...(isRetired(r.status) ? { status: r.status, ...(r.revised ? { revised: dia(r.revised) } : {}), ...(r.revision_note ? { retired_note: r.revision_note } : {}) } : {}),
             })),
             entries_pagination: {
@@ -676,7 +733,7 @@ export function createServer(shared?: Engines): McpServer {
     'crbro_learn',
     {
       title: 'Learn something',
-      description: 'Write: store a fact, decision, pattern, preference, error or debt on a topic; the neuron is created if missing (or pass neuron_id). Stage 1 of the lifecycle: a new truth that REPLACES an old one → crbro_learn with supersedes (one call does both); to retire with no replacement use crbro_revise; to delete from disk use crbro_forget. crbro_recall first — it may already exist. The same fact text again is not duplicated: keywords merge (or keywords_replace) and a changed confidence applies (updated_in_place); text matching a retired fact or entry is refused with skipped_retired. Decisions always append; preferences never leave this machine. Credentials are replaced with a marker and listed in redacted — crbro_secret them, record only the name. Returns neuron_id, action, superseded count, near_duplicates (stored anyway; retire the old telling), supersedes_unmatched (still live) and totals.',
+      description: 'Write: store a fact, decision, pattern, preference, error or debt on a topic; the neuron is created if missing (or pass neuron_id). Stage 1 of the lifecycle: a new truth that REPLACES an old one → crbro_learn with supersedes (one call does both); to retire with no replacement use crbro_revise; to delete from disk use crbro_forget. crbro_recall first — it may already exist. The same fact text again is not duplicated: keywords merge (or keywords_replace), a changed confidence applies (updated_in_place) and another session repeating it raises confirmations, returned; text matching a retired fact or entry is refused with skipped_retired. Decisions always append; preferences never leave this machine. Credentials are replaced with a marker and listed in redacted — crbro_secret them, record only the name. Returns neuron_id, action, superseded count, near_duplicates (stored anyway; retire the old telling), supersedes_unmatched (still live) and totals.',
       inputSchema: {
         // Optional since 2.0.3, and the reason is measured: the description
         // told callers that neuron_id "skips name matching entirely", the
@@ -751,6 +808,8 @@ export function createServer(shared?: Engines): McpServer {
           neuron_id: result.neuron.id,
           action: result.action,
           duplicate: result.duplicate || undefined,
+          // How many sessions have now stored this exact line (2.7).
+          confirmations: result.duplicate ? result.confirmations : undefined,
           updated_in_place: result.updated_in_place || undefined,
           superseded_facts: result.superseded,
           near_duplicates: result.near_duplicates.length > 0
@@ -802,7 +861,7 @@ export function createServer(shared?: Engines): McpServer {
     'crbro_recall',
     {
       title: 'Recall',
-      description: 'Read-only search of everything saved in earlier sessions — facts, decisions, patterns, preferences, errors, debts and maps by their full text. Call it BEFORE answering anything about the user, their projects, preferences, decisions or past work: the answer is usually stored, and making them repeat it is the failure this memory exists to prevent. Also before crbro_learn, so a fact is superseded instead of duplicated. One result per neuron: the best matching entry with entry_id (read it whole with crbro_inspect view=neuron entries=[id]), matched_kind, matched_added, a confidence label (weak = little of the question covered; verify) and also_matched previews. Retired entries never surface. Five ranked results by default; matched_neurons says how many more matched. If nothing matches, retry with 2-4 phrasings in queries or fewer, distinctive words. has_map:true: read the system map with crbro_map before touching that system.',
+      description: 'Read-only search of everything saved in earlier sessions — facts, decisions, patterns, preferences, errors, debts and maps. Call it BEFORE answering anything about the user, their projects, preferences, decisions or past work: the answer is usually stored, and making them repeat it is the failure this memory exists to prevent. Also before crbro_learn, to supersede rather than duplicate. One result per neuron: the best matching entry with entry_id (read it whole: crbro_inspect view=neuron entries=[id]), matched_kind, matched_added, a confidence label (weak = little of the question covered; verify) and also_matched previews. Retired entries never surface. Lines not the user\'s own carry origin, also_matched too: team:<space> (team if unshared) with self-declared by, or miner. Five results by default; matched_neurons counts every hit. If nothing matches, retry with 2-4 phrasings in queries or fewer, rarer words. has_map:true: read the system map with crbro_map before touching that system.',
       inputSchema: {
         query: z.string().describe('What to look for, e.g. "Firebase authentication setup". Fewer, distinctive terms beat full sentences.'),
         queries: z.array(z.string()).optional().describe('Alternative phrasings of the same question, searched together with query and fused by rank. Use synonyms, the other language and the concrete product name; 2-4 is plenty.'),
@@ -822,8 +881,9 @@ export function createServer(shared?: Engines): McpServer {
           matched_terms: z.number().optional(), query_terms: z.number().optional(),
           confidence: z.enum(['strong', 'weak']).optional(),
           entry_id: z.string().optional(),
+          origin: z.string().optional(), by: z.string().optional(),
           content_truncated: z.boolean().optional(), content_chars: z.number().optional(),
-          also_matched: z.array(z.object({ entry_id: z.string().optional(), kind: z.string(), added: z.string(), preview: z.string(), chars: z.number() }).loose()).optional(),
+          also_matched: z.array(z.object({ entry_id: z.string().optional(), kind: z.string(), added: z.string(), preview: z.string(), chars: z.number(), origin: z.string().optional(), by: z.string().optional() }).loose()).optional(),
         }).loose()),
         returned: z.number().optional(),
         matched_neurons: z.number().optional().describe('Neurons with any hit before limit; total_results is what came back'),
@@ -1399,7 +1459,7 @@ export function createServer(shared?: Engines): McpServer {
     'crbro_consolidate',
     {
       title: 'Consolidate the session',
-      description: 'Write: close the session — the only way to log a session. Call it before the conversation ends. Persists pending knowledge and index writes, logs the session from summary (credentials stripped, kinds in redacted), sets the context\'s last_session, recalculates heat, links the neurons written this session with weak temporal synapses (synapses_updated), updates the manifest and syncs shared team spaces (offline is normal). Returns session_id, facts_saved, decisions_saved, topics_touched and per-space sync state; topics_touched logs neurons you only read. Not consolidating loses the session\'s knowledge. Mid-session open items go to crbro_context; housekeeping is crbro_maintenance.',
+      description: 'Write: close the session — the only way to log a session. Call it before the conversation ends. Persists pending knowledge and index writes, logs the session from summary (credentials stripped, kinds in redacted), sets the context\'s last_session, recalculates heat, links the neurons written this session with weak temporal synapses (synapses_updated), updates the manifest and syncs shared team spaces (offline is normal). Returns session_id, facts_saved, decisions_saved, topics_touched and per-space sync state; topics_touched logs neurons you only read. promotion_candidates: own lessons (not from a teammate or the miner) found in 2+ project neurons, with suggested_target; nothing is moved. Not consolidating loses the session\'s knowledge. Mid-session open items go to crbro_context; housekeeping is crbro_maintenance.',
       inputSchema: {
         summary: z.string().describe('A headline paragraph, not a report: what was done, decided and left open, in a few sentences. The facts themselves belong in crbro_learn, where recall finds them; this text is re-read at every boot. Stored whole, after credential redaction, and searchable by recall as a session hit (sessions_matched). Facts still belong in crbro_learn: a hit in a log is narrative, a fact answers.'),
         topics_touched: z.array(z.string()).optional().describe('Neuron ids this session used WITHOUT writing (recalled, inspected, discussed). Added to the log\'s topics_touched next to the ids written this session; write counters stay real. Unknown ids are dropped and listed in topics_unknown.'),
@@ -1440,9 +1500,22 @@ export function createServer(shared?: Engines): McpServer {
         // folder held config files. Once a day, never throws, and says where it
         // went so the user can point CRBRO_BACKUP_DIR somewhere that is synced.
         const copia = await autoBackupIfDue(brain.paths);
+        // One read of the cortex serves two derived results: the trigger
+        // index and promotion_candidates (2.7). Before, the trigger index read
+        // it alone; the candidates add no file read, only the comparison.
+        let neuronas: Neuron[] | undefined;
+        try { neuronas = await loadAllNeurons(brain); } catch { neuronas = undefined; }
         // The command → lesson lookup the PreToolUse guard reads. Derived data,
         // rebuilt here because this is when the ledgers have just changed.
-        await writeTriggerIndex(brain);
+        await writeTriggerIndex(brain, neuronas);
+        // The same lesson in two or more projects belongs to no project: it is
+        // a tech_ or process_ lesson. Suggested only — nothing moves by itself.
+        let promocion: Array<PromotionCandidate & { suggested_target: { neuron_id: string; topic: string; exists: boolean } }> = [];
+        if (neuronas) {
+          try {
+            promocion = await suggestTargets(findPromotionCandidates(neuronas, result.topics_logged), neuronas);
+          } catch { promocion = []; }
+        }
 
         // Large neurons nobody has described (2.5). `summary` exists since 1.0
         // and was empty in 1,199 of 1,200 neurons: the server has no model to
@@ -1470,6 +1543,10 @@ export function createServer(shared?: Engines): McpServer {
           ...(contadoresIncompletos ? {
             tally_incomplete: true,
             tally_incomplete_hint: 'CRBRO restarted during this conversation, so facts_saved, decisions_saved and topics_touched only count what came after. Everything written before is on disk; if it matters that the log names those topics, call crbro_consolidate again with topics_touched=[their neuron ids].',
+          } : {}),
+          ...(promocion.length > 0 ? {
+            promotion_candidates: promocion,
+            promotion_hint: 'The same lesson lives in several project neurons, so it is not about any one of them. Nothing was moved. To promote one: crbro_learn it in suggested_target (neuron_id when exists, else topic), then crbro_revise the project copies (entry_ids) so recall serves one telling.',
           } : {}),
           ...(sinResumen.length > 0 ? {
             missing_summaries: sinResumen.slice(0, 3),

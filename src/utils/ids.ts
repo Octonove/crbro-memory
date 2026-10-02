@@ -84,6 +84,20 @@ export function isValidNeuronId(id: string): boolean {
   return /^(project|tech|lang|person|domain|process|protocol)_[a-z0-9_]+$/.test(id);
 }
 
+const TECH_KEYWORDS = ['firebase', 'react', 'node', 'docker', 'kubernetes', 'aws', 'gcp', 'cloud', 'api', 'rest',
+  'graphql', 'mongodb', 'postgres', 'redis', 'nginx', 'webpack', 'vite', 'git', 'npm', 'supabase', 'stripe',
+  'vercel', 'netlify', 'cloudflare', 'orama', 'chromadb', 'openai', 'gemini', 'claude'];
+
+/**
+ * The first technology a text names as a whole word ("git", "firebase"), or
+ * null. Whole words on purpose: inferNeuronType's substring test is fine for
+ * a topic name and wrong for a sentence ("rest" inside "interesting").
+ */
+export function techKeywordIn(text: string): string | null {
+  const words = new Set(text.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean));
+  return TECH_KEYWORDS.find(kw => words.has(kw)) ?? null;
+}
+
 /**
  * Infer neuron type from topic name using simple heuristics.
  * Falls back to 'project' if unsure.
@@ -92,10 +106,7 @@ export function inferNeuronType(topic: string): NeuronType {
   const lower = topic.toLowerCase();
 
   // Tech keywords
-  const techKeywords = ['firebase', 'react', 'node', 'docker', 'kubernetes', 'aws', 'gcp', 'cloud', 'api', 'rest',
-    'graphql', 'mongodb', 'postgres', 'redis', 'nginx', 'webpack', 'vite', 'git', 'npm', 'supabase', 'stripe',
-    'vercel', 'netlify', 'cloudflare', 'orama', 'chromadb', 'openai', 'gemini', 'claude'];
-  if (techKeywords.some(kw => lower.includes(kw))) return 'tech';
+  if (TECH_KEYWORDS.some(kw => lower.includes(kw))) return 'tech';
 
   // Language keywords
   const langKeywords = ['python', 'javascript', 'typescript', 'php', 'rust', 'go', 'java', 'swift', 'kotlin', 'css', 'html', 'sql'];

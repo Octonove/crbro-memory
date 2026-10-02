@@ -123,6 +123,13 @@ const PATTERNS: Pattern[] = [
   { kind: 'GitHub fine-grained token', re: /\bgithub_pat_[A-Za-z0-9_]{60,}\b/g },
 ];
 
+/**
+ * The patterns themselves, read-only. hooks/crbro-lifecycle.mjs carries a copy
+ * (a hook copied to ~/.claude cannot import the package) and its test compares
+ * both lists kind by kind, source by source.
+ */
+export const SECRET_PATTERNS: ReadonlyArray<{ readonly kind: string; readonly re: RegExp }> = PATTERNS;
+
 /** Find credentials in a piece of text. Never returns the values themselves. */
 export function findSecrets(text: string): SecretHit[] {
   const hits: SecretHit[] = [];

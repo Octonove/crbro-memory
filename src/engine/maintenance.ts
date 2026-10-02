@@ -116,7 +116,7 @@ const SPLIT_STOP = new Set(('para como pero este esta estos estas desde hasta en
   + 'with from that this those these when where which while into over under after before there their have does must should '
   + 'only always never using used more than then also each both were been being').split(' '));
 
-/** Every text an entry_dates / entry_status key may legitimately point at. */
+/** Every text an entry_dates / entry_status / entry_source key may legitimately point at. */
 function liveEntryKeys(n: Neuron): Set<string> {
   return new Set([
     ...(n.decisions || []).map(d => d.text),
@@ -657,6 +657,9 @@ export class Maintenance {
       for (const k of Object.keys(neuron.entry_status || {})) {
         if (!vivos.has(k)) issues.push(`Stale entry_status key in ${id}: ${k}`);
       }
+      for (const k of Object.keys(neuron.entry_source || {})) {
+        if (!vivos.has(k)) issues.push(`Stale entry_source key in ${id}: ${k}`);
+      }
     }
 
     // Synapse files whose ends no longer both exist.
@@ -971,7 +974,8 @@ export class Maintenance {
       const vivos = liveEntryKeys(neuron);
       const fechasRancias = Object.keys(neuron.entry_dates || {}).filter(k => !vivos.has(k));
       const estadosRancios = Object.keys(neuron.entry_status || {}).filter(k => !vivos.has(k));
-      if (rotas.length === 0 && fechasRancias.length === 0 && estadosRancios.length === 0) continue;
+      const origenesRancios = Object.keys(neuron.entry_source || {}).filter(k => !vivos.has(k));
+      if (rotas.length === 0 && fechasRancias.length === 0 && estadosRancios.length === 0 && origenesRancios.length === 0) continue;
 
       await updateJSON<Neuron>(this.brain.paths.neuron(id), current => {
         if (!current) return null;
@@ -984,11 +988,16 @@ export class Maintenance {
         if (estadosRancios.length > 0 && current.entry_status) {
           for (const k of estadosRancios) delete current.entry_status[k];
         }
+        if (origenesRancios.length > 0 && current.entry_source) {
+          for (const k of origenesRancios) delete current.entry_source[k];
+          if (Object.keys(current.entry_source).length === 0) delete current.entry_source;
+        }
         return current;
       });
       for (const c of rotas) done.push(`Removed dangling connection ${id} → ${c}`);
       for (const k of fechasRancias) done.push(`Dropped stale entry_dates key ${k} from ${id}`);
       for (const k of estadosRancios) done.push(`Dropped stale entry_status key ${k} from ${id}`);
+      for (const k of origenesRancios) done.push(`Dropped stale entry_source key ${k} from ${id}`);
     }
 
     // Counters: the disk is the truth.

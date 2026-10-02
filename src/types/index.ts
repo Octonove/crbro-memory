@@ -34,6 +34,14 @@ export interface Fact {
    * vocabulary gaps, and the one no embedding model replaces.
    */
   keys?: string[];
+  /**
+   * How many times this exact line was learned: 1 when written, +1 each time
+   * a session stores the same text again (the exact-duplicate branch of
+   * learn). Absent means 1, so a fact written before 2.7 is valid as it is.
+   * Local only: it never travels as a sync op. The miner does not count —
+   * re-reading the same file is not a second witness.
+   */
+  confirmations?: number;
 }
 
 export interface Decision {
@@ -113,6 +121,16 @@ export interface Neuron {
    * op — it survives a sync only because applyOps copies and prunes it.
    */
   entry_status?: Record<string, EntryRetirement>;
+  /**
+   * Where a decision, pattern, error or debt came from when it was not this
+   * machine's own session, keyed by entryId(text) like entry_dates: the same
+   * values Fact.source takes — 'team:<author>' (arrived through a shared
+   * space) or 'miner' (any other non-session source a caller passes). Absent key === written here. A sidecar for
+   * the same reason as the other two (2.7): the arrays keep their type and a
+   * brain without it is valid as it is. Read by recall to say, only when it
+   * is not the user's own, where a line came from.
+   */
+  entry_source?: Record<string, string>;
   /**
    * The living map of the system: where it lives, what serves what, which
    * pieces talk to each other, the traps. One document, replaced whole on
@@ -300,5 +318,13 @@ export interface SearchResult {
    * one neuron can answer with more than one line, and the line you need is
    * not always the one that scored highest.
    */
-  also_matched?: Array<{ entry_id?: string; kind: string; added: string; preview: string; chars: number }>;
+  also_matched?: Array<{ entry_id?: string; kind: string; added: string; preview: string; chars: number; origin?: string; by?: string }>;
+  /**
+   * Where the matching entry came from, set ONLY when it is not the user's
+   * own (2.7): 'team:<space>' for a line a teammate wrote, 'miner' for the
+   * background miner ('import' only if a caller passes that source; no shipped writer does). Absent === own.
+   */
+  origin?: string;
+  /** With origin team:…, the teammate who wrote it, when known. */
+  by?: string;
 }
