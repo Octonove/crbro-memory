@@ -2,6 +2,29 @@
 
 All notable changes to CRBRO.
 
+## [2.7.1] — 2026-10-03
+
+`crbro postmortem`, run on a week of real sessions, put three false
+candidates at the top. Fixed, each with a test:
+
+- **A correction opens the message.** The patterns are tested on the first
+  160 characters only, and a message over 1,200 characters (a brief or a
+  scheduled prompt that says "si algo sale mal, se informa") is never a
+  correction. «eso no» counts only when it opens a sentence: "entiendo que eso
+  no interfiere" and "para eso no?" were being read as corrections.
+- **The desktop app's resume line is not the person.** "Alcancé mi límite de
+  uso mientras trabajabas… Continúa donde lo dejaste" arrives as a human
+  prompt with no flag; it was showing up as the same request asked three
+  times. It joins the not-a-request list, shared with the compaction hook so a
+  checkpoint does not keep it as the last request either. Only the Spanish
+  wording has been seen; other languages are not guessed.
+- **A long session reports its active hours.** "Over 398.6 h" was the time
+  between the first and the last line of a session resumed for 17 days. Now
+  pauses over 30 minutes are breaks: "38.7 h of activity spread over 17 days".
+- The `install-hooks --verify` test that compares CRLF with LF builds both
+  files itself; on a Windows checkout with `core.autocrlf` the package hooks
+  were already CRLF and the case failed in CI.
+
 ## [2.7.0] — 2026-10-02
 
 What a session leaves behind: where it was when it compacted, what it cost,

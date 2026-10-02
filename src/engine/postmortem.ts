@@ -75,8 +75,12 @@ const EXCERPT_CHARS = 160;
 
 // ─── What the person typed ───────────────────────────────────────
 
-/** Lines the client writes on the person's behalf. Not requests. */
-export const NOT_A_REQUEST = /^(?:<local-command-|<system-reminder>|<command-stdout>|<command-message>|<bash-|<user-prompt-submit-hook>|<task-notification>|\[Request interrupted|Caveat: )/;
+/**
+ * Lines the client writes on the person's behalf. Not requests. The last one is
+ * the Claude desktop app resuming after a usage limit: it arrives as a human
+ * prompt with no flag, so only its wording tells it apart (seen in Spanish).
+ */
+export const NOT_A_REQUEST = /^(?:<local-command-|<system-reminder>|<command-stdout>|<command-message>|<bash-|<user-prompt-submit-hook>|<task-notification>|\[Request interrupted|Caveat: |Alcancé mi límite de uso mientras trabajabas)/;
 
 /**
  * The text a person typed in one user entry, or '' when the entry is a tool
@@ -139,7 +143,8 @@ export const CORRECTION_PATTERNS: ReadonlyArray<{ label: string; re: RegExp }> =
   { label: '«no,»', re: /^\s*no\s*[,.!;:]/i },
   { label: '«te dije»', re: /\b(?:ya\s+)?te\s+(?:lo\s+)?(?:dije|he\s+dicho|hab[ií]a\s+dicho|ped[ií]|he\s+pedido)\b/i },
   { label: '«otra vez»', re: /\botra\s+vez\b/i },
-  { label: '«eso no»', re: /\beso\s+no\b/i },
+  // Only when it opens a sentence: "eso no interfiere" and "para eso no?" are not corrections.
+  { label: '«eso no»', re: /(?:^|[.!?¡¿\n]\s*)eso\s+no\b/i },
   { label: '«no es eso»', re: /\bno\s+es\s+(?:eso|as[ií]|lo\s+que\s+(?:te\s+)?(?:he\s+)?ped)/i },
   { label: '«mal»', re: /^\s*mal\b|\b(?:est[aá]|lo\s+has\s+hecho|has\s+hecho|sigue|queda|sale|va)\s+mal\b/i },
   { label: "«that's wrong»", re: /\bthat'?s\s+(?:wrong|not\s+(?:it|right|what\s+i))/i },
@@ -147,8 +152,15 @@ export const CORRECTION_PATTERNS: ReadonlyArray<{ label: string; re: RegExp }> =
   { label: '«not what I asked»', re: /\bnot\s+what\s+i\s+(?:asked|wanted|meant)\b/i },
 ];
 
+/** A correction opens the message: only its first characters are looked at. */
+export const CORRECTION_WINDOW = 160;
+/** Longer than this it is a brief or a scheduled prompt ("si algo sale mal…"), not a correction. */
+export const CORRECTION_MAX_CHARS = 1200;
+
 export function correctionLabel(text: string): string | null {
-  for (const p of CORRECTION_PATTERNS) if (p.re.test(text)) return p.label;
+  if (text.length > CORRECTION_MAX_CHARS) return null;
+  const opening = text.slice(0, CORRECTION_WINDOW);
+  for (const p of CORRECTION_PATTERNS) if (p.re.test(opening)) return p.label;
   return null;
 }
 
@@ -196,6 +208,9 @@ interface SessionScan {
 /** How many recent requests a new one is compared with for near-repeats. */
 const NEAR_WINDOW = 40;
 
+/** A pause longer than this is a break, not time spent in the session. */
+const IDLE_GAP_MS = 30 * 60_000;
+
 async function scanSession(s: SessionFiles, stats: ReadStats): Promise<SessionScan> {
   const findings: Finding[] = [];
   const requests = new Map<string, Seen>();
@@ -207,6 +222,9 @@ async function scanSession(s: SessionFiles, stats: ReadStats): Promise<SessionSc
   let userTurns = 0;
   let first = '';
   let last = '';
+  // Active time, not first-to-last: a session resumed over weeks is not weeks long.
+  let activeMs = 0;
+  let prevMs = NaN;
   let toolsSinceUser: string[] = [];
 
   const corrections: Array<{ line: number; text: string; label: string; tools: string[] }> = [];
@@ -225,6 +243,12 @@ async function scanSession(s: SessionFiles, stats: ReadStats): Promise<SessionSc
     if (typeof entry.timestamp === 'string') {
       if (!first) first = entry.timestamp;
       last = entry.timestamp;
+      const ms = Date.parse(entry.timestamp);
+      if (Number.isFinite(ms)) {
+        const gap = ms - prevMs;
+        if (gap > 0 && gap <= IDLE_GAP_MS) activeMs += gap;
+        prevMs = ms;
+      }
     }
     if (entry.type === 'assistant') {
       const id = entry.message?.id;
@@ -318,8 +342,10 @@ async function scanSession(s: SessionFiles, stats: ReadStats): Promise<SessionSc
   }
   const nResponses = responses.size + responsesNoId;
   if (userTurns >= THRESHOLDS.longUserTurns || nResponses >= THRESHOLDS.longResponses) {
-    const hours = first && last ? (Date.parse(last) - Date.parse(first)) / 3_600_000 : NaN;
-    const span = Number.isFinite(hours) ? ` over ${hours.toFixed(1)} h` : '';
+    const days = first && last ? Math.floor((Date.parse(last) - Date.parse(first)) / 86_400_000) + 1 : NaN;
+    const span = Number.isFinite(days)
+      ? ` in ${(activeMs / 3_600_000).toFixed(1)} h of activity${days > 1 ? ` spread over ${days} days` : ''}`
+      : '';
     findings.push({
       ...base,
       kind: 'long_session',
