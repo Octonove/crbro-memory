@@ -82,10 +82,15 @@ describe('install-hooks --verify', () => {
   });
 
   it('CRLF against LF is reported as line endings only, not as a change', () => {
+    // Both sides are written here: a checkout with core.autocrlf already has
+    // the package hooks in CRLF, so reading PKG would compare CRLF with CRLF.
     const name = shipped()[0];
     const lf = readFileSync(join(PKG, name), 'utf8').replace(/\r\n/g, '\n');
+    const pkg = join(home, 'pkg-hooks');
+    mkdirSync(pkg);
+    writeFileSync(join(pkg, name), lf);
     writeFileSync(join(installed, name), lf.replace(/\n/g, '\r\n'));
-    const r = verifyHooks({ packageDir: PKG, installedDir: installed, settingsPath });
+    const r = verifyHooks({ packageDir: pkg, installedDir: installed, settingsPath });
     expect(r.hooks.find(h => h.name === name)!.status).toBe('line_endings_only');
     expect(r.ok).toBe(true);
   });
