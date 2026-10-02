@@ -312,7 +312,7 @@ function contentOf(entry) {
 }
 
 /** Lines the client writes on the person's behalf. Same list as NOT_A_REQUEST in src/engine/postmortem.ts (tested). */
-export const NOT_A_REQUEST = /^(?:<local-command-|<system-reminder>|<command-stdout>|<command-message>|<bash-|<user-prompt-submit-hook>|<task-notification>|\[Request interrupted|Caveat: )/;
+export const NOT_A_REQUEST = /^(?:<local-command-|<system-reminder>|<command-stdout>|<command-message>|<bash-|<user-prompt-submit-hook>|<task-notification>|\[Request interrupted|Caveat: |Alcancé mi límite de uso mientras trabajabas)/;
 
 /**
  * Slash commands that configure the client instead of asking for work. What

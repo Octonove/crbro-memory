@@ -360,6 +360,35 @@ describe('crbro postmortem', () => {
       expect(correctionLabel(t), t).toBeNull();
     }
   });
+
+  it('a correction opens the message: "eso no" mid-sentence, a late phrase or a long brief are not one', () => {
+    expect(correctionLabel('Vale. Eso no es lo que pedí')).not.toBeNull();
+    for (const t of [
+      'Entiendo que eso no interfiere en las neuronas',
+      'Invokard está creado para eso no? Hazlo también',
+      'Revisa las tres landings, cambia los títulos, sube las fotos nuevas a la carpeta de siempre y comprueba los enlaces del pie; cuando acabes, dime cuánto ha costado y avísame si algo sale mal',
+      'Rutina diaria. ' + 'Publica lo que toque en cada red. '.repeat(40) + 'Si algo sale mal, se informa.',
+    ]) {
+      expect(correctionLabel(t), t.slice(0, 40)).toBeNull();
+    }
+  });
+
+  it('the desktop app resuming after a usage limit is not the person asking again', () => {
+    const resume = 'Alcancé mi límite de uso mientras trabajabas, pero ya se restableció. Continúa donde lo dejaste.';
+    expect(userText(user(resume))).toBe('');
+  });
+
+  it('a long session resumed over days reports its active hours, not the calendar span', async () => {
+    const lines: unknown[] = [];
+    // 61 requests a minute apart on day one, and one more three days later.
+    for (let i = 0; i < 61; i++) lines.push(user(`ok ${i}`, { timestamp: new Date(Date.UTC(2026, 9, 1, 10, i)).toISOString() }));
+    lines.push(user('ok final', { timestamp: '2026-10-04T10:00:00.000Z' }));
+    write(`${PROJECT}/${S3}.jsonl`, lines);
+    const r = await runPostmortem({ root });
+    const long = r.findings.find(f => f.kind === 'long_session')!;
+    expect(long.lesson).toContain('1.0 h of activity spread over 4 days');
+    expect(long.lesson).not.toMatch(/7\d\.\d h/);
+  });
 });
 
 // ─── The CLI wiring (needs the build) ─────────────────────────────
