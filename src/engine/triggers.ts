@@ -196,16 +196,26 @@ export function triggerIndexPath(brain: Brain): string {
   return path.join(brain.paths.search, TRIGGER_FILE);
 }
 
-/** Rebuild from the cortex and write. Derived data: a failure is reported, never thrown. */
-export async function writeTriggerIndex(brain: Brain): Promise<{ entries: number; keys: number } | { error: string }> {
+/** Every readable neuron of the cortex. A corrupted file is skipped: the integrity check reports it. */
+export async function loadAllNeurons(brain: Brain): Promise<Neuron[]> {
+  const neurons: Neuron[] = [];
+  for (const id of await listJSONFiles(brain.paths.cortex)) {
+    try {
+      const n = await readJSON<Neuron>(brain.paths.neuron(id));
+      if (n) neurons.push(n);
+    } catch { /* corrupted: the integrity check reports it */ }
+  }
+  return neurons;
+}
+
+/**
+ * Rebuild from the cortex and write. Derived data: a failure is reported,
+ * never thrown. `preloaded` lets consolidate read the cortex once for this
+ * and for promotion_candidates (2.7) instead of twice.
+ */
+export async function writeTriggerIndex(brain: Brain, preloaded?: Neuron[]): Promise<{ entries: number; keys: number } | { error: string }> {
   try {
-    const neurons: Neuron[] = [];
-    for (const id of await listJSONFiles(brain.paths.cortex)) {
-      try {
-        const n = await readJSON<Neuron>(brain.paths.neuron(id));
-        if (n) neurons.push(n);
-      } catch { /* corrupted: the integrity check reports it */ }
-    }
+    const neurons = preloaded ?? await loadAllNeurons(brain);
     const index = buildTriggerIndex(neurons);
     await writeJSON(triggerIndexPath(brain), index, { pretty: false });
     return { entries: index.entries.length, keys: Object.keys(index.keys).length };

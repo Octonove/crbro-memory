@@ -88,7 +88,7 @@ export function applyOps(
   // reported rather than resolved. Overwriting someone's local name because a
   // teammate spelled it differently is not a merge, it is a stomp.
   const neuron: Neuron = base
-    ? { ...base, facts: [...base.facts], decisions: [...base.decisions], patterns: [...base.patterns], preferences: [...base.preferences], tags: [...base.tags], connections: [...base.connections], errors: [...(base.errors || [])], debts: [...(base.debts || [])], entry_dates: { ...(base.entry_dates || {}) }, entry_status: { ...(base.entry_status || {}) }, map: base.map ? { ...base.map } : undefined }
+    ? { ...base, facts: [...base.facts], decisions: [...base.decisions], patterns: [...base.patterns], preferences: [...base.preferences], tags: [...base.tags], connections: [...base.connections], errors: [...(base.errors || [])], debts: [...(base.debts || [])], entry_dates: { ...(base.entry_dates || {}) }, entry_status: { ...(base.entry_status || {}) }, ...(base.entry_source ? { entry_source: { ...base.entry_source } } : {}), map: base.map ? { ...base.map } : undefined }
     : {
         id,
         name: neuronOp && neuronOp.op === 'neuron' ? neuronOp.name : id,
@@ -118,6 +118,28 @@ export function applyOps(
     if (!neuron.entry_dates) neuron.entry_dates = {};
     const k = entryId(text);
     neuron.entry_dates[k] = earliest(neuron.entry_dates[k] || '', at);
+  };
+  // Who wrote a pattern, error or debt that arrived here (2.7) — the
+  // sidecar twin of a fact's `source: team:<by>`, so recall can say a line
+  // is a teammate's. Only for entries this replay ADDS: one already here was
+  // here first, and its origin does not change because someone else agrees.
+  // Two authors adding the same line in one replay: the earliest `at` wins,
+  // then the smaller name, so every machine lands on the same author
+  // whatever order the logs were read in.
+  const puestas = new Map<string, { at: string; by: string }>();
+  const procedencia = (text: string, by: string, at: string, nueva: boolean) => {
+    if (!by) return;
+    const k = entryId(text);
+    const previa = puestas.get(k);
+    if (!previa && !nueva) return;   // it was here before this replay: not a teammate's
+    if (previa) {
+      const a = typeof at === 'string' ? at : '';
+      if (!(a < previa.at || (a === previa.at && by < previa.by))) return;
+    } else if (neuron.entry_source?.[k]) {
+      return;
+    }
+    puestas.set(k, { at: typeof at === 'string' ? at : '', by });
+    (neuron.entry_source ||= {})[k] = `team:${by}`;
   };
 
   if (base && neuronOp && neuronOp.op === 'neuron') {
@@ -223,7 +245,8 @@ export function applyOps(
       if (!neuron.patterns.some(p => normalizeText(p) === normalizeText(op.text))) {
         neuron.patterns.push(op.text);
         report.patterns_added++;
-      }
+        procedencia(op.text, op.by, op.at, true);
+      } else procedencia(op.text, op.by, op.at, false);
       fechar(op.text, op.at);
     } else if (op.op === 'tag') {
       if (!neuron.tags.some(t => normalizeText(t) === normalizeText(op.text))) {
@@ -235,14 +258,16 @@ export function applyOps(
       if (!neuron.errors.some(e => normalizeText(e) === normalizeText(op.text))) {
         neuron.errors.push(op.text);
         report.errors_added++;
-      }
+        procedencia(op.text, op.by, op.at, true);
+      } else procedencia(op.text, op.by, op.at, false);
       fechar(op.text, op.at);
     } else if (op.op === 'debt') {
       if (!neuron.debts) neuron.debts = [];
       if (!neuron.debts.some(d => normalizeText(d) === normalizeText(op.text))) {
         neuron.debts.push(op.text);
         report.debts_added++;
-      }
+        procedencia(op.text, op.by, op.at, true);
+      } else procedencia(op.text, op.by, op.at, false);
       fechar(op.text, op.at);
     }
   }
@@ -368,6 +393,22 @@ export function applyOps(
       if (vivos.has(k)) ordenado[k] = neuron.entry_status[k];
     }
     neuron.entry_status = ordenado;
+  }
+
+  // Origins (2.7): same pruning, same fixed order. Absent stays absent, so a
+  // neuron nobody else wrote to is byte-identical to what 2.6 produced.
+  if (neuron.entry_source) {
+    const vivos = new Set([
+      ...neuron.decisions.map(d => d.text),
+      ...neuron.patterns, ...neuron.preferences,
+      ...(neuron.errors || []), ...(neuron.debts || []),
+    ].map(entryId));
+    const ordenado: Record<string, string> = {};
+    for (const k of Object.keys(neuron.entry_source).sort()) {
+      if (vivos.has(k)) ordenado[k] = neuron.entry_source[k];
+    }
+    if (Object.keys(ordenado).length) neuron.entry_source = ordenado;
+    else delete neuron.entry_source;
   }
 
   report.authors = [...new Set(ops.map(o => o.by).filter(Boolean))].sort();

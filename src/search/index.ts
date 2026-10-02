@@ -116,13 +116,16 @@ export interface SearchFilter {
  * line matters, and entry_id reads it whole through crbro_inspect.
  */
 const ALSO_PREVIEW = 300;
-function alsoLine(text: string, kind: string, added: string, eid?: string) {
+function alsoLine(text: string, kind: string, added: string, eid?: string, from: { origin?: string; by?: string } = {}) {
   return {
     ...(eid ? { entry_id: eid } : {}),
     kind,
     added,
     preview: text.length > ALSO_PREVIEW ? `${text.slice(0, ALSO_PREVIEW).trimEnd()}…` : text,
     chars: text.length,
+    // Same rule as the winning entry: said only when the line is not the user's own.
+    ...(from.origin ? { origin: from.origin } : {}),
+    ...(from.by ? { by: from.by } : {}),
   };
 }
 
@@ -758,7 +761,7 @@ export class SearchEngine {
     }
     type Also = NonNullable<SearchResult['also_matched']>[number];
     const fused = new Map<string, { score: number; best: SearchResult; bestRank: number; strong: boolean; also: Map<string, Also> }>();
-    const alsoOf = (r: SearchResult): Also => alsoLine(r.matching_content, r.matched_kind || '', r.matched_added || '', r.entry_id);
+    const alsoOf = (r: SearchResult): Also => alsoLine(r.matching_content, r.matched_kind || '', r.matched_added || '', r.entry_id, r);
     for (const lista of listas) {
       lista.forEach((r, i) => {
         const gain = 1 / (RRF_K + i + 1);
@@ -905,7 +908,19 @@ export class SearchEngine {
     porNeurona.sort((a, b) => b[0].score - a[0].score);
     const candidatos = porNeurona.slice(0, Math.max(limit * 3, limit + 8));
 
-    const resultados: Array<{ r: SearchResult; extra: ChunkHit[] }> = [];
+    const resultados: Array<{ r: SearchResult; extra: ChunkHit[]; neuron: Neuron | null }> = [];
+
+    // Provenance (2.7) needs two small files — which space a neuron is shared
+    // in, and who "me" is — but only when a result is a teammate's. Read at
+    // most once per call, and never on a brain nobody shares with.
+    let equipo: { espacios: Record<string, string> } | null = null;
+    const contextoEquipo = async () => {
+      if (equipo) return equipo;
+      let espacios: Record<string, string> = {};
+      try { espacios = (await readJSON<Record<string, string>>(path.join(this.brain.paths.root, 'shared-map.json'))) || {}; } catch { /* unreadable: no space name */ }
+      equipo = { espacios };
+      return equipo;
+    };
 
     for (const chunks of candidatos) {
       const neuronId = chunks[0].neuron;
@@ -975,8 +990,10 @@ export class SearchEngine {
           confidence: strong ? 'strong' : 'weak',
           ...(elegido.semantic !== undefined ? { semantic_score: elegido.semantic } : {}),
           ...(neuron?.map?.text ? { has_map: true } : {}),
+          ...(neuron ? await this.originOf(elegido, neuron, contextoEquipo) : {}),
         },
         extra: contenido.filter(c => c !== elegido).slice(0, 2),
+        neuron,
       });
     }
 
@@ -991,14 +1008,63 @@ export class SearchEngine {
     // you need is not always the one that scored highest. Measured, it lifts
     // fact-level recall@3 from 73% to 79%, and it costs tokens only where
     // they can still change the answer.
-    for (const { r, extra } of top.slice(0, ALSO_MATCHED_RESULTS)) {
+    for (const { r, extra, neuron } of top.slice(0, ALSO_MATCHED_RESULTS)) {
       if (extra.length > 0) {
         // Previews, not bodies: the also lines were 46% of a recall's cost as
-        // full text. The id reads any of them whole.
-        r.also_matched = extra.map(c => alsoLine(c.text, c.kind, c.added || '', c.eid));
+        // full text. The id reads any of them whole. Each line carries its own
+        // origin: a teammate's line next to an own winner is still a teammate's.
+        r.also_matched = await Promise.all(extra.map(async c =>
+          alsoLine(c.text, c.kind, c.added || '', c.eid, neuron ? await this.originOf(c, neuron, contextoEquipo) : {})));
       }
     }
     return top.map(x => x.r);
+  }
+
+  /**
+   * Where the matching entry came from — but only when it is NOT the user's
+   * own, so the common case costs nothing: no field, no token. Read from what
+   * the entry already carries: a fact's `source` ('team:<author>' from a
+   * sync, 'miner', 'import…'), a decision's or map's `by`, and the
+   * entry_source sidecar for the rest.
+   *
+   * A line that came through a shared space keeps its mark even when `by` is
+   * this machine's own author name: `by` is self-declared in the shared log
+   * and anyone with push access can write any name, so matching it is no
+   * proof the line is the user's. Another device of the same person shows
+   * as team:<space> with by=<their own name>, which is honest. When the
+   * neuron is no longer in shared-map.json (after unshare) the space is not
+   * known and origin is plain 'team'.
+   */
+  private async originOf(
+    chunk: ChunkHit,
+    neuron: Neuron,
+    contexto: () => Promise<{ espacios: Record<string, string> }>
+  ): Promise<{ origin?: string; by?: string }> {
+    let src = '';
+    switch (chunk.kind) {
+      case 'fact':
+        src = (neuron.facts || []).find(f => !isRetired(f) && f.text === chunk.text)?.source || '';
+        break;
+      case 'decision': {
+        const d = (neuron.decisions || []).find(x => (x.rationale ? `${x.text} — ${x.rationale}` : x.text) === chunk.text);
+        if (d) src = d.by ? `team:${d.by}` : (neuron.entry_source?.[entryId(d.text)] || '');
+        break;
+      }
+      case 'map':
+        src = neuron.map?.by ? `team:${neuron.map.by}` : '';
+        break;
+      case 'header':
+        return {};
+      default:
+        src = neuron.entry_source?.[entryId(chunk.text)] || '';
+    }
+    if (src === 'miner') return { origin: 'miner' };
+    if (src === 'import' || src.startsWith('import:')) return { origin: 'import' };
+    if (!src.startsWith('team:')) return {};
+    const autor = src.slice(5);
+    const { espacios } = await contexto();
+    const espacio = espacios[neuron.id];
+    return { origin: espacio ? `team:${espacio}` : 'team', ...(autor ? { by: autor } : {}) };
   }
 
   /**
@@ -1215,6 +1281,75 @@ export class SearchEngine {
   }
 
   /**
+   * The neurons about one project, for crbro_boot's `project` (2.7).
+   *
+   * `project` is a folder path, a repo name or a remote ("owner/repo",
+   * "…/repo.git"); only its last segment counts. A neuron matches when its
+   * NAME is that project (or the project's leading words: "Invokard" for
+   * invokard-plugin), when its system MAP mentions it, or when a fact's
+   * KEYS do. Served from the index already in memory — one prefix query for
+   * the project's first word, no neuron file read beyond an existence check
+   * of the few it returns — so a boot that passes a project pays about one
+   * recall term, and a boot that does not pays nothing.
+   */
+  async projectNeurons(project: string, limit = 5): Promise<Array<{ id: string; name: string; match: 'name' | 'map' | 'keys'; heat: number }>> {
+    const nombre = projectSlugOf(project);
+    const tokens = wordsOf(nombre);
+    if (tokens.length === 0 || tokens.join('').length < 3) return [];
+    if (!this.db) await this.init();
+    if (!this.db) return [];
+    await this.settled();
+
+    // Orama keeps "crbro-memory" and "crbro_memory" as single tokens and
+    // matches by prefix, so the project's first word finds every spelling;
+    // which field actually names the project is decided below, in our terms.
+    let hits: any[] = [];
+    try {
+      const res = await search(this.db as AnyOrama, {
+        term: tokens[0], properties: ['name', 'keys', 'text'], tolerance: 0, limit: Math.max(this.docCount, 10),
+      } as any);
+      hits = res.hits as any[];
+    } catch {
+      return [];
+    }
+
+    const RANGO = { name: 3, map: 2, keys: 1 } as const;
+    const mejor = new Map<string, { id: string; name: string; match: 'name' | 'map' | 'keys'; heat: number; score: number }>();
+    for (const h of hits) {
+      const d = h.document as any;
+      const nid = String(d.neuron || '');
+      if (!nid || d.kind === 'session' || nid.startsWith('protocol_')) continue;
+      const nombreDoc = wordsOf(String(d.name || ''));
+      let match: 'name' | 'map' | 'keys' | null = null;
+      let score = 0;
+      if (sameWords(nombreDoc, tokens)) { match = 'name'; score = RANGO.name + 1; }
+      else if (containsRun(nombreDoc, tokens)
+        || (nombreDoc.join('').length >= 4 && containsRun(tokens, nombreDoc) && sameWords(tokens.slice(0, nombreDoc.length), nombreDoc))) {
+        match = 'name'; score = RANGO.name;
+      } else if (d.kind === 'map' && containsRun(wordsOf(String(d.text || '')), tokens)) {
+        match = 'map'; score = RANGO.map;
+      } else if (d.kind === 'fact' && containsRun(wordsOf(String(d.keys || '')), tokens)) {
+        match = 'keys'; score = RANGO.keys;
+      }
+      if (!match) continue;
+      const prev = mejor.get(nid);
+      if (!prev || score > prev.score) {
+        mejor.set(nid, { id: nid, name: String(d.name || nid), match, heat: typeof d.heat === 'number' ? d.heat : 0, score });
+      }
+    }
+
+    const orden = [...mejor.values()].sort((a, b) => (b.score - a.score) || (b.heat - a.heat) || (a.id < b.id ? -1 : 1));
+    const out: Array<{ id: string; name: string; match: 'name' | 'map' | 'keys'; heat: number }> = [];
+    for (const r of orden) {
+      if (out.length >= limit) break;
+      // The index can outlive a neuron for a moment; never point at one that is gone.
+      if (!(await fileExists(this.brain.paths.neuron(r.id)))) continue;
+      out.push({ id: r.id, name: r.name, match: r.match, heat: Math.round(r.heat * 1000) / 1000 });
+    }
+    return out;
+  }
+
+  /**
    * Index one session log, replacing whatever it had. Called by consolidate
    * for the day just logged and by rebuild for the whole diary.
    */
@@ -1361,6 +1496,36 @@ export class SearchEngine {
 }
 
 /** A fact that has been superseded or retracted must not surface in recall. */
+/**
+ * The project a `crbro_boot project=` value names: the last segment of a
+ * path, a remote or "owner/repo", without a trailing ".git".
+ */
+export function projectSlugOf(raw: string): string {
+  const limpio = String(raw || '').trim().replace(/[/\\]+$/, '').replace(/\.git$/i, '');
+  const partes = limpio.split(/[/\\:]+/).filter(Boolean);
+  return partes.length ? partes[partes.length - 1] : '';
+}
+
+/** Words for name matching: accents folded, lower case, split on anything not a letter or digit. */
+function wordsOf(text: string): string[] {
+  return text.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+}
+
+function sameWords(a: string[], b: string[]): boolean {
+  return a.length === b.length && a.every((w, i) => w === b[i]);
+}
+
+/** Does `hay` contain `aguja` as consecutive words? */
+function containsRun(hay: string[], aguja: string[]): boolean {
+  if (aguja.length === 0 || aguja.length > hay.length) return false;
+  for (let i = 0; i + aguja.length <= hay.length; i++) {
+    let ok = true;
+    for (let j = 0; j < aguja.length; j++) if (hay[i + j] !== aguja[j]) { ok = false; break; }
+    if (ok) return true;
+  }
+  return false;
+}
+
 function isRetired(fact: Fact): boolean {
   return fact.status === 'superseded' || fact.status === 'retracted';
 }

@@ -2,7 +2,7 @@
 
 // ─── CRBRO CLI ───────────────────────────────────────────────────
 // Command-line interface for CRBRO memory system
-// Supports: init, status, secret, mine, setup-miner, miner-status,
+// Supports: init, status, secret, mine, setup-miner, miner-status, usage, postmortem,
 //           remove-miner, and MCP server mode (default)
 
 import { platform, homedir } from 'os';
@@ -20,6 +20,17 @@ function pkgVersion() {
   } catch {
     return 'unknown';
   }
+}
+
+// The Claude Code SessionStart command install-boot writes. Kept in one place
+// because `install-hooks --compact` has to recognise it to replace it.
+function bootCommandPosix(aviso) {
+  return `printf '%s\\n' ${JSON.stringify(aviso)}`;
+}
+
+/** An install-boot entry, this release's or an older one with other wording. */
+function isInstallBootHook(h) {
+  return !!h && typeof h.command === 'string' && h.command.startsWith("printf '%s\\n' ") && h.command.includes('crbro_boot');
 }
 
 const args = process.argv.slice(2);
@@ -613,6 +624,222 @@ if (command === 'init') {
     for (const l of lessons) console.log(`  • [${l.k}${l.d ? ' · ' + l.d : ''} · ${l.n}] ${l.t}\n`);
   })().catch(e => { console.error(e.message); process.exit(1); });
 
+} else if (command === 'usage' || command === 'postmortem') {
+  // ─── Token spend and post-mortem, from Claude Code's own logs ──
+  //
+  //   crbro usage      [--days N] [--session <id>] [--project <folder>] [--json]
+  //   crbro postmortem [--days N] [--session <id>] [--project <folder>] [--max N] [--json]
+  //
+  // Both read ~/.claude/projects/<project>/<session>.jsonl (and, for usage,
+  // the subagent logs under <session>/subagents/) through one streaming
+  // reader. usage reads message.model and message.usage only; postmortem
+  // reads what the person typed and tool names, never a tool's input or
+  // result, and redacts everything it prints. Neither writes anything.
+  const flag = (name) => { const i = args.indexOf(name); return i !== -1 && args[i + 1] && !args[i + 1].startsWith('--') ? args[i + 1] : undefined; };
+  const intFlag = (name) => {
+    const v = flag(name);
+    if (v === undefined) return undefined;
+    const n = Number(v);
+    if (!Number.isInteger(n) || n < 0) { console.error(`  ❌ ${name} expects a whole number ≥ 0; got: ${v}`); process.exit(1); }
+    return n;
+  };
+  const session = flag('--session');
+  const project = flag('--project');
+  // Last 7 days unless told otherwise (--days 0 = all); a named session is looked for everywhere.
+  const daysArg = intFlag('--days');
+  const days = daysArg !== undefined ? (daysArg === 0 ? undefined : daysArg) : (session ? undefined : 7);
+  const max = intFlag('--max');
+  const json = args.includes('--json');
+  const mod = command === 'usage' ? '../dist/engine/usage.js' : '../dist/engine/postmortem.js';
+  import(mod).then(async m => {
+    if (command === 'usage') {
+      const r = await m.collectUsage({ days, session, project });
+      console.log(json ? JSON.stringify(r, null, 2) : m.formatUsage(r));
+    } else {
+      const r = await m.runPostmortem({ days, session, project, max });
+      console.log(json ? JSON.stringify(r, null, 2) : m.formatPostmortem(r));
+    }
+  }).catch(err => {
+    console.error('  ❌ ' + (err && err.code === 'ERR_MODULE_NOT_FOUND' ? 'Build required. Run: npm run build' : err.message));
+    process.exit(1);
+  });
+
+} else if (command === 'install-hooks' && process.argv.includes('--verify')) {
+  // ─── Are the installed hooks the ones this package ships? ──────
+  // SHA-256 of each copy in ~/.claude/crbro-hooks/ against hooks/ here, and
+  // whether every CRBRO hook settings.json runs exists. Read-only. Exit 1 on
+  // any difference, so it can gate a script.
+  import('../dist/engine/hookverify.js').then(({ verifyHooks, formatVerify }) => {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const r = verifyHooks({
+      packageDir: join(here, '..', 'hooks'),
+      installedDir: join(homedir(), '.claude', 'crbro-hooks'),
+      settingsPath: join(homedir(), '.claude', 'settings.json'),
+    });
+    console.log(args.includes('--json') ? JSON.stringify(r, null, 2) : formatVerify(r));
+    if (!r.ok) process.exitCode = 1;
+  }).catch(err => {
+    console.error('  ❌ ' + (err && err.code === 'ERR_MODULE_NOT_FOUND' ? 'Build required. Run: npm run build' : err.message));
+    process.exit(1);
+  });
+
+} else if ((command === 'install-hooks' || command === 'uninstall-hooks') && process.argv.includes('--compact')) {
+  // ─── Compact without losing the thread (opt-in, Claude Code only) ──
+  //
+  // PreCompact → hooks/crbro-lifecycle.mjs pre-compact: a mechanical,
+  //   redacted checkpoint of the session in <brain>/checkpoints/, plus the
+  //   "keep what is not saved yet" reminder.
+  // SessionStart → hooks/crbro-lifecycle.mjs session-start: the boot notice,
+  //   the folder and its git remote, and after a compaction what was being
+  //   done before it.
+  //
+  // Only Claude Code has PreCompact, so ~/.codex is never touched. The entry
+  // install-boot wrote for Claude Code prints the very notice session-start
+  // prints, so it is replaced, and the replaced hook is kept aside in
+  // crbro-hooks/ so uninstall puts it back exactly. A hand-written CRBRO hook
+  // is never replaced: ours is installed with --no-boot / --no-reminder next
+  // to it, so nothing is read twice. Merged, never rewritten; idempotent.
+  import('fs').then(async fs => {
+    const settingsPath = join(homedir(), '.claude', 'settings.json');
+    const hookDir = join(homedir(), '.claude', 'crbro-hooks');
+    const hookScript = join(hookDir, 'crbro-lifecycle.mjs');
+    const replacedPath = join(hookDir, 'crbro-lifecycle.replaced.json');
+    const ours = h => !!h && typeof h.command === 'string' && h.command.includes('crbro-lifecycle');
+    const entryIsOurs = e => Array.isArray(e?.hooks) && e.hooks.some(ours);
+
+    let settings = null;
+    try {
+      const raw = fs.readFileSync(settingsPath, 'utf8');
+      settings = JSON.parse(raw.charCodeAt(0) === 0xFEFF ? raw.slice(1) : raw);
+    } catch (e) {
+      if (fs.existsSync(settingsPath)) {
+        console.error(`  ❌ ${settingsPath} exists but could not be parsed — not touching it.`);
+        console.error(`     ${e.message}`);
+        process.exit(1);
+      }
+    }
+    if (settings !== null && (typeof settings !== 'object' || Array.isArray(settings))) {
+      console.error(`  ❌ ${settingsPath} is not a JSON object — not touching it.`);
+      process.exit(1);
+    }
+    for (const event of ['PreCompact', 'SessionStart']) {
+      const v = settings?.hooks?.[event];
+      if (v !== undefined && !Array.isArray(v)) {
+        console.error(`  ❌ hooks.${event} in ${settingsPath} is not a list — not touching it.`);
+        process.exit(1);
+      }
+    }
+    const write = obj => {
+      const tmp = settingsPath + '.' + process.pid + '.tmp';
+      fs.writeFileSync(tmp, JSON.stringify(obj, null, 2) + '\n', 'utf8');
+      fs.renameSync(tmp, settingsPath);
+    };
+
+    if (command === 'uninstall-hooks') {
+      if (!settings || !settings.hooks) {
+        console.log('  ⚪ No Claude Code settings with hooks: nothing to remove.');
+      } else {
+        let removed = 0;
+        for (const event of ['PreCompact', 'SessionStart']) {
+          const list = settings.hooks[event];
+          if (!Array.isArray(list)) continue;
+          const kept = [];
+          for (const entry of list) {
+            if (!entryIsOurs(entry)) { kept.push(entry); continue; }
+            const rest = entry.hooks.filter(h => !ours(h));
+            removed += entry.hooks.length - rest.length;
+            if (rest.length) kept.push({ ...entry, hooks: rest });
+          }
+          if (kept.length) settings.hooks[event] = kept; else delete settings.hooks[event];
+        }
+        // Put back what install replaced, unless an equal hook is already there.
+        let restored = 0;
+        try {
+          const rec = JSON.parse(fs.readFileSync(replacedPath, 'utf8'));
+          for (const { matcher, hook } of Array.isArray(rec.SessionStart) ? rec.SessionStart : []) {
+            const list = settings.hooks.SessionStart = settings.hooks.SessionStart || [];
+            if (JSON.stringify(list).includes(JSON.stringify(hook.command))) continue;
+            list.push(matcher !== undefined ? { matcher, hooks: [hook] } : { hooks: [hook] });
+            restored++;
+          }
+        } catch { /* nothing was replaced */ }
+        if (Object.keys(settings.hooks).length === 0) delete settings.hooks;
+        if (removed || restored) {
+          write(settings);
+          console.log(`  ✅ Compact hooks removed (${removed}).${restored ? ` The install-boot SessionStart entry is back (${restored}).` : ''}`);
+          console.log(`     ${settingsPath}`);
+        } else {
+          console.log('  ⚪ Compact hooks were not installed. Nothing changed.');
+        }
+      }
+      for (const f of [hookScript, replacedPath]) { try { fs.unlinkSync(f); } catch { /* not there */ } }
+      console.log('     Checkpoints already written stay in <brain>/checkpoints/ and expire after 7 days.');
+      return;
+    }
+
+    // — install —
+    if (settings === null && !fs.existsSync(join(homedir(), '.claude'))) {
+      console.log('  ⚪ ~/.claude not found: Claude Code is the only client with PreCompact, so nothing was wired.');
+      return;
+    }
+    const here = dirname(fileURLToPath(import.meta.url));
+    fs.mkdirSync(hookDir, { recursive: true });
+    fs.copyFileSync(join(here, '..', 'hooks', 'crbro-lifecycle.mjs'), hookScript);
+    settings = settings || {};
+    settings.hooks = settings.hooks || {};
+    const node = `node "${hookScript.split('\\').join('/')}"`;
+    let changed = false;
+
+    // SessionStart
+    const start = settings.hooks.SessionStart = settings.hooks.SessionStart || [];
+    if (start.some(entryIsOurs)) {
+      console.log('  ✅ SessionStart: already installed. Script refreshed.');
+    } else {
+      const replaced = [];
+      for (let i = start.length - 1; i >= 0; i--) {
+        const entry = start[i];
+        if (!Array.isArray(entry?.hooks) || !entry.hooks.some(isInstallBootHook)) continue;
+        for (const h of entry.hooks.filter(isInstallBootHook)) replaced.unshift({ matcher: entry.matcher, hook: h });
+        const rest = entry.hooks.filter(h => !isInstallBootHook(h));
+        if (rest.length) start[i] = { ...entry, hooks: rest }; else start.splice(i, 1);
+      }
+      // A hand-written CRBRO start (cat ~/.claude/crbro-session-start.txt…)
+      // stays, and ours stops printing the notice it already prints.
+      const handWritten = /crbro/i.test(JSON.stringify(start));
+      start.push({
+        matcher: 'startup|resume|clear|compact',
+        hooks: [{ type: 'command', command: `${node} session-start${handWritten ? ' --no-boot' : ''}`, timeout: 10, statusMessage: 'Loading CRBRO memory...' }],
+      });
+      if (replaced.length) fs.writeFileSync(replacedPath, JSON.stringify({ SessionStart: replaced }, null, 2), 'utf8');
+      changed = true;
+      console.log(`  ✅ SessionStart: lifecycle hook added${replaced.length ? ', replacing the install-boot entry (same notice, plus the project line)' : ''}${handWritten ? '; your own CRBRO start hook is kept and the notice is not repeated' : ''}.`);
+    }
+
+    // PreCompact
+    const pre = settings.hooks.PreCompact = settings.hooks.PreCompact || [];
+    if (pre.some(entryIsOurs)) {
+      console.log('  ✅ PreCompact: already installed. Script refreshed.');
+    } else {
+      const handWritten = /crbro/i.test(JSON.stringify(pre));
+      pre.push({
+        hooks: [{ type: 'command', command: `${node} pre-compact${handWritten ? ' --no-reminder' : ''}`, timeout: 10, statusMessage: 'Saving a CRBRO checkpoint...' }],
+      });
+      changed = true;
+      console.log(`  ✅ PreCompact: checkpoint hook added${handWritten ? '; your own CRBRO reminder is kept and not repeated' : ''}.`);
+    }
+
+    if (changed) {
+      write(settings);
+      console.log(`     ${settingsPath}`);
+      console.log('     Undo with: npx crbro-memory uninstall-hooks --compact');
+    }
+    console.log('     Never blocks; checkpoints are redacted and expire after 7 days. New sessions pick it up.');
+  }).catch(e => { console.error(e); process.exit(1); });
+
+} else if (command === 'uninstall-hooks') {
+  console.log('  Usage: npx crbro-memory uninstall-hooks --compact');
+  console.log('  (the guard and subagent hooks are removed by deleting their entry from ~/.claude/settings.json)');
+
 } else if (command === 'install-hooks' && process.argv.includes('--guard')) {
   // ─── Wire the PreToolUse guard into Claude Code (opt-in) ───────
   //
@@ -766,14 +993,13 @@ if (command === 'init') {
   // Only files that already exist are touched, and each one is merged, never
   // rewritten. Idempotent: a second run reports and changes nothing.
   import('fs').then(async fs => {
-    const AVISO =
-      'CRBRO: call mcp__crbro__crbro_boot as your FIRST tool action, before answering, ' +
-      'unless this session already contains its result. Discover deferred CRBRO tools first if needed. ' +
-      'Apply the protocol_enforcement block it returns for the rest of the session.';
+    // One copy of the notice: the lifecycle hook prints the same text in its
+    // session-start mode, and `install-hooks --compact` swaps this entry for it.
+    const { BOOT_NOTICE: AVISO } = await import('../hooks/crbro-lifecycle.mjs');
 
     // printf on a shell, Write-Output on Windows PowerShell. One line, no
     // external file: a path stored in a hook goes stale on the next update.
-    const cmdPosix = `printf '%s\\n' ${JSON.stringify(AVISO)}`;
+    const cmdPosix = bootCommandPosix(AVISO);
     const cmdWin = `powershell -NoProfile -Command ${JSON.stringify('Write-Output ' + JSON.stringify(AVISO))}`;
     const MATCHER = 'startup|resume|clear|compact';
 
@@ -1097,6 +1323,15 @@ if (command === 'init') {
   console.log('  Guard (opt-in, Claude Code): stored lessons speak before a shell command runs:');
   console.log('    npx crbro-memory install-hooks --guard   Wire the PreToolUse hook (adds context, never blocks)');
   console.log('    npx crbro-memory guard "<command>"       What it would say for a command · --rebuild writes the index');
+  console.log('');
+  console.log('  Compact without losing the thread (opt-in, Claude Code):');
+  console.log('    npx crbro-memory install-hooks --compact     PreCompact checkpoint + SessionStart that picks it back up');
+  console.log('    npx crbro-memory uninstall-hooks --compact   Remove both and put back what was replaced');
+  console.log('    npx crbro-memory install-hooks --verify      SHA-256 of the installed hooks against this package (read-only)');
+  console.log('');
+  console.log('  Looking back at Claude Code sessions (read-only; last 7 days unless --days N, 0 = all):');
+  console.log('    npx crbro-memory usage [--session ID] [--project DIR] [--json]   Tokens per model and session, subagents apart');
+  console.log('    npx crbro-memory postmortem [--max N] [--json]   Candidate lessons: corrections, failing tools, repeats');
   console.log('');
   console.log('  Daemon (opt-in): one process owns the brain for every client — one index, one model, one writer:');
   console.log('    npx crbro-memory daemon on | off  Switch every client of this brain, the next time each starts');

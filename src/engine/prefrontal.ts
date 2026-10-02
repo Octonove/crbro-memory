@@ -3,6 +3,7 @@
 
 import { readJSON, writeJSON, listJSONFiles, now } from '../utils/fs.js';
 import { pendingId } from '../utils/hash.js';
+import { redact } from './secrets.js';
 import type { Brain } from './brain.js';
 import type { ActiveContext, HotTopics, GlobalMap, Cluster, Bridge, Neuron, PendingTask } from '../types/index.js';
 
@@ -66,7 +67,7 @@ export class Prefrontal {
     discard_pending?: string;
     /** Empty active_topics, pending_tasks and recently_closed. Runs before the other updates. */
     clear?: boolean;
-  }): Promise<ActiveContext & { resolved: PendingTask[]; discarded: PendingTask[]; written: boolean }> {
+  }): Promise<ActiveContext & { resolved: PendingTask[]; discarded: PendingTask[]; written: boolean; redacted?: string[] }> {
     const ctx = await this.getContext();
 
     const hayCambio =
@@ -89,13 +90,18 @@ export class Prefrontal {
     let tasks = ctx.pending_tasks.map(toTask);
     let resolved: PendingTask[] = [];
     let discarded: PendingTask[] = [];
+    let redacted: string[] = [];
 
     if (updates.set_topics) {
       ctx.active_topics = updates.set_topics;
     }
 
     if (updates.add_pending) {
-      const text = updates.add_pending.trim();
+      // An open item is read back by crbro_boot in every session and copied
+      // into compaction checkpoints: it goes through the same filter as learn.
+      const filtrado = redact(updates.add_pending.trim());
+      redacted = filtrado.found;
+      const text = filtrado.text;
       const id = pendingId(text);
       if (!tasks.some(t => t.id === id)) {
         tasks.push({ id, text, added: now() });
@@ -134,7 +140,7 @@ export class Prefrontal {
     ctx.pending_tasks = tasks;
     ctx.last_updated = now();
     await writeJSON(this.brain.paths.activeContext(), ctx);
-    return { ...ctx, resolved, discarded, written: true };
+    return { ...ctx, resolved, discarded, written: true, ...(redacted.length ? { redacted } : {}) };
   }
 
   /**

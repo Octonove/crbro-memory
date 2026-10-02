@@ -41,6 +41,7 @@ beforeEach(async () => {
   await put('.license-cache.json', '{}');
   await put('.daemon/abc123.json', '{"token":"daemon-token-must-not-travel"}');
   await put('.search/chunks.index.json', '{"huge":true}');
+  await put('checkpoints/sesion.json', '{"requests":["peticion literal"]}');
   await put('.semantic/models/m.onnx', 'binary');
   await put('shared/equipo/.git/config', '[core]');
   await put('shared/equipo/notes/n1.json', '{"note":1}');
@@ -65,7 +66,7 @@ describe('createBackup', () => {
   it('leaves out the quarantine, machine secrets, the index, the model and .git', async () => {
     const r = await createBackup(new BrainPaths(brainDir), { dir: backupDir });
     const names = Object.keys((await readBackup(r.path)).files);
-    for (const banned of ['.quarantine', '.device-token', '.license-cache.json', '.search', '.semantic', '.git', '.daemon']) {
+    for (const banned of ['.quarantine', '.device-token', '.license-cache.json', '.search', '.semantic', '.git', '.daemon', 'checkpoints']) {
       expect(names.filter(n => n.split('/').includes(banned)), `${banned} leaked into the backup`).toEqual([]);
     }
     expect(JSON.stringify(await readBackup(r.path))).not.toContain('sk-live-must-not-travel');

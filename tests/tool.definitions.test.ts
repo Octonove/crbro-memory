@@ -87,6 +87,22 @@ describe('tools/list', () => {
     expect(s).toEqual([...STRUCTURED].sort());
   });
 
+  it('crbro_boot takes one optional parameter, project (2.7): its schema is no longer empty', () => {
+    const boot = tools.find(t => t.name === 'crbro_boot')!;
+    expect(Object.keys(boot.inputSchema.properties ?? {})).toEqual(['project']);
+    expect(boot.inputSchema.properties.project.type).toBe('string');
+    expect(boot.inputSchema.required ?? []).not.toContain('project');
+    expect(boot.description).toContain('project_neurons');
+  });
+
+  it('crbro_recall says in one sentence that results carry their origin', () => {
+    const recall = tools.find(t => t.name === 'crbro_recall')!;
+    expect(recall.description).toMatch(/carry origin, also_matched too: team:<space>/);
+    expect(recall.description).not.toMatch(/\bimport\b/);   // no shipped writer marks a line 'import'
+    expect(recall.outputSchema.properties.results.items.properties.also_matched.items.properties).toHaveProperty('origin');
+    expect(recall.outputSchema.properties.results.items.properties).toHaveProperty('origin');
+  });
+
   it('keeps every description under 1,000 characters', () => {
     for (const t of tools) expect(t.description.length, t.name).toBeLessThan(1000);
   });

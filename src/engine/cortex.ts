@@ -24,8 +24,14 @@ const NEAR_DUP_MIN_LENGTH = 60;
 /** Minimum similarity before we accept a near-miss as "the same topic". */
 const NAME_MATCH_THRESHOLD = 0.85;
 
-export interface SessionTally { facts: number; decisions: number; topics: Set<string> }
-export const newTally = (): SessionTally => ({ facts: 0, decisions: 0, topics: new Set<string>() });
+/**
+ * `witnessed`: "<neuron>|<fact id>" of every fact this session stored or
+ * confirmed. A session is one witness: storing the same line again in the
+ * same session (a retry, the post-compaction re-save) does not count twice.
+ * Not cleared by consolidate, which ends a chapter, not the conversation.
+ */
+export interface SessionTally { facts: number; decisions: number; topics: Set<string>; witnessed?: Set<string> }
+export const newTally = (): SessionTally => ({ facts: 0, decisions: 0, topics: new Set<string>(), witnessed: new Set<string>() });
 /**
  * The connection a request belongs to, carried through every await. Empty
  * outside the daemon. `resumed`: this backend took over a conversation that
@@ -75,6 +81,219 @@ function sameNumbers(a: string, b: string): boolean {
   const na = a.match(/\d+/g) || [];
   const nb = b.match(/\d+/g) || [];
   return na.length === nb.length && na.every((v, i) => v === nb[i]);
+}
+
+/**
+ * Near-duplicates of `content` among `candidates`, best first: Dice ≥ 0.8 on
+ * lower-cased text, both sides at least NEAR_DUP_MIN_LENGTH characters. The
+ * one rule behind learn's near_duplicates warning (inside one neuron) and
+ * consolidate's promotion_candidates (across project neurons), so the two
+ * cannot disagree on what "almost the same line" means.
+ */
+export function nearDuplicatesAmong(
+  content: string,
+  candidates: Array<{ id: string; text: string }>
+): Array<{ id: string; similarity: number; text: string }> {
+  if (content.length < NEAR_DUP_MIN_LENGTH) return [];
+  const nuevo = content.toLowerCase();
+  const out: Array<{ id: string; similarity: number; text: string }> = [];
+  for (const c of candidates) {
+    if (!c.text || c.text.length < NEAR_DUP_MIN_LENGTH) continue;
+    // Dice over bigrams cannot reach the threshold when one side is much
+    // longer: 2·min/(a+b) bounds it. A free filter before the real count.
+    const otro = c.text.toLowerCase();
+    const a = nuevo.length, b = otro.length;
+    if ((2 * Math.min(a, b)) / (a + b) < NEAR_DUP_THRESHOLD) continue;
+    const score = similarity(nuevo, otro);
+    if (score >= NEAR_DUP_THRESHOLD) out.push({ id: c.id, similarity: Math.round(score * 100) / 100, text: c.text });
+  }
+  out.sort((x, y) => y.similarity - x.similarity);
+  return out;
+}
+
+/** Lesson kinds that can be promoted: what was learned, not what was decided or preferred. */
+export type LessonKind = 'fact' | 'pattern' | 'error';
+
+export interface PromotionCandidate {
+  kind: LessonKind;
+  /** The telling to promote: the most confirmed copy, then the longest. */
+  text: string;
+  /** Project neurons that hold it, the one written this session first. */
+  neurons: string[];
+  /** The entry id of the copy in each of `neurons`, same order. */
+  entry_ids: string[];
+  /** Lowest similarity in the group: 1 when every copy is the same text. */
+  similarity: number;
+  /** Sum of the copies' confirmations (each copy counts at least 1). */
+  confirmations: number;
+}
+
+/** Most promotion candidates consolidate reports. More is a backlog, not a nudge. */
+export const MAX_PROMOTION_CANDIDATES = 5;
+/** Lessons of this session's project neurons compared against the rest. Bounds the cost of a sprawling session. */
+const MAX_PROMOTION_SEEDS = 300;
+/** Share of a lesson's distinctive words a copy must also hold before the bigram test runs. */
+const PROMOTION_MIN_OVERLAP = 0.6;
+/**
+ * A word found in more lessons than this says nothing about which lesson is
+ * a copy of which ("para", "proyecto"): it is not counted. The larger of an
+ * absolute floor and a share of the brain, so small brains keep every word.
+ */
+const PROMOTION_COMMON_WORD = { min: 200, share: 0.05 };
+
+/** Lower-cased, accents folded, whitespace collapsed: the "same text" test. */
+function normLesson(text: string): string {
+  return text.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+function lessonWords(norm: string): string[] {
+  return [...new Set(norm.split(/[^a-z0-9_]+/).filter(w => w.length >= 3 && !/^\d+$/.test(w)))];
+}
+
+function lessonNumbers(norm: string): string[] {
+  return [...new Set(norm.match(/\d+/g) || [])];
+}
+
+/**
+ * The same lesson living in two or more project neurons: the mark of
+ * something that is not about one project at all and belongs in a tech_ or
+ * process_ neuron where every project finds it.
+ *
+ * Generalises findNearDuplicates (one neuron) to many without making it
+ * quadratic: only the lessons of `seedIds` — the project neurons this session
+ * touched — are compared, and each only against the lessons that hold the
+ * same numbers and most of its distinctive words (inverted indexes built
+ * once). The bigram test then decides, as in learn. Exact copies (same
+ * normalised text) count at any length.
+ *
+ * Only the user's own lessons take part. A line that arrived from a shared
+ * space, the miner or anything that is not this machine's session is left
+ * out: promoting it would rewrite a third party's text as the user's own
+ * lesson, valid for every project, and drop the origin recall shows for it.
+ *
+ * Read-only and pure: it suggests, it never moves anything.
+ */
+export function findPromotionCandidates(
+  neurons: Neuron[],
+  seedIds: Iterable<string>,
+  max: number = MAX_PROMOTION_CANDIDATES
+): PromotionCandidate[] {
+  const semillasIds = new Set(seedIds);
+  if (semillasIds.size === 0) return [];
+
+  type Lesson = { neuron: string; kind: LessonKind; id: string; text: string; norm: string; conf: number };
+  const lecciones: Lesson[] = [];
+  for (const n of neurons) {
+    if (!n || n.type !== 'project') continue;
+    const retirada = (t: string) => !!n.entry_status?.[entryId(t)];
+    for (const f of n.facts || []) {
+      if (!f?.text || f.status === 'superseded' || f.status === 'retracted') continue;
+      if (f.source && f.source !== 'session') continue;   // not the user's own: never promoted
+      lecciones.push({ neuron: n.id, kind: 'fact', id: f.id || factId(f.text), text: f.text, norm: normLesson(f.text), conf: Math.max(1, f.confirmations ?? 1) });
+    }
+    for (const [kind, lista] of [['pattern', n.patterns], ['error', n.errors]] as const) {
+      for (const t of lista || []) {
+        if (!t || retirada(t)) continue;
+        if (n.entry_source?.[entryId(t)]) continue;   // a teammate's or the miner's: never promoted
+        lecciones.push({ neuron: n.id, kind, id: entryId(t), text: t, norm: normLesson(t), conf: 1 });
+      }
+    }
+  }
+
+  // Inverted indexes built once: word → lessons, number → lessons, text → lessons.
+  const porPalabra = new Map<string, number[]>();
+  const porNumero = new Map<string, number[]>();
+  const porTexto = new Map<string, number[]>();
+  const palabras: Array<Set<string>> = [];
+  lecciones.forEach((l, i) => {
+    const ws = lessonWords(l.norm);
+    palabras.push(new Set(ws));
+    for (const w of ws) (porPalabra.get(w) || porPalabra.set(w, []).get(w)!).push(i);
+    for (const n of lessonNumbers(l.norm)) (porNumero.get(n) || porNumero.set(n, []).get(n)!).push(i);
+    (porTexto.get(l.norm) || porTexto.set(l.norm, []).get(l.norm)!).push(i);
+  });
+  const comun = Math.max(PROMOTION_COMMON_WORD.min, Math.ceil(lecciones.length * PROMOTION_COMMON_WORD.share));
+
+  /**
+   * The lessons worth a bigram test against seed `s`. Two filters, both
+   * cheaper than one Dice count and both implied by what follows it:
+   *  - numbers: a near copy must carry the same numbers (the guard below), so
+   *    it must hold every number the seed holds — an intersection of postings;
+   *  - words: it must share most of the seed's distinctive words.
+   * Templated text ("module 155 uses table 5…" ×24,000) is exactly where a
+   * plain rare-word probe degrades into comparing against everything.
+   */
+  const candidatosDe = (s: number): number[] => {
+    const semilla = lecciones[s];
+    const nums = lessonNumbers(semilla.norm);
+    const distintivas = [...palabras[s]].filter(w => (porPalabra.get(w)?.length ?? 0) <= comun);
+    // Nothing to tell copies apart by — every word is everywhere — means
+    // exact copies only, even when it holds a number: "2026" alone would
+    // otherwise send it against every lesson written this year.
+    if (distintivas.length === 0) return [];
+    const minimo = Math.ceil(distintivas.length * PROMOTION_MIN_OVERLAP);
+    let base: number[] | null = null;
+    if (nums.length) {
+      const listas = nums.map(n => porNumero.get(n) || []).sort((a, b) => a.length - b.length);
+      let inter = new Set(listas[0]);
+      for (const l of listas.slice(1)) { const otra = new Set(l); inter = new Set([...inter].filter(i => otra.has(i))); }
+      base = [...inter];
+    }
+    const fuera = (i: number) => lecciones[i].neuron === semilla.neuron || lecciones[i].norm === semilla.norm;
+    if (base) {
+      return base.filter(i => !fuera(i) && distintivas.reduce((n, w) => n + (palabras[i].has(w) ? 1 : 0), 0) >= minimo);
+    }
+    const cuenta = new Map<number, number>();
+    for (const w of distintivas) for (const i of porPalabra.get(w)!) cuenta.set(i, (cuenta.get(i) || 0) + 1);
+    return [...cuenta].filter(([i, n]) => n >= minimo && !fuera(i)).map(([i]) => i);
+  };
+
+  const semillas = lecciones.map((_, i) => i).filter(i => semillasIds.has(lecciones[i].neuron)).slice(0, MAX_PROMOTION_SEEDS);
+  const usadas = new Set<number>();
+  const grupos: Array<{ miembros: number[]; similarity: number }> = [];
+
+  for (const s of semillas) {
+    if (usadas.has(s)) continue;
+    const semilla = lecciones[s];
+    // Best copy per OTHER project neuron.
+    const mejor = new Map<string, { i: number; sim: number }>();
+    const anotar = (i: number, sim: number) => {
+      const l = lecciones[i];
+      if (l.neuron === semilla.neuron) return;
+      const prev = mejor.get(l.neuron);
+      if (!prev || sim > prev.sim) mejor.set(l.neuron, { i, sim });
+    };
+    for (const i of porTexto.get(semilla.norm) || []) anotar(i, 1);
+    if (semilla.text.length >= NEAR_DUP_MIN_LENGTH) {
+      // Across projects, a copy that disagrees on a number is another lesson
+      // ("the 2.5 index" vs "the 2.6 index"): the same guard name matching uses.
+      const pool = candidatosDe(s)
+        .filter(i => sameNumbers(semilla.text, lecciones[i].text))
+        .map(i => ({ id: String(i), text: lecciones[i].text }));
+      for (const hit of nearDuplicatesAmong(semilla.text, pool)) anotar(Number(hit.id), hit.similarity);
+    }
+    if (mejor.size === 0) continue;
+    const miembros = [s, ...[...mejor.values()].map(m => m.i)];
+    for (const m of miembros) usadas.add(m);
+    grupos.push({ miembros, similarity: Math.min(...[...mejor.values()].map(m => m.sim)) });
+  }
+
+  return grupos
+    .map(g => {
+      const ls = g.miembros.map(i => lecciones[i]);
+      const rep = [...ls].sort((a, b) => (b.conf - a.conf) || (b.text.length - a.text.length))[0];
+      return {
+        kind: rep.kind,
+        text: rep.text,
+        neurons: ls.map(l => l.neuron),
+        entry_ids: ls.map(l => l.id),
+        similarity: g.similarity,
+        confirmations: ls.reduce((n, l) => n + l.conf, 0),
+      };
+    })
+    .sort((a, b) => (b.neurons.length - a.neurons.length) || (b.confirmations - a.confirmations)
+      || (b.similarity - a.similarity) || (a.text < b.text ? -1 : 1))
+    .slice(0, max);
 }
 
 export type Indexer = (neuron: Neuron) => Promise<void> | void;
@@ -182,6 +401,10 @@ export function unionNeuron(target: Neuron, source: Neuron): {
       if (sf.superseded_by) hit.superseded_by = sf.superseded_by;
     }
     hit.added = earliestOf(hit.added, sf.added);
+    // Two copies of one line: the better-witnessed count stands. Summing
+    // would count twice the sessions both copies may have seen.
+    const conf = Math.max(hit.confirmations ?? 1, sf.confirmations ?? 1);
+    if (conf > 1) hit.confirmations = conf;
     const keys = normalizeKeys([...(hit.keys || []), ...(sf.keys || [])]);
     if (keys.length) hit.keys = keys; else delete hit.keys;
   }
@@ -254,6 +477,12 @@ export function unionNeuron(target: Neuron, source: Neuron): {
   for (const k of Object.keys(estados).sort()) if (vivos.has(k)) estadosVivos[k] = estados[k];
   if (Object.keys(estadosVivos).length) neuron.entry_status = estadosVivos;
   else delete neuron.entry_status;
+
+  const origenes: Record<string, string> = { ...(source.entry_source || {}), ...(target.entry_source || {}) };
+  const origenesVivos: Record<string, string> = {};
+  for (const k of Object.keys(origenes).sort()) if (vivos.has(k)) origenesVivos[k] = origenes[k];
+  if (Object.keys(origenesVivos).length) neuron.entry_source = origenesVivos;
+  else delete neuron.entry_source;
 
   // ── Map: the target's if it has one, else the source's ──
   if (target.map) neuron.map = { ...target.map };
@@ -589,6 +818,8 @@ export class Cortex {
     updated_in_place: boolean;
     /** Set when the text matches a retired fact/entry; nothing was written. */
     skipped_retired: { id: string; status: 'superseded' | 'retracted'; revised?: string; note?: string } | null;
+    /** Exact-duplicate fact only: how many times the line has now been learned (2.7). */
+    confirmations?: number;
   }> {
     // Credentials never make it to disk. The sentence around them survives, so
     // "the deploy token is [REDACTED: npm token]" still records that a token
@@ -629,6 +860,7 @@ export class Cortex {
     let emitir: Parameters<Emitter>[1] | null = null;
     let duplicate = false;
     let updatedInPlace = false;
+    let confirmations: number | undefined;
     let skippedRetired: { id: string; status: 'superseded' | 'retracted'; revised?: string; note?: string } | null = null;
 
     // A retired decision, pattern, error or debt must not come back through
@@ -649,6 +881,19 @@ export class Cortex {
     const fechar = (n: Neuron, text: string) => {
       if (!n.entry_dates) n.entry_dates = {};
       n.entry_dates[entryId(text)] = now();
+    };
+    // Where a non-fact entry came from, when it is not this session (2.7):
+    // the sidecar twin of Fact.source. A line written here clears a stale
+    // mark, so a teammate's pattern forgotten and re-learned reads as yours.
+    const origen = (n: Neuron, text: string) => {
+      const k = entryId(text);
+      const src = options?.source;
+      if (src && src !== 'session' && src !== 'manual') {
+        (n.entry_source ||= {})[k] = src;
+      } else if (n.entry_source?.[k]) {
+        delete n.entry_source[k];
+        if (Object.keys(n.entry_source).length === 0) delete n.entry_source;
+      }
     };
 
     const actualizada = await updateJSON<Neuron>(
@@ -680,6 +925,16 @@ export class Cortex {
               // may be edited in place. The indexer re-indexes the neuron
               // afterwards, keys included.
               duplicate = true;
+              // The same line from another session is a second witness (2.7).
+              // The same session saying it again is not (a retry, the re-save
+              // after a compaction), and neither is the miner re-reading a file.
+              const testigo = `${n.id}|${existente.id || factId(existente.text)}`;
+              const vistos = (this.tally.witnessed ??= new Set<string>());
+              if (options?.source !== 'miner' && !vistos.has(testigo)) {
+                existente.confirmations = (existente.confirmations ?? 1) + 1;
+              }
+              if (options?.source !== 'miner') vistos.add(testigo);
+              confirmations = existente.confirmations ?? 1;
               let cambiado = false;
               if (options?.confidence !== undefined && options.confidence !== existente.confidence) {
                 existente.confidence = options.confidence;
@@ -730,6 +985,7 @@ export class Cortex {
               if (options?.supersedes?.length) fact.supersedes = options.supersedes;
               if (keys.length) fact.keys = keys;
               n.facts.push(fact);
+              if (fact.source !== 'miner') (this.tally.witnessed ??= new Set<string>()).add(`${n.id}|${id}`);
               this.tally.facts++;
               this.tally.topics.add(n.id);
               emitir = { kind: 'fact' as const, text: content, fid: id,
@@ -745,6 +1001,7 @@ export class Cortex {
               rationale: options?.rationale || '',
             };
             n.decisions.push(decision);
+            origen(n, content);
             this.tally.decisions++;
             this.tally.topics.add(n.id);
             emitir = { kind: 'decision' as const, text: content,
@@ -756,6 +1013,7 @@ export class Cortex {
             if (!n.patterns.includes(content)) {
               n.patterns.push(content);
               fechar(n, content);
+              origen(n, content);
               emitir = { kind: 'pattern' as const, text: content, at: now() };
             }
             break;
@@ -773,6 +1031,7 @@ export class Cortex {
             if (!n.errors.includes(content)) {
               n.errors.push(content);
               fechar(n, content);
+              origen(n, content);
               this.tally.topics.add(n.id);
               emitir = { kind: 'error' as const, text: content, at: now() };
             }
@@ -784,6 +1043,7 @@ export class Cortex {
             if (!n.debts.includes(content)) {
               n.debts.push(content);
               fechar(n, content);
+              origen(n, content);
               this.tally.topics.add(n.id);
               emitir = { kind: 'debt' as const, text: content, at: now() };
             }
@@ -819,6 +1079,7 @@ export class Cortex {
       neuron: final, action, superseded, supersedes_unmatched: supersedesUnmatched,
       near_duplicates: nearDuplicates, redacted: limpio.found,
       duplicate, updated_in_place: updatedInPlace, skipped_retired: null,
+      ...(confirmations !== undefined ? { confirmations } : {}),
     };
   }
 
@@ -893,27 +1154,12 @@ export class Cortex {
     neuron: Neuron,
     content: string
   ): Array<{ id: string; similarity: number; preview: string }> {
-    if (content.length < NEAR_DUP_MIN_LENGTH) return [];
-    const nuevo = content.toLowerCase();
-    const out: Array<{ id: string; similarity: number; preview: string }> = [];
-
-    for (const fact of neuron.facts) {
-      if (fact.status === 'superseded' || fact.status === 'retracted') continue;
-      if (!fact.text || fact.text.length < NEAR_DUP_MIN_LENGTH) continue;
-      if (fact.text === content) continue;   // the new fact itself, already pushed
-
-      const score = similarity(nuevo, fact.text.toLowerCase());
-      if (score >= NEAR_DUP_THRESHOLD) {
-        out.push({
-          id: fact.id || factId(fact.text),
-          similarity: Math.round(score * 100) / 100,
-          preview: fact.text.slice(0, 120),
-        });
-      }
-    }
-
-    out.sort((a, b) => b.similarity - a.similarity);
-    return out.slice(0, 5);
+    const activos = neuron.facts
+      .filter(f => f.status !== 'superseded' && f.status !== 'retracted' && f.text && f.text !== content)
+      .map(f => ({ id: f.id || factId(f.text), text: f.text }));
+    return nearDuplicatesAmong(content, activos)
+      .slice(0, 5)
+      .map(({ id, similarity: s, text }) => ({ id, similarity: s, preview: text.slice(0, 120) }));
   }
 
   /**
@@ -1386,6 +1632,15 @@ export class Cortex {
           if (!vivos.has(k)) delete current.entry_status[k];
         }
         if (Object.keys(current.entry_status).length === 0) delete current.entry_status;
+      }
+      // And for provenance: a forgotten teammate line that comes back through
+      // a sync replay must be labelled by that replay, not by a stale key.
+      if (current.entry_source) {
+        const vivos = liveEntryKeys(current);
+        for (const k of Object.keys(current.entry_source)) {
+          if (!vivos.has(k)) delete current.entry_source[k];
+        }
+        if (Object.keys(current.entry_source).length === 0) delete current.entry_source;
       }
       current.last_accessed = now();
       return current;
