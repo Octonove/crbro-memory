@@ -2,6 +2,51 @@
 
 All notable changes to CRBRO.
 
+## [2.7.2] — 2026-10-03
+
+The first run of the agentic benchmark, what it fixed in the server's
+instructions, and recall re-measured on a bigger exam and a bigger brain.
+
+- **A fresh session does not ask again what memory already holds.** Measured
+  for the first time with a real agent (`benchmarks/agentic/`, haiku and
+  sonnet, Claude Code 2.1.270, n=3): with CRBRO 24/24 on questions whose answer
+  lived only in memory, 0 retired values given; without it 0/24, and sonnet
+  invented 4 answers. The run found two faults in the server's instructions,
+  fixed before the run that is published: an agent that recalled, found
+  nothing and answered "I don't know" although the answer was in the question,
+  and — after the first wording of the fix — an agent that skipped recall.
+  The instructions now say to recall even when it thinks it knows, and that
+  only an answer stated in the current message outranks memory.
+- **`crbro_learn` asks for keywords.** A fact saved without them is stored and
+  the answer carries `keywords_missing: true` and a one-line `keywords_hint`
+  to call again with 2-5 of them: they merge into the same fact. Keywords are
+  the largest measured lever on recall; on the author's brain a quarter of
+  all facts carry them (65-80% of those saved since September).
+- **Rare words weigh more.** Each query term was normalised against its own
+  best hit, so a word found in a third of the brain counted as much as the one
+  word that names the thing. Terms are now weighted by rarity (BM25 idf).
+  Chosen on a tuning set only (`benchmarks/retrieval/dev.json`); on the
+  original 48-question exam the keyword engine goes from 71% to 77% at rank 1,
+  and inside a 1,482-fact haystack from 42% to 54%. On the new 96-question
+  exam it does not move (49%). `CRBRO_IDF=0` turns it off.
+- **The same fact always gets the same vector.** The int8 embedding model
+  quantises per batch, so a line embedded with others got a slightly
+  different vector than alone (cosine 0.994 at worst). The first full pass now
+  embeds one line at a time, as every learn does since 2.5; it costs 1.6× the
+  time, once. No benchmark moved. `CRBRO_SEMANTIC_BATCH` overrides.
+- **The drop of the semantic layer is traced.** 79% → 73% at rank 1 between
+  2.4 and 2.5 came from two commits: the recency tie-break (−2, an artefact:
+  the benchmark's facts are learned in the same second) and embedding only the
+  new lines of a neuron, one at a time, after the cosine floor had been tuned
+  on vectors computed in batches (−4). No bug in the search logic. The floor
+  stays at 0.84: swept on the tuning set, 0.80-0.84 is flat.
+- **Benchmarks.** `retrieval/dev.json` (48 questions + 10 distractors, for
+  tuning), `retrieval/test2.json` (96 + 20, a second blind exam) and three
+  haystack files (1,482 facts in 114 unrelated topics), frozen before any
+  measurement; `run.mjs` reads them through `CRBRO_BENCH_QUERIES` and
+  `CRBRO_BENCH_HAYSTACK`. A longer stopword list was measured and does not
+  ship: it tied once rarity weighting was on.
+
 ## [2.7.1] — 2026-10-03
 
 `crbro postmortem`, run on a week of real sessions, put three false

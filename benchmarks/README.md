@@ -5,9 +5,35 @@ disciplina de [Ponytail](https://github.com/DietrichGebert/ponytail): baseline
 justo, tareas fijadas antes de medir, los fallos publicados, y lo no medible de
 forma creíble **no se afirma**.
 
-Todo lo de aquí es **determinista y sin coste de API**: mismo resultado en cada
-ejecución, corre en CI. Los benchmarks agénticos (con un agente real gastando
-tokens) son un paso posterior, documentado en [LIMITS.md](LIMITS.md).
+Todo lo de aquí es **determinista y sin coste de API** —mismo resultado en cada
+ejecución, corre en CI— salvo el benchmark agéntico de [`agentic/`](agentic/PREREGISTRO.md),
+que pone a trabajar un agente real y gasta tokens. Lo que ninguno de los dos
+afirma está en [LIMITS.md](LIMITS.md).
+
+## Agéntico — ¿una sesión nueva vuelve a preguntar lo que ya sabe?
+
+Una sesión nueva de Claude Code, sin historial, recibe una pregunta cuyo dato
+solo existe en una memoria sembrada antes. El prompt no menciona la memoria:
+consultarla depende solo de las instrucciones que declara el servidor MCP.
+Doce tareas ficticias congeladas, cuatro umbrales fijados antes de ejecutar,
+canario de aislamiento en cada tanda ([pre-registro](agentic/PREREGISTRO.md)).
+
+Cuarta tanda, 03-10-2026, Claude Code 2.1.270, n=3 por tarea:
+
+| tipo de tarea | haiku con CRBRO | haiku sin | sonnet con CRBRO | sonnet sin |
+|---|--:|--:|--:|--:|
+| `memory` (el dato solo está en la memoria) | **12/12** | 0/12 | **12/12** | 0/12 (4 inventadas) |
+| `stale` (hay un valor retirado y el vigente) | **12/12**, 0 retirados | 0/12 | **12/12**, 0 retirados | 0/12 |
+| `control-prompt` (el dato viene en la pregunta) | 6/6 | 6/6 | 6/6 | 6/6 |
+| `control-absent` (el dato no está en ningún sitio) | 6/6 se abstiene | 6/6 | 6/6 se abstiene | 6/6 |
+
+Pasan los cuatro umbrales en los dos modelos. Lo que no dice: las
+instrucciones del servidor se corrigieron dos veces entre tandas sobre estas
+mismas doce tareas (fechado en el pre-registro), así que la cuarta tanda no es
+ciega; y son preguntas cortas de una sola sesión. Se reproduce con
+`node benchmarks/agentic/run.mjs` (necesita `claude` con sesión iniciada y gasta
+cuota). Coste de la tanda con CRBRO: ~0,37 USD en haiku y ~0,82 USD en sonnet
+según el propio Claude Code.
 
 ## Reproducir
 
@@ -250,7 +276,76 @@ Lectura honesta:
   fixture, las consultas y el suelo de coseno (0.84) son los mismos y el motor
   léxico no ha cambiado, lo que apunta a la fusión o al modelo y su runtime,
   en algún punto entre 1.16 y 2.6.0 (sin comprobar). Hasta saberlo, el README publica las cifras de hoy, no
-  las de 1.15.
+  las de 1.15. *(Localizada el mismo día: ver la sección de 2.7.2.)*
+
+## Re-medición del 03-10-2026 (2.7.2) — un examen más grande y un cerebro más grande
+
+**Dónde cayó la capa semántica.** Midiendo cada versión con su propio
+benchmark, 1.16 a 2.4.0 dan 79% / 83% y 2.5.0 en adelante 73% / 79%. Dos
+commits de 2.5.0 lo explican entero: el desempate por fecha (−2; en el fixture
+los hechos se aprenden en el mismo segundo y la «recencia» desempata por
+milisegundos, un artefacto de la prueba) y calcular solo los vectores nuevos de
+una neurona, uno a uno, cuando el suelo de 0.84 se había ajustado con vectores
+calculados en lote (−4; el modelo int8 cuantiza por lote y el vector depende de
+sus compañeros de lote). Volver al comportamiento viejo y apagar la fecha
+devuelve exactamente 79 / 83 / 0.813. No hay error en la lógica de búsqueda.
+
+**Conjuntos nuevos, congelados antes de medir** (commit 3877ec3): `dev.json`
+(48 preguntas + 10 distractores) **solo para ajustar**; `test2.json` (96 + 20)
+como segundo examen ciego; y un pajar de 1.482 hechos en 114 temas ajenos
+(cocina, viajes, salud, familia, coche, hogar, jardín, mascotas, finanzas) que
+se aprende antes del fixture. Las preguntas las escribió un agente que solo vio
+las etiquetas de una línea, nunca el texto guardado.
+
+**Qué se decidió con `dev` y nada más:**
+
+| cambio | motor léxico en dev, @1 / @3 | con el pajar | capa semántica | decisión |
+|---|--:|--:|--:|---|
+| peso por rareza (idf) | 63/71 → **67/73** | 44/63 → **52/63** | sin cambio | se publica |
+| + 80 palabras vacías más | 67/73 → 65/73 | 52/63 → 54/65 | sin cambio | no se publica: empata |
+| vectores uno a uno en vez de en lotes de 16 | — | — | idéntico en los tres conjuntos | se publica: el mismo hecho, el mismo vector |
+| suelo de coseno 0.80 … 0.87 | — | — | 73, 71, **75, 75**, 73, 71, 67, 65 | se queda en 0.84: meseta, una pregunta |
+
+**El examen, con los valores ya fijados** (recall@1 / @3; entre paréntesis, 2.7.1):
+
+| conjunto | motor léxico | léxico + pajar | como se instala (semántica) | semántica + pajar |
+|---|--:|--:|--:|--:|
+| original, 48 preguntas | **77 / 83** (71 / 77) | **54 / 77** (42 / 71) | 75 / 81 (73 / 79) | 67 / 79 (65 / 79) |
+| dev, 48 (ajuste: no cuenta) | 67 / 73 (63 / 71) | 52 / 63 (44 / 63) | 73 / 79 (73 / 79) | 71 / 75 (71 / 75) |
+| test2, 96, ciego | 49 / 53 (49 / 54) | 31 / 40 (32 / 39) | 57 / 60 (58 / 61) | 48 / 52 (48 / 51) |
+
+Lectura honesta:
+
+- El peso por rareza sube el motor léxico en el examen original (+6, y +12
+  dentro del pajar). En el examen nuevo de 96 preguntas **no mueve nada**. Se
+  publica porque no empeora ningún conjunto y ayuda en dos de tres.
+- El examen nuevo es más difícil que el original: 49% en el motor léxico y 57%
+  como se instala. Y da más falsa confianza: 11 y 8 de sus 20 distractores
+  salen con puntuación de acierto real.
+- **La capa semántica importa más cuanto más grande es el cerebro.** Sin pajar,
+  en el examen original queda 2 puntos por debajo del motor léxico (75 frente
+  a 77). Con 1.482 hechos de relleno queda 13 por encima (67 frente a 54), y en
+  el examen nuevo 17 (48 frente a 31).
+- Todo esto es recall de un hecho por pregunta. No mide si el agente usa bien
+  lo que encuentra: eso lo mide la sección agéntica de arriba.
+
+**Las ocho configuraciones del examen original, en 2.7.2** (mismos ficheros
+congelados que en la tabla de 2.7.1):
+
+| configuración | recall@1 | recall@3 | MRR | con also_matched @1 / @3 | distractores confiados |
+|---|--:|--:|--:|--:|--:|
+| motor léxico | 77% | 83% | 0.806 | 77% / 83% | 2 / 14 |
+| + reformulaciones | 77% | 90% | 0.843 | 79% / 92% | 1 / 14 |
+| + palabras clave | 83% | 92% | 0.879 | 83% / 94% | 0 / 14 |
+| + palabras clave + reformulaciones | 88% | 94% | 0.899 | 92% / 100% | 1 / 14 |
+| capa semántica (como se instala) | **75%** | **81%** | 0.781 | 81% / 90% | 0 / 14 |
+| semántica + reformulaciones | 79% | 85% | 0.831 | 85% / 92% | 1 / 14 |
+| semántica + palabras clave | 83% | 90% | 0.865 | 85% / 94% | 0 / 14 |
+| **todo activado** | **92%** | **96%** | **0.934** | 94% / 98% | 0 / 14 |
+
+Se reproduce con `CRBRO_BENCH_QUERIES=benchmarks/retrieval/test2.json` (o
+`dev.json`) y `CRBRO_BENCH_HAYSTACK=benchmarks/retrieval/haystack-1.json,benchmarks/retrieval/haystack-2.json,benchmarks/retrieval/haystack-3.json`
+(rutas relativas: con rutas de Git Bash del tipo `/c/…` Node no las abre).
 
 ## Security — el filtro de redacción
 

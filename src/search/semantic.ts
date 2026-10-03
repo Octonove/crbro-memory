@@ -45,7 +45,20 @@ export const SEMANTIC_MODEL_DEFAULT = 'Xenova/multilingual-e5-small';
 export const SEMANTIC_DTYPE_DEFAULT = 'q8';
 export function semanticModel(): string { return process.env.CRBRO_SEMANTIC_MODEL || SEMANTIC_MODEL_DEFAULT; }
 export function semanticDtype(): string { return process.env.CRBRO_SEMANTIC_DTYPE || SEMANTIC_DTYPE_DEFAULT; }
-const BATCH = 16;
+/**
+ * Passages per forward pass. The int8 model quantises its activations per
+ * tensor, so a vector computed inside a batch depends on its batch-mates:
+ * the same fact gets a slightly different vector depending on what it was
+ * embedded with (cosine 0.997 on average and 0.994 at worst against the same
+ * text alone, measured on 300 facts) — enough to cross the 0.84 floor. Since
+ * 2.5 every learn embeds only its new lines, one at a time, and that is what
+ * the floor was tuned on, so the first full pass does the same (2.7.2). It
+ * costs 1.6x the time of batches of 16, once. CRBRO_SEMANTIC_BATCH overrides.
+ */
+function batchSize(): number {
+  const n = Number(process.env.CRBRO_SEMANTIC_BATCH);
+  return Number.isInteger(n) && n >= 1 && n <= 64 ? n : 1;
+}
 /** e5 models are trained with these prefixes; without them quality drops. */
 const QUERY_PREFIX = 'query: ';
 const PASSAGE_PREFIX = 'passage: ';
@@ -205,6 +218,7 @@ export class SemanticIndex {
     const extractor = await this.model();
     const prefix = kind === 'query' ? QUERY_PREFIX : PASSAGE_PREFIX;
     const out: Float32Array[] = [];
+    const BATCH = batchSize();
     for (let i = 0; i < texts.length; i += BATCH) {
       const batch = texts.slice(i, i + BATCH).map(t => prefix + t.slice(0, MAX_CHARS));
       const res = await extractor(batch, { pooling: 'mean', normalize: true });
