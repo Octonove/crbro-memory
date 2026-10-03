@@ -1,0 +1,726 @@
+{
+  "neurons": [
+    {
+      "name": "recetas-de-pasta-casera",
+      "domain": "cocina",
+      "facts": [
+        {"text": "Lucía hace la pasta fresca con 100 g de harina por huevo y deja reposar la masa 30 minutos envuelta en film antes de estirarla con el rodillo."},
+        {"text": "Desde que Marcos compró la máquina manual de hacer tallarines en el mercadillo de Villalbeda, la pasta de los domingos tarda la mitad de tiempo en prepararse."},
+        {"text": "La receta de ravioli de calabaza de la abuela de Elena lleva nuez moscada y queso de oveja curado, y se congelan en bandejas antes de cocer."},
+        {"text": "Javier descubrió que añadir una cucharada de agua de cocción de la pasta a la salsa de tomate la liga mejor y evita que quede seca."},
+        {"text": "Para seis personas, Sofía calcula 90 g de pasta seca por comensal cuando hay entrante previo, y 120 g si la pasta es plato único."},
+        {"text": "El truco que anotó Diego tras fallar dos veces: salar el agua solo cuando hierve a borbotones, nunca antes, porque si no tarda mucho más en arrancar."},
+        {"text": "Carmen prefiere la pasta integral para las cenas de entre semana porque sacia más y evita el bajón de energía antes de acostarse."},
+        {"text": "En casa de Pablo el pesto se hace sin ajo porque a su hija le repite, así que lo sustituyen por un toque de cebollino fresco."},
+        {"text": "Irene guarda la masa de pasta sin usar hasta tres días en la nevera envuelta en papel film, nunca más porque se oxida y oscurece."},
+        {"text": "El error de Álvaro fue estirar la masa demasiado gruesa la primera vez; ahora pasa por la máquina hasta el número 6 para que quede fina de verdad."},
+        {"text": "Nuria añade una yema extra a la masa de pasta al huevo cuando hace tallarines, porque le da un color más intenso y una textura más elástica."},
+        {"text": "La salsa carbonara que prepara Hugo lleva solo yema, panceta y queso curado rallado, sin nata, tal y como le enseñó un compañero italiano."},
+        {"text": "Marta anota en una libreta las proporciones de cada receta de pasta que prueba, porque a la tercera vez siempre olvida cuánta agua de cocción necesitaba."}
+      ]
+    },
+    {
+      "name": "panaderia-en-casa",
+      "domain": "cocina",
+      "facts": [
+        {"text": "Daniel alimenta su masa madre cada mañana con 50 g de harina y 50 g de agua, y la guarda en la nevera cuando no hornea en varios días."},
+        {"text": "El pan de Claudia tarda 18 horas de fermentación en frío porque así desarrolla más sabor, aunque tiene que organizar el amasado la noche anterior."},
+        {"text": "Rubén compró un horno con piedra refractaria de segunda mano para que la base del pan quede crujiente, como la de la panadería del pueblo."},
+        {"text": "La receta de pan de molde de Beatriz lleva leche en vez de agua, y por eso sale más tierno para los bocadillos de los niños."},
+        {"text": "Óscar se dio cuenta de que su pan quedaba plano porque usaba agua demasiado caliente y mataba la levadura antes de que hiciera efecto."},
+        {"text": "Cristina hace focaccia con aceite de oliva de una cooperativa de Valdecasas y la cubre con tomates cherry y romero del jardín."},
+        {"text": "El cuaderno de Iván tiene anotado el punto exacto de hidratación de cada harina que ha probado, desde el 65 % hasta el 80 %."},
+        {"text": "Laura hornea dos panes cada domingo: uno para la semana y otro que corta en rebanadas y congela para las tostadas de desayuno."},
+        {"text": "Sergio descubrió que dejar reposar la masa madre fuera de la nevera un día antes de usarla la activa mucho más que usarla directamente fría."},
+        {"text": "Paula compró moldes de pan alargados porque los redondos que tenía se le quedaban pequeños desde que empezó a hacer panes de kilo."},
+        {"text": "El marido de Adrián le regaló una báscula de precisión de 1 gramo porque en panadería casera un error pequeño cambia toda la textura final."},
+        {"text": "Noelia añade semillas de girasol y lino a la masa del pan integral que hace los fines de semana para desayunar toda la semana."},
+        {"text": "Raúl aprendió a hacer el corte en la superficie del pan justo antes de meterlo al horno, porque si lo hace antes la masa se desinfla."}
+      ]
+    },
+    {
+      "name": "conservas-de-verano",
+      "domain": "cocina",
+      "facts": [
+        {"text": "Patricia hace mermelada de higos de la higuera del patio cada agosto, y este año le salieron catorce tarros con solo tres kilos de fruta."},
+        {"text": "El truco de Fernando para que los tarros cierren bien al vacío es ponerlos boca abajo diez minutos justo después de llenarlos en caliente."},
+        {"text": "Silvia conserva tomate triturado de la huerta de su padre en botes de cristal esterilizados veinte minutos, y le dura hasta la primavera siguiente."},
+        {"text": "Gonzalo etiqueta cada conserva con la fecha y el contenido porque el año pasado confundió los pimientos en vinagre con los de la receta picante."},
+        {"text": "Rocío hace mermelada de tomate verde con jengibre cuando se le queda mucha cosecha sin madurar al final de la temporada."},
+        {"text": "Víctor aprendió que los botes de conserva deben enfriarse despacio y lejos de corrientes de aire, porque un cambio brusco los puede agrietar."},
+        {"text": "Teresa pone un paño de cocina en el fondo de la olla cuando esteriliza los tarros, para que no choquen entre ellos y se rompan."},
+        {"text": "Ignacio hace pepinillos en vinagre con eneldo del huerto, y los deja reposar un mínimo de tres semanas antes de abrir el primer bote."},
+        {"text": "Alba conserva pimientos del piquillo asados en aceite porque su familia los pide siempre para las comidas de Navidad."},
+        {"text": "Mateo calcula que una conserva de tomate bien hecha le ahorra comprar tomate de bote el resto del invierno, aunque el primer verano le costó varios intentos."},
+        {"text": "Olga guarda las conservas en la parte baja de la despensa, alejadas de la luz, porque el sol les cambia el color y el sabor."},
+        {"text": "Jaime hace chutney de ciruela con especias cada septiembre, siguiendo la receta que le pasó una vecina de Robledal hace años."},
+        {"text": "Celia revisa las tapas de los botes antes de guardarlos, y si alguna no ha hecho bien el vacío la mete en la nevera para consumir esa semana."}
+      ]
+    },
+    {
+      "name": "cocina-al-wok",
+      "domain": "cocina",
+      "facts": [
+        {"text": "Andrés calienta el wok hasta que humea antes de echar el aceite, porque si no la verdura suda en vez de saltarse."},
+        {"text": "Lucía corta todas las verduras del salteado en trozos del mismo tamaño para que se hagan a la vez y no queden unas crudas y otras pasadas."},
+        {"text": "El wok de hierro de Marcos necesita curarse con aceite después de cada lavado, porque si no se oxida y coge mal sabor."},
+        {"text": "Elena añade la salsa de soja al final del salteado, nunca al principio, porque si no se quema y amarga todo el plato."},
+        {"text": "Javier descubrió que el pollo marinado veinte minutos con maicena y salsa de soja queda mucho más jugoso al saltearlo a fuego fuerte."},
+        {"text": "Sofía prepara el arroz del día anterior para los salteados, porque el arroz recién hecho suelta demasiada humedad y queda apelmazado en el wok."},
+        {"text": "Diego guarda el jengibre fresco en el congelador y lo ralla directamente sin descongelar, así siempre tiene a mano para los salteados rápidos."},
+        {"text": "Carmen hace los viernes un wok de verduras con lo que le queda de la nevera, y dice que así casi nunca tira comida."},
+        {"text": "Pablo compró una espumadera de bambú específica para el wok, porque las palas normales se le quedaban cortas para remover a esa velocidad."},
+        {"text": "Irene aprendió a no llenar el wok más de un tercio de su capacidad, porque si echa demasiada cantidad de golpe la verdura no se saltea bien."},
+        {"text": "Álvaro añade los fideos de arroz ya hidratados al final, solo para calentarlos un minuto, porque si los saltea demasiado se le rompen."},
+        {"text": "Nuria tiene siempre en la despensa salsa de ostras y aceite de sésamo tostado, los dos ingredientes que más echa de menos cuando se le acaban."},
+        {"text": "Hugo aprendió, después de quemarse una vez, a mantener siempre el wok en movimiento y los ingredientes cortados antes de encender el fuego fuerte."}
+      ]
+    },
+    {
+      "name": "postres-sin-horno",
+      "domain": "cocina",
+      "facts": [
+        {"text": "Marta hace tarta de queso sin horno con gelatina neutra porque en verano prefiere no encender el horno en la cocina pequeña de su piso."},
+        {"text": "Daniel prepara mousse de chocolate con solo tres ingredientes, chocolate, nata y claras montadas, y la deja cuajar toda la noche en la nevera."},
+        {"text": "Claudia descubrió que las galletas tipo digestive trituradas con mantequilla fundida hacen una base perfecta para tartas frías en diez minutos."},
+        {"text": "Rubén hace un tiramisú sin alcohol para los niños, sustituyendo el café por una infusión de cacao suave en el almíbar de los bizcochos."},
+        {"text": "Beatriz prepara vasitos de yogur griego con fruta y miel para las meriendas de la semana, y los deja listos los domingos por la tarde."},
+        {"text": "Óscar aprendió que la gelatina se disuelve mejor en un líquido templado, nunca hirviendo, porque si no pierde parte de su capacidad de cuajar."},
+        {"text": "Cristina hace un pastel de limón sin horno con base de galleta y relleno de queso crema, y lo congela veinte minutos antes de servir para que corte mejor."},
+        {"text": "Iván prepara trufas de chocolate con dátiles y frutos secos como alternativa más sana para las sobremesas familiares de los domingos."},
+        {"text": "Laura descubrió que montar la nata muy fría, casi helada, es la clave para que las mousses no se bajen al cuajar en la nevera."},
+        {"text": "Sergio hace panna cotta de vainilla con un toque de piel de naranja, y la sirve con un coulis de frutos rojos templado."},
+        {"text": "Paula prepara barritas de avena y chocolate sin horno para las meriendas del cole, y las guarda en la nevera hasta una semana."},
+        {"text": "Adrián aprendió que los postres con gelatina necesitan un mínimo de cuatro horas de nevera para cuajar bien, nunca menos aunque tengan prisa."},
+        {"text": "Noelia hace un postre de tres leches sin horno con bizcochos de soletilla, que prepara la noche anterior para que esté bien empapado al día siguiente."}
+      ]
+    },
+    {
+      "name": "caldo-y-sopas-de-invierno",
+      "domain": "cocina",
+      "facts": [
+        {"text": "Raúl hace caldo de huesos durante seis horas a fuego lento, y lo cuela y congela en raciones individuales para usar durante toda la semana."},
+        {"text": "Patricia añade una hoja de laurel y unos granos de pimienta negra al caldo de pollo, pero nunca sal hasta que no está casi terminado."},
+        {"text": "Fernando descubrió que tostar los huesos en el horno antes de hacer el caldo le da un color y un sabor mucho más profundo."},
+        {"text": "Silvia prepara crema de calabaza con jengibre cada vez que le sobra calabaza del huerto de su padre, y la congela en tarros para el invierno."},
+        {"text": "Gonzalo hace sopa de cebolla gratinada los domingos fríos, siguiendo la receta que aprendió en un viaje a Francia hace varios años."},
+        {"text": "Rocío añade siempre un trozo de corteza de jamón al caldo de garbanzos, porque le da un sabor que su familia pide desde niños."},
+        {"text": "Víctor cuela el caldo con un paño fino además del colador normal, porque así queda mucho más limpio y transparente al final."},
+        {"text": "Teresa guarda las verduras algo mustias de la nevera en una bolsa en el congelador para hacer caldo de verduras cuando tiene suficiente cantidad."},
+        {"text": "Ignacio hace sopa de pescado con las espinas y cabezas que le regala el pescadero del mercado de Pozalba los sábados."},
+        {"text": "Alba descubrió que desgrasar el caldo en frío, quitando la capa de grasa cuajada, lo deja mucho más ligero para las sopas de verano."},
+        {"text": "Mateo prepara un caldo depurativo de apio, puerro y jengibre cuando llega de vacaciones con el estómago revuelto por los excesos."},
+        {"text": "Olga hace sopa de miso con verduras y tofu una vez por semana porque es el plato que más le pide su hija mayor."},
+        {"text": "Jaime congela el caldo en cubiteras grandes para tener raciones pequeñas listas para añadir a arroces y guisos sin descongelar todo el bote."}
+      ]
+    },
+    {
+      "name": "especias-y-despensa",
+      "domain": "cocina",
+      "facts": [
+        {"text": "Celia organiza las especias por orden alfabético en un cajón con tarritos etiquetados, porque antes perdía diez minutos buscando el comino cada vez."},
+        {"text": "Andrés compra el pimentón de la Vera directamente a un productor cuando va de viaje a Extremadura, y le dura casi todo el año."},
+        {"text": "Lucía tuesta las especias enteras en una sartén seca antes de molerlas, porque así el aroma es mucho más intenso que comprándolas ya molidas."},
+        {"text": "Marcos descubrió que el comino pierde sabor muy rápido una vez molido, así que ahora lo compra en grano y lo muele justo antes de usarlo."},
+        {"text": "Elena tiene siempre azafrán de verdad guardado en un bote opaco, lejos de la luz, porque al sol pierde color y aroma en pocas semanas."},
+        {"text": "Javier anota en la puerta de la despensa qué especias se le están acabando, para no quedarse sin ellas a mitad de una receta importante."},
+        {"text": "Sofía prepara su propia mezcla de curry con cúrcuma, cilantro y comino, porque las mezclas envasadas que probó le sabían todas parecidas."},
+        {"text": "Diego aprendió que la canela en rama aguanta mucho mejor el paso del tiempo que la canela molida, que se apelmaza y pierde fuerza."},
+        {"text": "Carmen guarda la vainilla en vainas dentro de un bote de azúcar, así tiene siempre azúcar aromatizada lista para repostería."},
+        {"text": "Pablo compró un molinillo de pimienta de cerámica porque el de plástico que tenía se le había roto el mecanismo al año de usarlo."},
+        {"text": "Irene hace su propia sal de hierbas con romero, tomillo y orégano secos del jardín, y la usa para casi todos los asados."},
+        {"text": "Álvaro descubrió que el jengibre en polvo no sustituye bien al fresco en los salteados, así que ahora siempre tiene uno de los dos a mano."},
+        {"text": "Nuria revisa la despensa cada tres meses y tira las especias que lleven más de un año abiertas, porque ya no aportan apenas aroma."}
+      ]
+    },
+    {
+      "name": "cocina-al-aire-libre-barbacoa",
+      "domain": "cocina",
+      "facts": [
+        {"text": "Hugo deja la carne atemperar fuera de la nevera media hora antes de ponerla en la barbacoa, porque si está fría se hace de forma irregular."},
+        {"text": "Marta prepara una salmuera rápida para el pollo de la barbacoa, y dice que desde que lo hace así nunca le queda seco."},
+        {"text": "Daniel limpia la parrilla con un cepillo de alambre todavía caliente, justo después de usarla, porque en frío cuesta mucho más quitar los restos."},
+        {"text": "Claudia marina las verduras para la barbacoa con aceite, limón y hierbas al menos dos horas antes, para que no queden sosas al lado de la carne."},
+        {"text": "Rubén compró un termómetro de aguja para no guiarse solo por el tiempo, porque antes se le pasaban los puntos de cocción del solomillo."},
+        {"text": "Beatriz enciende el carbón con una chimenea de encendido en vez de pastillas, porque le parece que así la comida no coge ningún sabor raro."},
+        {"text": "Óscar prepara siempre una salsa de yogur con menta para acompañar la carne a la brasa, porque refresca el paladar entre bocado y bocado."},
+        {"text": "Cristina deja reposar la carne cinco minutos tapada con papel de aluminio después de sacarla de la parrilla, para que no pierda los jugos al cortarla."},
+        {"text": "Iván aprendió a hacer dos zonas de calor distinto en la barbacoa, una fuerte para marcar y otra suave para terminar la cocción sin quemar."},
+        {"text": "Laura prepara brochetas de verduras y queso halloumi para los invitados vegetarianos, porque siempre hay alguien que no come carne en las reuniones."},
+        {"text": "Sergio guarda el carbón en un cubo metálico con tapa, lejos de la humedad, porque el carbón mojado tarda el doble en prender."},
+        {"text": "Paula descubrió que salar la carne justo antes de ponerla en la parrilla, y no antes, evita que suelte agua y se reseque."},
+        {"text": "Adrián organiza una barbacoa con los vecinos del bloque cada primer sábado de junio desde hace tres años, y cada familia lleva un plato."}
+      ]
+    },
+    {
+      "name": "meal-prep-semanal",
+      "domain": "cocina",
+      "facts": [
+        {"text": "Noelia cocina los domingos cinco táperes de arroz con pollo y verduras para tener las comidas de toda la semana de trabajo resueltas."},
+        {"text": "Raúl descubrió que los táperes de cristal con compartimentos mantienen mejor la textura de las verduras que los de plástico que usaba antes."},
+        {"text": "Patricia prepara las bases por separado, cereal, proteína y verdura, y las mezcla cada mañana para que no se recalienten todas juntas y pierdan textura."},
+        {"text": "Fernando etiqueta cada táper con el día de la semana porque una vez comió un plato que ya llevaba casi diez días en la nevera."},
+        {"text": "Silvia cocina siempre el doble de lo que necesita para la cena, y congela la otra mitad en raciones individuales para los días que llega tarde."},
+        {"text": "Gonzalo descubrió que las legumbres cocidas en grandes cantidades y congeladas en bolsas planas ahorran mucho tiempo entre semana."},
+        {"text": "Rocío prepara un calendario semanal de comidas los viernes, y hace la lista de la compra directamente a partir de ese menú."},
+        {"text": "Víctor aprendió a no meter el arroz todavía caliente en los táperes, porque genera humedad que hace que se apelmace al día siguiente."},
+        {"text": "Teresa combina cada semana una base de cereal distinta, arroz, quinoa o pasta integral, para no comer siempre lo mismo entre semana."},
+        {"text": "Ignacio prepara salsas en pequeños botes aparte, porque mezclarlas desde el domingo hace que las verduras pierdan textura antes de tiempo."},
+        {"text": "Alba descubrió que el brócoli al vapor aguanta mejor los cinco días de la semana que si lo saltea, que se reseca en la nevera."},
+        {"text": "Mateo cocina al vapor varias verduras a la vez en bandejas superpuestas para ahorrar tiempo y gas los domingos de preparación."},
+        {"text": "Olga anota en una pizarra de la cocina qué táper toca cada día, porque si no siempre acaban comiendo el mismo dos veces seguidas."}
+      ]
+    },
+    {
+      "name": "reposteria-para-cumpleanos",
+      "domain": "cocina",
+      "facts": [
+        {"text": "Jaime hace la tarta de cumpleaños de su hija con tres capas de bizcocho de vainilla y relleno de crema de mantequilla de chocolate."},
+        {"text": "Celia aprendió a nivelar los bizcochos con un hilo de coser en vez de un cuchillo, porque le quedan las capas mucho más rectas."},
+        {"text": "Andrés prepara cupcakes decorados cada vez que hay cumpleaños en la oficina de su mujer, y ya tiene fama entre los compañeros."},
+        {"text": "Lucía hace la cobertura de fondant ella misma desde que descubrió que la comprada le sabía demasiado dulce y artificial."},
+        {"text": "Marcos guarda los bizcochos envueltos en film toda la noche antes de montarlos, porque así quedan mucho más jugosos y fáciles de cortar."},
+        {"text": "Elena practica las figuras de buttercream en una tabla antes de decorar la tarta de verdad, porque la primera vez se le estropeó al intentarlo directamente."},
+        {"text": "Javier hace una tarta temática distinta cada año para el cumpleaños de su hijo, y este año fue de dinosaurios con fondant verde."},
+        {"text": "Sofía descubrió que el bizcocho de zanahoria con especias aguanta mejor el calor del verano que los de chocolate, que se funden con la crema."},
+        {"text": "Diego prepara siempre una tarta sin gluten además de la normal, porque un amigo de su hijo tiene intolerancia y así no se queda sin probar."},
+        {"text": "Carmen aprendió a usar manga pastelera con distintas boquillas después de ver varios vídeos, y ahora hace rosetones que antes le parecían imposibles."},
+        {"text": "Pablo compró moldes desmontables de distintos tamaños porque los fijos que tenía le dificultaban sacar los bizcochos enteros sin romperlos."},
+        {"text": "Irene prepara el relleno de la tarta un día antes para que esté bien frío y firme a la hora de montar las capas."},
+        {"text": "Álvaro aprendió que decorar con fruta fresca justo antes de servir, y no la noche anterior, evita que suelte agua sobre el fondant."}
+      ]
+    },
+    {
+      "name": "fermentados-y-encurtidos",
+      "domain": "cocina",
+      "facts": [
+        {"text": "Nuria hace su propio chucrut con col blanca y sal, dejándolo fermentar en un tarro con peso dentro durante al menos dos semanas."},
+        {"text": "Hugo guarda el kéfir de leche en un bote de cristal a temperatura ambiente, y lo cuela cada día para renovar los gránulos."},
+        {"text": "Marta aprendió que el agua con cloro del grifo frena la fermentación del kimchi, así que ahora usa agua filtrada para toda la salmuera."},
+        {"text": "Daniel hace encurtidos rápidos de zanahoria y rabanito con vinagre de arroz, listos para comer a las veinticuatro horas."},
+        {"text": "Claudia descubrió que su primera tanda de kombucha le salió demasiado ácida porque dejó fermentar el té casi dos semanas de más."},
+        {"text": "Rubén guarda la masa madre de pan en un tarro con una goma elástica marcando el nivel, para ver si ha crecido bien antes de usarla."},
+        {"text": "Beatriz hace kimchi de col china con gochugaru que le trae una amiga de un viaje, porque el que encuentra por aquí no pica lo mismo."},
+        {"text": "Óscar fermenta su propia salsa picante con chiles frescos y sal durante un mes, y la cuela antes de embotellarla."},
+        {"text": "Cristina aprendió a reconocer el chucrut en mal estado por el olor, distinto del ácido normal de la fermentación, después de tirar una tanda entera."},
+        {"text": "Iván hace yogur casero con un termo de fermentación y leche entera, y guarda siempre una cucharada del anterior como cultivo para el siguiente."},
+        {"text": "Laura descubrió que el kimchi sabe mejor pasadas dos semanas en la nevera, aunque al principio le costaba resistirse a probarlo recién hecho."},
+        {"text": "Sergio hace pepinillos fermentados en salmuera, sin vinagre, siguiendo un método tradicional que le explicó un amigo polaco."},
+        {"text": "Paula anota la fecha de cada fermentado en la tapa del tarro, porque algunos como el kéfir de agua se estropean si se pasan de tiempo."}
+      ]
+    },
+    {
+      "name": "cocina-de-aprovechamiento",
+      "domain": "cocina",
+      "facts": [
+        {"text": "Adrián hace croquetas con los restos del cocido del domingo, triturando la carne y la verdura junto con parte del caldo para la bechamel."},
+        {"text": "Noelia congela las puntas de pan duro para hacer pan rallado casero, y dice que no ha comprado un paquete desde hace más de un año."},
+        {"text": "Raúl guarda las pieles de las verduras en una bolsa en el congelador para añadirlas al caldo del fin de semana."},
+        {"text": "Patricia aprovecha el pollo asado que sobra del domingo para hacer canelones o croquetas el lunes, y así no repite el mismo plato dos días."},
+        {"text": "Fernando hace un pesto con las hojas de zanahoria que normalmente tiraba, y descubrió que su familia ni notó la diferencia con el de albahaca."},
+        {"text": "Silvia congela los plátanos demasiado maduros pelados y troceados para hacer batidos o bizcochos cuando le sobran de la fruta de la semana."},
+        {"text": "Gonzalo usa el agua de cocer las patatas, llena de almidón, para espesar sopas en vez de tirarla por el desagüe."},
+        {"text": "Rocío hace un revuelto con las verduras que están a punto de pasarse en la nevera, y lo convirtió en la cena fija de los jueves."},
+        {"text": "Víctor guarda los tallos de brócoli, que antes tiraba, para hacer un salteado aparte porque descubrió que tienen mejor sabor del que esperaba."},
+        {"text": "Teresa congela las cáscaras de limón y naranja ralladas en pequeñas porciones para usarlas en repostería sin tener que comprar fruta nueva cada vez."},
+        {"text": "Ignacio reutiliza el aceite de freír, colado y guardado en un bote oscuro, hasta tres o cuatro veces antes de desecharlo."},
+        {"text": "Alba convierte el pan duro en picatostes para las sopas de invierno, tostándolos con un poco de ajo y aceite en la sartén."},
+        {"text": "Mateo hace caldo con las cáscaras de gambas que le sobran después de pelarlas, y dice que le da un sabor mucho más intenso a los arroces."}
+      ]
+    },
+    {
+      "name": "vinos-y-maridaje",
+      "domain": "cocina",
+      "facts": [
+        {"text": "Olga apunta en una libreta los vinos que más le gustan de cada cata, porque si no a los pocos meses no recuerda ni el nombre."},
+        {"text": "Jaime descubrió que un vino blanco joven y afrutado combina mucho mejor con el pescado a la plancha que uno con mucha crianza en barrica."},
+        {"text": "Celia compró una funda térmica para transportar el vino en verano, después de que una botella le llegara a una comida casi caliente."},
+        {"text": "Andrés organiza una cata a ciegas con amigos cada par de meses, y cada uno lleva una botella sin decir el precio ni la zona."},
+        {"text": "Lucía aprendió que los vinos con cuerpo y tanino marcado piden carnes rojas con salsas intensas, mientras que los ligeros van mejor con platos sencillos."},
+        {"text": "Marcos guarda las botellas de vino tumbadas en un mueble alejado de la luz y de la vibración de los electrodomésticos de la cocina."},
+        {"text": "Elena descubrió un vino rosado de una bodega pequeña de Valdecasas que ahora compra por cajas para las comidas de verano."},
+        {"text": "Javier aprendió a abrir el vino tinto con una hora de antelación para que respire, después de notar que recién abierto sabía más cerrado."},
+        {"text": "Sofía anota la temperatura ideal de cada tipo de vino en una tarjeta pegada dentro del armario, porque siempre se le olvidaba cuál enfriar y cuál no."},
+        {"text": "Diego prefiere los vinos de variedades autóctonas poco conocidas cuando viaja, porque dice que así descubre sabores que no encuentra en el supermercado de siempre."},
+        {"text": "Carmen combina quesos curados con vinos dulces para el final de las cenas, un maridaje que aprendió en un curso de cata de un día."},
+        {"text": "Pablo descubrió que decantar un vino joven con sedimento mejora mucho su aroma, aunque al principio le parecía un paso innecesario."},
+        {"text": "Irene lleva siempre un sacacorchos de palanca a las comidas familiares desde que el de rosca se le rompió a mitad de una celebración."}
+      ]
+    },
+    {
+      "name": "viaje-a-portugal",
+      "domain": "viajes",
+      "facts": [
+        {"text": "Álvaro y su familia recorrieron la costa de Portugal en coche durante diez días, parando en Nazaré, Óbidos y Peniche antes de llegar a Lisboa."},
+        {"text": "Nuria reservó un apartamento en el barrio de Alfama con dos meses de antelación porque en agosto los precios suben casi el doble."},
+        {"text": "Hugo descubrió que el pase turístico de Lisboa de 72 horas le compensaba frente a pagar cada entrada por separado, incluso con el tranvía incluido."},
+        {"text": "Marta anotó en su diario de viaje que el pastel de nata de una pastelería pequeña de Belém le gustó más que el de la más famosa."},
+        {"text": "Daniel alquiló el coche en el aeropuerto de Oporto en vez de en Lisboa porque le salía más barato y hizo la ruta al revés."},
+        {"text": "Claudia llevó siempre encima monedas sueltas en Portugal porque muchos baños públicos de las zonas turísticas cobran entre 50 céntimos y un euro."},
+        {"text": "Rubén probó el bacalao a brás en tres restaurantes distintos de Oporto para comparar, y se quedó con el de una taberna cerca de la Ribeira."},
+        {"text": "Beatriz planificó el viaje a Portugal evitando el puente de mayo porque el año anterior encontró los pueblos de la Costa Vicentina saturados de gente."},
+        {"text": "Óscar aprendió que conducir por el centro de Lisboa es complicado por las cuestas y los adoquines, así que dejó el coche en un aparcamiento disuasorio en las afueras."},
+        {"text": "Cristina visitó Sintra a primera hora de la mañana para evitar las colas del Palacio da Pena, que a mediodía superaban la hora de espera."},
+        {"text": "Iván llevó calzado cómodo de suela gruesa a Lisboa porque los adoquines resbaladizos de las cuestas hicieron que su pareja casi se cayera el primer día."},
+        {"text": "Laura descubrió que el tren entre Lisboa y Oporto es más cómodo que el autobús para ese trayecto, aunque algo más caro si no se reserva con antelación."},
+        {"text": "Sergio probó las ginjinhas en un bar diminuto de Lisboa que solo tiene barra y sirve el licor en vasitos de chocolate."}
+      ]
+    },
+    {
+      "name": "ruta-por-el-norte-de-espana",
+      "domain": "viajes",
+      "facts": [
+        {"text": "Paula organizó una ruta de ocho días por Asturias, Cantabria y el País Vasco, alquilando una autocaravana pequeña para no depender de reservas cada noche."},
+        {"text": "Adrián descubrió los quesos de Cabrales en una quesería familiar de un pueblo de montaña, y volvió con cuatro piezas envueltas en papel de aluminio."},
+        {"text": "Noelia aprendió a consultar la previsión de niebla antes de subir a los Picos de Europa, después de que una vez no vieran nada desde el mirador."},
+        {"text": "Raúl probó las sidras de tres lagares distintos en Asturias y apuntó en el móvil cuál escanciaba mejor para comprar una caja al volver."},
+        {"text": "Patricia reservó con un mes de antelación la visita a las Cuevas de Altamira porque el cupo diario de entradas es muy limitado."},
+        {"text": "Fernando descubrió que recorrer la costa cántabra en coche de pueblo en pueblo, sin autopista, triplicaba el tiempo pero merecía la pena por las vistas."},
+        {"text": "Silvia probó el marmitako en un puerto pesquero del País Vasco y desde entonces lo intenta replicar en casa cada vez que hay atún fresco."},
+        {"text": "Gonzalo aprendió que en San Sebastián conviene reservar mesa en los bares de pintxos más conocidos, porque a la hora de cenar se llenan enseguida."},
+        {"text": "Rocío llevó ropa de abrigo e impermeable a pesar de ser julio, porque en la costa norte cambia el tiempo de un valle a otro en minutos."},
+        {"text": "Víctor visitó los Picos de Europa en teleférico desde Fuente Dé, y recomienda subir a primera hora porque luego las nubes tapan el valle."},
+        {"text": "Teresa anotó los horarios de marea antes de ir a las playas de Llanes, porque algunas calas solo se pueden visitar con la marea baja."},
+        {"text": "Ignacio probó el pastel de cabracho en un restaurante de Santander que le recomendó un compañero de trabajo cántabro."},
+        {"text": "Alba descubrió la ruta del Cares como la más bonita del viaje, pero avisa de que conviene llevar agua porque no hay fuentes en todo el recorrido."}
+      ]
+    },
+    {
+      "name": "escapadas-de-fin-de-semana",
+      "domain": "viajes",
+      "facts": [
+        {"text": "Mateo y su pareja se escapan un fin de semana al mes a un pueblo distinto a menos de dos horas en coche, sin plan fijo más allá del alojamiento."},
+        {"text": "Olga reserva siempre casas rurales con chimenea en invierno, porque dice que el ambiente le compensa más que un hotel con piscina en verano."},
+        {"text": "Jaime descubrió una app de rutas de senderismo cercanas que usa para elegir destino de fin de semana según la previsión del tiempo."},
+        {"text": "Celia prepara una bolsa de viaje de fin de semana que deja siempre lista en el armario, con lo básico, para no perder tiempo haciendo maleta cada vez."},
+        {"text": "Andrés fue con amigos a un pueblo con termas naturales a 90 minutos de casa, y ya han repetido tres veces en el último año."},
+        {"text": "Lucía descubrió que viajar el viernes a mediodía en vez de por la tarde le ahorra más de una hora de atasco en la salida de la ciudad."},
+        {"text": "Marcos visita mercados de pueblo los sábados por la mañana cuando se escapa fuera, y siempre vuelve con queso o embutido de algún productor local."},
+        {"text": "Elena planea las escapadas con un presupuesto fijo de 150 euros para los dos, alojamiento y comidas incluidos, y rara vez lo supera."},
+        {"text": "Javier descubrió un mirador a las afueras de Montearán perfecto para ver el atardecer, y ya es parada obligatoria cuando lleva visitas."},
+        {"text": "Sofía prefiere los pueblos con menos de mil habitantes para desconectar del todo, aunque eso signifique no tener cobertura de móvil durante el fin de semana."},
+        {"text": "Diego lleva siempre un termo de café y unos bocadillos cuando sale de ruta, porque dice que parar en gasolineras a comer le rompe el plan."},
+        {"text": "Carmen organiza las escapadas según el calendario de fiestas locales, porque descubrió que las ferias de pueblo tienen mucho más ambiente que el turismo habitual."},
+        {"text": "Pablo apunta en una lista los pueblos que le quedan por visitar a menos de dos horas de casa, y ya lleva marcados más de veinte."}
+      ]
+    },
+    {
+      "name": "viaje-a-italia",
+      "domain": "viajes",
+      "facts": [
+        {"text": "Irene recorrió la Toscana en coche durante una semana, alojándose en un agriturismo entre Siena y San Gimignano con vistas a los viñedos."},
+        {"text": "Álvaro reservó las entradas a los Museos Vaticanos con horario de entrada temprana para evitar las colas que vio al pasar por la tarde."},
+        {"text": "Nuria probó la auténtica carbonara en una trattoria familiar de Roma, lejos de la zona turística, siguiendo la recomendación de un amigo italiano."},
+        {"text": "Hugo descubrió que el tren de alta velocidad entre Roma y Florencia tarda menos de una hora y media, mucho menos de lo que esperaba."},
+        {"text": "Marta aprendió a comprar el billete del vaporetto por días en Venecia, porque pagar trayecto a trayecto le salía mucho más caro al final."},
+        {"text": "Daniel visitó Cinque Terre andando entre los cinco pueblos en un solo día, aunque reconoce que el último tramo se le hizo más duro de lo previsto."},
+        {"text": "Claudia probó seis sabores distintos de helado artesanal en una heladería de Florencia que le recomendaron, y se quedó con el de pistacho."},
+        {"text": "Rubén descubrió que muchas iglesias de Roma exigen hombros y rodillas cubiertas, así que ahora lleva siempre un pañuelo grande en la mochila."},
+        {"text": "Beatriz reservó la visita a la Capilla Sixtina con la entrada combinada de los Museos Vaticanos dos meses antes, porque en temporada alta se agota."},
+        {"text": "Óscar aprendió a pedir el café en la barra y pagarlo antes, como hacen los italianos, después de que un camarero le corrigiera con buen humor."},
+        {"text": "Cristina visitó Pompeya con una audioguía descargada porque las visitas guiadas en español solo tenían horario a las once de la mañana."},
+        {"text": "Iván probó el aperitivo con tapas incluidas en un bar de Milán, una costumbre que ahora intenta repetir cuando sale con amigos en su ciudad."},
+        {"text": "Laura descubrió que conducir en el centro de las ciudades italianas tiene restricciones por zonas, así que dejó el coche en un párking a las afueras de Florencia."}
+      ]
+    },
+    {
+      "name": "equipaje-y-maletas",
+      "domain": "viajes",
+      "facts": [
+        {"text": "Sergio compró una báscula de maleta pequeña después de pagar exceso de equipaje dos veces en vuelos de bajo coste."},
+        {"text": "Paula organiza la maleta con bolsas de compresión separadas por tipo de ropa, y dice que así cabe casi el doble que antes."},
+        {"text": "Adrián descubrió que enrollar la ropa en vez de doblarla le ahorra espacio y además llega con menos arrugas al destino."},
+        {"text": "Noelia lleva siempre un cambio de ropa y el cargador del móvil en el equipaje de mano, por si la maleta grande se retrasa."},
+        {"text": "Raúl etiqueta las maletas con una cinta de color llamativa desde que una vez se llevó por error la maleta de otro pasajero del mismo modelo."},
+        {"text": "Patricia hace una lista de equipaje guardada en el móvil que revisa antes de cada viaje, porque siempre olvidaba algo distinto cada vez."},
+        {"text": "Fernando compró una maleta de cabina rígida después de que la blanda se le rompiera una cremallera a mitad de un viaje largo."},
+        {"text": "Silvia lleva un neceser de líquidos ya preparado y listo en el armario, para no tener que recordar las medidas permitidas cada vez que vuela."},
+        {"text": "Gonzalo descubrió que meter los zapatos dentro de gorros de ducha de hotel evita que ensucien el resto de la ropa en la maleta."},
+        {"text": "Rocío pesa la maleta en casa antes de salir hacia el aeropuerto desde que una vez tuvo que sacar ropa delante de todo el mostrador."},
+        {"text": "Víctor lleva una maleta de colores vivos porque, con tantas maletas negras iguales en la cinta, antes tardaba siempre en identificar la suya."},
+        {"text": "Teresa guarda los artículos frágiles envueltos en la ropa en el centro de la maleta, lejos de los bordes, desde que se le rompió un recuerdo de cristal."},
+        {"text": "Ignacio prepara una maleta distinta para cada tipo de viaje, playa, montaña o ciudad, ya medio hecha con lo básico de cada tipo de escapada."}
+      ]
+    },
+    {
+      "name": "viaje-en-familia-a-la-playa",
+      "domain": "viajes",
+      "facts": [
+        {"text": "Alba reserva el apartamento de playa con dos años de antelación para las mismas fechas de julio, porque los buenos sitios se agotan muy rápido."},
+        {"text": "Mateo lleva siempre una sombrilla grande y una carpa de playa desde que sus hijos pequeños no aguantaban más de una hora al sol directo."},
+        {"text": "Olga prepara una bolsa de playa fija con protector solar, agua y fruta cortada, que deja lista la noche antes para no perder tiempo por la mañana."},
+        {"text": "Jaime descubrió que llegar a la playa antes de las diez de la mañana le permite encontrar sitio a la sombra sin reservar nada."},
+        {"text": "Celia enseñó a sus hijos a nadar en una piscina municipal durante el invierno para que llegaran al verano con más soltura en el mar."},
+        {"text": "Andrés compró cubos y palas resistentes después de que los baratos de la tienda de playa se rompieran a los dos días de uso."},
+        {"text": "Lucía lleva siempre vinagre en la bolsa de playa por si alguna medusa pica a los niños, un consejo que le dio el socorrista del año pasado."},
+        {"text": "Marcos organiza las comidas de playa con táperes de fruta y bocadillos para no depender de los chiringuitos, que en temporada alta están siempre llenos."},
+        {"text": "Elena descubrió una playa con bandera azul a veinte minutos de la casa de sus padres, mucho menos masificada que la principal del pueblo."},
+        {"text": "Javier lleva un carrito plegable para transportar sombrillas, neveras y juguetes desde el coche hasta la arena, después de hacerse daño en la espalda el verano pasado."},
+        {"text": "Sofía aplica el protector solar a los niños media hora antes de salir de casa, porque descubrió que si lo hace ya en la playa no da tiempo a que haga efecto."},
+        {"text": "Diego reserva siempre socorrista cerca y revisa la bandera de la playa antes de meter a los niños al agua, sobre todo con viento de levante."},
+        {"text": "Carmen lleva juegos de cartas y una pelota blanda para las horas de más calor, cuando prefiere que los niños jueguen bajo la sombrilla en vez de en el agua."}
+      ]
+    },
+    {
+      "name": "viaje-de-montana-y-senderismo",
+      "domain": "viajes",
+      "facts": [
+        {"text": "Pablo compró botas de montaña con una talla más grande de lo habitual porque en descensos largos los pies se hinchan y necesitan espacio."},
+        {"text": "Irene aprendió a revisar la previsión de tormentas antes de subir por encima de los dos mil metros, después de que una vez les pillara una granizada."},
+        {"text": "Álvaro lleva siempre un mapa en papel además del móvil, porque en varias rutas de montaña se queda sin cobertura y sin batería a la vez."},
+        {"text": "Nuria organiza las rutas familiares según la edad de los niños, nunca más de 8 kilómetros con los pequeños, para que no acaben la excursión llorando."},
+        {"text": "Hugo descubrió que empezar las rutas de montaña al amanecer evita el calor de mediodía y las tormentas de verano que suelen formarse por la tarde."},
+        {"text": "Marta lleva bastones de trekking desde que notó que le quitan mucha carga a las rodillas en los descensos largos de piedra suelta."},
+        {"text": "Daniel aprendió a calcular el tiempo de ruta multiplicando la distancia y sumando tiempo extra por cada 100 metros de desnivel positivo."},
+        {"text": "Claudia lleva siempre una manta térmica ligera en la mochila, por si hay que esperar o refugiarse de un cambio de tiempo."},
+        {"text": "Rubén descubrió un refugio de montaña con literas donde pasar la noche a mitad de una ruta de dos días por los Pirineos."},
+        {"text": "Beatriz anota en el móvil el punto exacto donde deja el coche al empezar una ruta circular, porque una vez tardaron una hora en encontrarlo al volver."},
+        {"text": "Óscar lleva comida con mucha energía y poco peso, frutos secos y barritas, después de quedarse sin fuerzas en una ruta más larga de lo previsto."},
+        {"text": "Cristina avisa siempre a alguien de la ruta exacta y la hora prevista de vuelta antes de salir a hacer montaña sola."},
+        {"text": "Iván descubrió que el calzado de montaña necesita un rodaje de varias salidas cortas antes de estrenarlo en una ruta larga, para evitar ampollas."}
+      ]
+    },
+    {
+      "name": "viajes-en-tren-interrail",
+      "domain": "viajes",
+      "facts": [
+        {"text": "Laura compró el pase de interrail de un mes antes de cumplir 28 años, el límite de edad para el billete juvenil con descuento."},
+        {"text": "Sergio reservó con antelación los trenes nocturnos de trayectos largos porque, aunque el pase cubre el billete base, las plazas de cama se agotan rápido."},
+        {"text": "Paula llevaba una mochila de 40 litros en vez de maleta con ruedas, porque en interrail se cambia de tren y de andén constantemente."},
+        {"text": "Adrián aprendió a usar la app oficial del interrail para reservar los trenes de alta velocidad obligatorios, que no están incluidos solo con el pase."},
+        {"text": "Noelia durmió en trenes nocturnos tres veces durante el viaje para ahorrarse el alojamiento de esas noches y aprovechar mejor los días."},
+        {"text": "Raúl descubrió que algunos países exigen reserva de asiento aunque el pase sea válido, y se quedó de pie una vez por no saberlo."},
+        {"text": "Patricia organizó el itinerario por zonas geográficas en vez de países, para no perder días enteros en trayectos de vuelta sobre sus propios pasos."},
+        {"text": "Fernando llevó un candado pequeño para asegurar la mochila en los trenes nocturnos compartidos con desconocidos, por recomendación de otros viajeros."},
+        {"text": "Silvia descubrió que viajar en temporada baja, fuera de julio y agosto, le salió mucho más barato en reservas de trenes de alta velocidad."},
+        {"text": "Gonzalo aprendió a comprobar los horarios de los trenes regionales el día antes, porque cambian con más frecuencia que los de largo recorrido."},
+        {"text": "Rocío llevó comida y agua para los trayectos largos, porque algunos trenes regionales de países del este no tienen ni vagón restaurante."},
+        {"text": "Víctor conoció a otros viajeros de interrail en los vagones compartidos, y todavía sigue en contacto con dos de ellos varios años después."},
+        {"text": "Teresa descubrió que algunos trenes nocturnos tienen enchufe solo en los compartimentos de cama, así que lleva siempre una batería externa cargada."}
+      ]
+    },
+    {
+      "name": "viaje-a-marruecos",
+      "domain": "viajes",
+      "facts": [
+        {"text": "Ignacio contrató un guía local para recorrer la medina de Fez, porque las callejuelas son tan laberínticas que sin ayuda se habría perdido en minutos."},
+        {"text": "Alba aprendió a regatear en los zocos empezando por la mitad del precio inicial, una costumbre que al principio le resultaba incómoda pero acabó disfrutando."},
+        {"text": "Mateo durmió una noche en el desierto de Merzouga en una tienda beréber, después de cruzar las dunas en camello al atardecer."},
+        {"text": "Olga llevó ropa que cubriera hombros y rodillas para visitar las medinas, por respeto a las costumbres locales, y lo agradeció también por el sol."},
+        {"text": "Jaime probó el té con menta en varias casas de té de Marrakech, y descubrió que cada una lo prepara con una proporción distinta de azúcar."},
+        {"text": "Celia contrató un chófer privado para el trayecto entre Marrakech y Essaouira, porque las carreteras de montaña le daban respeto conducir de noche."},
+        {"text": "Andrés visitó las Cascadas de Ouzoud en una excursión de un día desde Marrakech, y recomienda ir a primera hora para evitar las multitudes."},
+        {"text": "Lucía aprendió a llevar siempre agua embotellada y a evitar el hielo en las bebidas, después de que un compañero de viaje se pusiera enfermo."},
+        {"text": "Marcos descubrió que el riad donde se alojó en Marrakech, con patio interior y terraza, era mucho más tranquilo que los hoteles de la zona nueva."},
+        {"text": "Elena probó el tajín de cordero con ciruelas en un restaurante familiar de Chefchaouen, la ciudad azul que más le sorprendió de todo el viaje."},
+        {"text": "Javier contrató un seguro médico de viaje ampliado antes de ir a Marruecos, por recomendación de un amigo que había tenido una urgencia allí."},
+        {"text": "Sofía descubrió que cambiar dinero en el aeropuerto le daba peor cambio que hacerlo en una casa de cambio del centro de Marrakech."},
+        {"text": "Diego llevó pañuelos de papel y gel desinfectante en la mochila, porque los baños públicos de algunas zonas turísticas no siempre tienen lo básico."}
+      ]
+    },
+    {
+      "name": "reservas-de-alojamiento",
+      "domain": "viajes",
+      "facts": [
+        {"text": "Carmen compara siempre tres plataformas distintas antes de reservar un alojamiento, porque ha encontrado diferencias de hasta 40 euros por la misma habitación."},
+        {"text": "Pablo aprendió a leer las reseñas más recientes antes que la puntuación media, porque un hotel puede haber bajado de calidad en los últimos meses."},
+        {"text": "Irene reserva con cancelación gratuita siempre que puede, aunque sea unos euros más cara, porque los planes de viaje de su familia cambian con frecuencia."},
+        {"text": "Álvaro descubrió que llamar directamente al hotel pequeño a veces consigue mejor precio que reservar por plataforma, sobre todo en temporada baja."},
+        {"text": "Nuria guarda capturas de pantalla de la confirmación de cada reserva en una carpeta del móvil, por si se cae la conexión al llegar al alojamiento."},
+        {"text": "Hugo prefiere los apartamentos con cocina pequeña cuando viaja con niños, porque le permite preparar algún desayuno y ahorrar en restaurantes."},
+        {"text": "Marta aprendió a comprobar la ubicación exacta en el mapa antes de reservar, después de que un alojamiento céntrico estuviera a 40 minutos andando del centro real."},
+        {"text": "Daniel reserva el alojamiento de la última noche de viaje cerca del aeropuerto, para no tener prisas ni trayectos largos el día de vuelta."},
+        {"text": "Claudia descubrió que los alojamientos con cocina compartida en albergues le permitían ahorrar bastante en comidas durante viajes largos de varias semanas."},
+        {"text": "Rubén anota en una lista las preguntas que suele olvidar antes de reservar, si hay ascensor, si el aire acondicionado es aparte, si aceptan mascotas."},
+        {"text": "Beatriz prefiere alojarse en casas de familias locales cuando viaja, porque dice que así conoce costumbres que no vería en un hotel estándar."},
+        {"text": "Óscar aprendió a reservar con antelación en fechas de ferias o festivales locales, después de encontrarse una ciudad entera sin habitaciones libres un fin de semana."},
+        {"text": "Cristina revisa siempre las fotos más recientes subidas por otros viajeros, porque las del anuncio a veces son de varios años atrás."}
+      ]
+    },
+    {
+      "name": "viaje-low-cost-a-grecia",
+      "domain": "viajes",
+      "facts": [
+        {"text": "Iván planificó un viaje a las islas griegas combinando ferry y avión, saltando de Atenas a Naxos y de ahí a Santorini en diez días."},
+        {"text": "Laura descubrió que viajar a finales de mayo, antes de la temporada alta, le ahorró casi la mitad en alojamiento frente a los precios de julio."},
+        {"text": "Sergio comió en tabernas alejadas del puerto principal, donde los precios eran casi la mitad que en los restaurantes con vistas al mar."},
+        {"text": "Paula reservó los ferrys entre islas con dos meses de antelación, porque en temporada alta algunos trayectos se llenan por completo."},
+        {"text": "Adrián llevó agua y fruta desde el supermercado para las playas, después de ver que los chiringuitos de las islas más turísticas cobraban precios muy altos."},
+        {"text": "Noelia descubrió que alquilar un quad o una moto pequeña en las islas resultaba mucho más barato y práctico que contratar excursiones organizadas."},
+        {"text": "Raúl visitó Atenas en los dos primeros días del viaje, antes de moverse a las islas, para ver la Acrópolis sin el calor extremo de pleno verano."},
+        {"text": "Patricia aprendió a comprar fruta y queso feta en los mercados locales de cada isla en vez de en las tiendas de recuerdos, mucho más caras."},
+        {"text": "Fernando descubrió que las habitaciones con vistas al mar en Santorini triplicaban el precio de las que estaban a dos calles, con vistas desde una terraza compartida."},
+        {"text": "Silvia llevó calzado de agua para las playas de piedra de algunas islas, después de que su pareja se hiciera daño en los pies el primer día."},
+        {"text": "Gonzalo organizó el viaje evitando el mes de agosto por completo, cuando los precios de ferrys y alojamiento suben mucho respecto a junio o septiembre."},
+        {"text": "Rocío probó el musaka en tres tabernas distintas de distintas islas para comparar, y se quedó con la receta de una taberna familiar de Naxos."},
+        {"text": "Víctor descubrió que el transporte público entre pueblos de las islas es escaso, así que alquilar un coche pequeño les ahorró horas de espera."}
+      ]
+    },
+    {
+      "name": "seguro-de-viaje-y-documentacion",
+      "domain": "viajes",
+      "facts": [
+        {"text": "Teresa contrata siempre un seguro de viaje con cobertura médica de al menos 60.000 euros para los viajes fuera de Europa, por si hay que repatriar a alguien."},
+        {"text": "Ignacio escanea el pasaporte y la tarjeta sanitaria antes de cada viaje y los guarda en una carpeta del correo, por si pierde los originales."},
+        {"text": "Alba descubrió que algunos países exigen el pasaporte con al menos seis meses de validez restante, y tuvo que renovarlo con prisas antes de un viaje."},
+        {"text": "Mateo lleva siempre una copia física de las reservas de vuelos y alojamiento, por si se queda sin batería o sin conexión al llegar."},
+        {"text": "Olga apuntó el número de la póliza del seguro de viaje en un papel dentro de la maleta, además de en el móvil, por si lo pierde."},
+        {"text": "Jaime aprendió a comprobar si necesita visado con varias semanas de antelación, después de que a un amigo le denegaran el embarque por no tenerlo."},
+        {"text": "Celia lleva una pequeña cantidad de efectivo en la moneda local además de la tarjeta, por si algún comercio pequeño no acepta pago con tarjeta."},
+        {"text": "Andrés guarda los datos de contacto de la embajada del país que visita en una nota del móvil, por si surge cualquier imprevisto grave."},
+        {"text": "Lucía descubrió que el seguro de su tarjeta bancaria ya cubría parte del viaje, pero decidió ampliarlo porque no incluía deportes de aventura."},
+        {"text": "Marcos lleva vacunas al día revisadas con el médico de cabecera antes de viajes a zonas tropicales, con al menos un mes de margen."},
+        {"text": "Elena hace fotocopias en papel del carné de conducir internacional antes de alquilar coche en el extranjero, por si lo pide la policía local."},
+        {"text": "Javier anota las alergias y medicación habitual en varios idiomas en una tarjeta que lleva en la cartera, por si tiene una urgencia fuera de casa."},
+        {"text": "Sofía revisa las recomendaciones oficiales de viaje del país de destino antes de salir, para saber si hay alguna zona que conviene evitar esos días."}
+      ]
+    },
+    {
+      "name": "rutina-de-pesas",
+      "domain": "salud",
+      "facts": [
+        {"text": "Diego sigue una rutina de pesas de cuatro días a la semana dividida en tren superior e inferior, con descanso de 48 horas entre grupos musculares."},
+        {"text": "Carmen anota en una app el peso y las repeticiones de cada ejercicio, porque antes no sabía si estaba progresando o estancada."},
+        {"text": "Pablo contrató a un entrenador personal durante tres meses solo para corregir la técnica de la sentadilla, después de notar molestias en la rodilla."},
+        {"text": "Irene aumenta el peso de las pesas solo cuando completa las tres series con la técnica correcta, nunca antes aunque le cueste la última repetición."},
+        {"text": "Álvaro descubrió que calentar diez minutos con movilidad articular antes de levantar peso le quitó las molestias de hombro que tenía desde hacía meses."},
+        {"text": "Nuria entrena en un gimnasio pequeño de barrio porque prefiere conocer a los otros socios en vez de ir a una cadena más grande."},
+        {"text": "Hugo descansa una semana completa de pesas cada dos meses, después de leer que el descanso programado ayuda a seguir progresando a largo plazo."},
+        {"text": "Marta cambió el peso muerto convencional por el rumano porque le molestaba menos la zona lumbar y notaba más trabajo en los isquiotibiales."},
+        {"text": "Daniel lleva un cuaderno físico en el gimnasio en vez del móvil, porque dice que se distrae menos entre serie y serie."},
+        {"text": "Claudia empezó con pesas después de los 40 para frenar la pérdida de masa muscular, siguiendo el consejo de su médico de cabecera."},
+        {"text": "Rubén prepara la comida post entreno con proteína e hidratos antes de ir al gimnasio, para no tener que improvisar nada al volver."},
+        {"text": "Beatriz aprendió a priorizar los ejercicios multiarticulares, sentadilla, peso muerto y press banca, antes que los de aislamiento cuando tiene poco tiempo."},
+        {"text": "Óscar descubrió que entrenar a primera hora de la mañana, antes de las ocho, le ayuda a mantener la constancia mucho mejor que entrenar por la tarde."}
+      ]
+    },
+    {
+      "name": "carrera-y-running",
+      "domain": "salud",
+      "facts": [
+        {"text": "Cristina empezó a correr con el método de caminar y trotar alternando minutos, hasta que a las ocho semanas consiguió correr 30 minutos sin parar."},
+        {"text": "Iván corre sus tiradas largas del domingo por un parque junto al río, porque el asfalto de la ciudad le resiente las rodillas más que la tierra."},
+        {"text": "Laura se apuntó a una media maratón para tener un objetivo concreto que la obligara a seguir el plan de entrenamiento sin excusas."},
+        {"text": "Sergio cambió de zapatillas cada 600 kilómetros aproximadamente, después de que un podólogo le explicara que la amortiguación se degrada aunque el calzado se vea bien."},
+        {"text": "Paula corre siempre con un compañero del barrio los martes y jueves, porque reconoce que sola le cuesta mucho más salir cuando hace frío."},
+        {"text": "Adrián descubrió que hacer series de velocidad una vez por semana le bajó el ritmo en carreras de diez kilómetros en pocos meses."},
+        {"text": "Noelia lleva un reloj con pulsómetro para controlar que sus tiradas largas se mantengan en zona aeróbica, sin acelerar sin darse cuenta."},
+        {"text": "Raúl corrió su primera carrera popular de 10 km en 58 minutos, y se marcó el objetivo de bajar de 50 minutos antes de fin de año."},
+        {"text": "Patricia aprendió a hacer estiramientos específicos de cadera después de correr, desde que tuvo una molestia en la banda iliotibial que la frenó dos meses."},
+        {"text": "Fernando corre descalzo sobre hierba una vez por semana para fortalecer los pies, un hábito que empezó tras leer sobre el entrenamiento de corredores de fondo."},
+        {"text": "Silvia prefiere correr de noche en verano, cuando bajan las temperaturas, aunque eso signifique llevar siempre una luz frontal en las zonas menos iluminadas."},
+        {"text": "Gonzalo se lesionó el año pasado por aumentar el kilometraje demasiado rápido, y ahora sigue la regla de no subir más de un 10 % semanal."},
+        {"text": "Rocío corre con música solo en las tiradas largas, porque en las series de velocidad prefiere concentrarse en la respiración y el ritmo."}
+      ]
+    },
+    {
+      "name": "clases-de-yoga",
+      "domain": "salud",
+      "facts": [
+        {"text": "Víctor empezó yoga para complementar las pesas y mejorar la movilidad de cadera, que notaba muy limitada después de tantos años sentado en una oficina."},
+        {"text": "Teresa practica yin yoga los domingos por la noche, posturas largas y pasivas, porque le ayuda a bajar el ritmo antes de empezar la semana."},
+        {"text": "Ignacio descubrió que el yoga le mejoró el dolor crónico de espalda mucho más que los analgésicos que tomaba antes sin resultados claros."},
+        {"text": "Alba practica con una profesora que da clases en un local pequeño del barrio, con grupos de no más de ocho personas."},
+        {"text": "Mateo aprendió a respetar sus límites en las posturas de equilibrio, después de forzar una torsión y notar un pinchazo en la zona lumbar."},
+        {"text": "Olga combina yoga restaurativo con meditación guiada los días de más estrés en el trabajo, y dice que nota la diferencia en cómo duerme esa noche."},
+        {"text": "Jaime lleva su propia esterilla antideslizante a clase desde que notó que las del centro se le resbalaban en las posturas de pie."},
+        {"text": "Celia practica saludo al sol cada mañana antes de desayunar, apenas diez minutos, como forma de activar el cuerpo sin ir al gimnasio."},
+        {"text": "Andrés descubrió el yoga después de una lesión de rodilla que le impedía correr, y ahora lo mantiene incluso tras recuperarse del todo."},
+        {"text": "Lucía practica yoga prenatal desde el segundo trimestre de embarazo, en clases pensadas específicamente para esa etapa con una instructora especializada."},
+        {"text": "Marcos aprendió a usar bloques y cinchas para adaptar posturas que antes no podía completar por falta de flexibilidad en los isquiotibiales."},
+        {"text": "Elena practica pranayama, ejercicios de respiración, antes de las reuniones importantes del trabajo porque le ayuda a bajar los nervios en minutos."},
+        {"text": "Javier descubrió que las clases de yoga en grupo le motivan mucho más que practicar solo con vídeos en casa, donde siempre acababa dejándolo a medias."}
+      ]
+    },
+    {
+      "name": "natacion-en-piscina-municipal",
+      "domain": "salud",
+      "facts": [
+        {"text": "Sofía nada tres veces por semana en la piscina municipal a las siete de la mañana, antes de que se llene de gente y de clases."},
+        {"text": "Diego se apuntó a clases de natación de adultos porque nunca aprendió a nadar bien de niño y le daba vergüenza reconocerlo entre sus amigos."},
+        {"text": "Carmen nada 1.500 metros en cada sesión, alternando estilos, porque descubrió que variar entre crol y espalda le evita sobrecargar siempre los mismos músculos."},
+        {"text": "Pablo lleva gafas graduadas de natación desde que chocó con el bordillo de la piscina por no ver bien sin sus gafas normales."},
+        {"text": "Irene descubrió que nadar le ayudó a recuperar movilidad en el hombro después de una operación, siguiendo pautas concretas de su fisioterapeuta."},
+        {"text": "Álvaro apunta sus tiempos por cada 100 metros en una libreta junto a la piscina, para ver si mejora semana a semana."},
+        {"text": "Nuria prefiere la piscina municipal exterior en verano, aunque esté más llena, porque la climatizada de invierno le resulta demasiado calurosa para nadar fuerte."},
+        {"text": "Hugo aprendió la técnica de respiración bilateral con un monitor, después de notar que siempre giraba el cuello hacia el mismo lado y le generaba molestias."},
+        {"text": "Marta lleva tapones de oídos de silicona a medida desde que tuvo una infección de oído el año pasado por el agua de la piscina."},
+        {"text": "Daniel nada con aletas cortas una vez por semana para trabajar la fuerza de piernas sin sobrecargar los brazos, que entrena aparte con pesas."},
+        {"text": "Claudia se apuntó a clases de natación con su hija pequeña los sábados, un rato que ambas tienen reservado solo para ellas."},
+        {"text": "Rubén descubrió que la piscina municipal tiene un carril lento y uno rápido, y desde que respeta esa división choca mucho menos con otros nadadores."},
+        {"text": "Beatriz nada después de las pesas, nunca antes, porque notó que si nada primero llega demasiado cansada para levantar el peso con buena técnica."}
+      ]
+    },
+    {
+      "name": "ciclismo-de-carretera",
+      "domain": "salud",
+      "facts": [
+        {"text": "Óscar sale a rodar los domingos por la mañana con un grupo de ciclistas del barrio, siempre antes de que el tráfico de coches aumente."},
+        {"text": "Cristina compró una bicicleta de carretera de segunda mano revisada en un taller especializado, después de comparar precios durante casi dos meses."},
+        {"text": "Iván aprendió a cambiar una cámara pinchada en la carretera después de quedarse tirado una vez a 20 kilómetros de casa sin saber cómo hacerlo."},
+        {"text": "Laura lleva siempre un chaleco reflectante y luces delanteras y traseras, incluso de día, desde que un coche no la vio bien en una rotonda."},
+        {"text": "Sergio hace rutas de 60 kilómetros los sábados y reserva los domingos para salidas más cortas y tranquilas con su pareja."},
+        {"text": "Paula aprendió a llevar geles energéticos en las rutas de más de dos horas, después de quedarse sin fuerzas a mitad de una subida larga."},
+        {"text": "Adrián revisa la presión de las ruedas antes de cada salida, porque descubrió que con poca presión se pincha mucho más fácilmente en carreteras con gravilla."},
+        {"text": "Noelia se apuntó a un club de ciclismo local para no salir siempre sola, y ahora entrena con un grupo de nivel similar los fines de semana."},
+        {"text": "Raúl compró un medidor de potencia para entrenar por zonas en vez de solo por sensación, siguiendo un plan que le preparó un entrenador."},
+        {"text": "Patricia aprendió a bajar puertos de montaña con las manos en la parte baja del manillar, después de que un compañero más experimentado le corrigiera la postura."},
+        {"text": "Fernando lleva una mochila pequeña con herramientas básicas, cámara de repuesto e inflador, desde que tuvo que volver andando una vez por no llevar nada."},
+        {"text": "Silvia descubrió que entrenar en rodillo los días de lluvia le permitió mantener la forma durante todo el invierno sin perder las salidas de fin de semana."},
+        {"text": "Gonzalo hizo su primera marcha cicloturista de 100 kilómetros tras seis meses de entrenamiento progresivo, y terminó con mejores sensaciones de las que esperaba."}
+      ]
+    },
+    {
+      "name": "fisioterapia-de-rodilla",
+      "domain": "salud",
+      "facts": [
+        {"text": "Rocío empezó fisioterapia de rodilla después de una rotura parcial de menisco, con sesiones dos veces por semana durante los primeros dos meses."},
+        {"text": "Víctor aprendió ejercicios de fortalecimiento de cuádriceps con banda elástica que ahora hace en casa como mantenimiento, sin ir siempre a la clínica."},
+        {"text": "Teresa descubrió que el dolor de rodilla que tenía al subir escaleras mejoró mucho cuando el fisioterapeuta le corrigió un desequilibrio en la cadera."},
+        {"text": "Ignacio lleva una rodillera deportiva solo durante las actividades de más impacto, porque el fisioterapeuta le explicó que usarla siempre podría debilitar la musculatura."},
+        {"text": "Alba hace ejercicios de propiocepción sobre una superficie inestable como parte de la recuperación final antes de volver a correr con normalidad."},
+        {"text": "Mateo aprendió que aplicar hielo los primeros tres días tras una molestia aguda, y calor después, es la pauta general que le dio su fisioterapeuta."},
+        {"text": "Olga combina las sesiones de fisioterapia con ejercicios de movilidad que hace cada mañana, apenas cinco minutos, antes de levantarse de la cama."},
+        {"text": "Jaime descubrió que fortalecer los glúteos, y no solo el cuádriceps, era la parte que le faltaba para que el dolor de rodilla no volviera."},
+        {"text": "Celia pasó por tres meses de fisioterapia antes de que le dieran el alta deportiva completa para volver a jugar al pádel sin molestias."},
+        {"text": "Andrés aprendió a identificar la diferencia entre una molestia normal de carga y un dolor de alarma que requiere parar y consultar de nuevo."},
+        {"text": "Lucía hace el calentamiento específico que le enseñó su fisioterapeuta antes de cada entrenamiento, aunque le lleve diez minutos más que antes."},
+        {"text": "Marcos descubrió que caminar en pendiente suave en cinta era parte del plan de recuperación antes de volver a correr en superficie plana."},
+        {"text": "Elena lleva un diario de dolor donde anota del uno al diez las molestias cada día, para que el fisioterapeuta ajuste el plan según la evolución real."}
+      ]
+    },
+    {
+      "name": "control-de-sueno",
+      "domain": "salud",
+      "facts": [
+        {"text": "Javier descubrió con una pulsera de actividad que dormía menos de seis horas la mayoría de noches, mucho menos de lo que pensaba."},
+        {"text": "Sofía dejó de usar el móvil al menos 30 minutos antes de dormir, después de leer que la luz azul le retrasaba el sueño profundo."},
+        {"text": "Diego fija la misma hora de despertarse todos los días, incluidos los fines de semana, porque descubrió que eso le ayudó más que cualquier otro cambio."},
+        {"text": "Carmen descubrió que la cafeína después de las tres de la tarde le afectaba al sueño aunque ella no notara sensación de estar despierta."},
+        {"text": "Pablo compró cortinas opacas para el dormitorio después de notar que la luz de la calle le despertaba antes de lo necesario en verano."},
+        {"text": "Irene dejó de hacer ejercicio intenso después de las nueve de la noche, porque descubrió que le costaba mucho más conciliar el sueño esos días."},
+        {"text": "Álvaro mantiene la habitación entre 18 y 19 grados por la noche, desde que un médico le explicó que el calor excesivo fragmenta el sueño."},
+        {"text": "Nuria practica una rutina de respiración de cuatro minutos antes de dormir cuando tiene la cabeza acelerada por el trabajo, y nota que se duerme antes."},
+        {"text": "Hugo descubrió que las siestas de más de 30 minutos le dejaban peor el resto de la tarde, así que ahora pone una alarma corta."},
+        {"text": "Marta anota en una libreta las preocupaciones del día antes de acostarse, un hábito que le recomendó su médico para no darles vueltas en la cama."},
+        {"text": "Daniel cambió el colchón después de diez años de uso, cuando notó que se despertaba con dolor de espalda casi todas las mañanas."},
+        {"text": "Claudia descubrió que cenar menos de dos horas antes de dormir le provocaba digestiones pesadas que le interrumpían el sueño a media noche."},
+        {"text": "Rubén dejó de mirar el reloj cuando se despierta de madrugada, porque comprobó que eso solo le generaba ansiedad y le costaba más volver a dormirse."}
+      ]
+    },
+    {
+      "name": "nutricion-y-dieta",
+      "domain": "salud",
+      "facts": [
+        {"text": "Beatriz empezó a cocinar con báscula de cocina para aprender las raciones reales, después de darse cuenta de que llevaba años sirviéndose el doble de pasta."},
+        {"text": "Óscar consultó a una nutricionista para ajustar sus comidas al entrenamiento de pesas, y descubrió que comía mucha menos proteína de la que necesitaba."},
+        {"text": "Cristina añadió una ración de verdura en cada comida principal, un cambio pequeño que mantiene desde hace un año sin contar calorías."},
+        {"text": "Iván descubrió que desayunar con proteína e hidratos de absorción lenta le quitaba el hambre de media mañana que antes le hacía picar entre horas."},
+        {"text": "Laura dejó de comprar refrescos y bollería para casa, no por prohibición total sino porque notó que si no estaban a la vista no los echaba de menos."},
+        {"text": "Sergio planea el menú semanal los domingos con su pareja, repartiendo quién cocina cada día, para no caer en pedir comida por pereza entre semana."},
+        {"text": "Paula aprendió a leer etiquetas nutricionales fijándose en los azúcares añadidos, después de descubrir que varios productos saludables llevaban más azúcar del que esperaba."},
+        {"text": "Adrián redujo el consumo de carne roja a una vez por semana por salud, sustituyéndola por legumbres y pescado el resto de los días."},
+        {"text": "Noelia descubrió que beber un vaso de agua antes de cada comida le ayudó a comer más despacio y notar antes la sensación de saciedad."},
+        {"text": "Raúl aprendió a preparar snacks saludables, frutos secos y fruta cortada, para llevar al trabajo y no depender de la máquina de la oficina."},
+        {"text": "Patricia consultó con el médico antes de eliminar el gluten de su dieta, después de sospechar una intolerancia que finalmente se confirmó con analíticas."},
+        {"text": "Fernando descubrió que cenar más temprano, antes de las nueve, le mejoró la digestión y la calidad del sueño de forma notable."},
+        {"text": "Silvia añadió pescado azul dos veces por semana a la dieta familiar, siguiendo la recomendación del pediatra para el desarrollo de sus hijos."}
+      ]
+    },
+    {
+      "name": "clases-de-pilates",
+      "domain": "salud",
+      "facts": [
+        {"text": "Gonzalo empezó pilates para fortalecer el core después de una hernia discal, siguiendo la recomendación de su traumatólogo antes de volver a otros deportes."},
+        {"text": "Rocío practica pilates con máquina reformer dos veces por semana, y descubrió que trabaja músculos que el pilates de suelo no le activaba igual."},
+        {"text": "Víctor aprendió a activar el suelo pélvico correctamente durante los ejercicios, algo que según la instructora casi nadie hace bien al empezar."},
+        {"text": "Teresa combina pilates con caminatas largas los fines de semana, una rutina que su médico le recomendó para cuidar la espalda sin impacto."},
+        {"text": "Ignacio descubrió que la respiración lateral que se practica en pilates le ayudó también a correr con mejor control de la postura."},
+        {"text": "Alba empezó pilates después del parto para recuperar la faja abdominal, en clases específicas de posparto con una instructora especializada."},
+        {"text": "Mateo lleva su propia esterilla y bandas elásticas a clase desde que descubrió que las del centro siempre estaban ocupadas al llegar."},
+        {"text": "Olga practica pilates clínico por indicación de su fisioterapeuta, con ejercicios adaptados a una escoliosis leve que le diagnosticaron hace años."},
+        {"text": "Jaime notó mejoras en el dolor lumbar crónico después de tres meses seguidos de pilates, algo que los analgésicos no le habían resuelto antes."},
+        {"text": "Celia aprendió a diferenciar pilates de yoga cuando una amiga le insistió en probarlo, y descubrió que el enfoque en el control y la fuerza es muy distinto."},
+        {"text": "Andrés practica pilates los lunes como complemento a las pesas de martes y jueves, para trabajar la estabilidad que no entrena con el peso libre."},
+        {"text": "Lucía descubrió que mejorar la postura con pilates le quitó parte del dolor de cuello que achacaba solo a las horas delante del ordenador."},
+        {"text": "Marcos se apuntó a clases de pilates en grupo reducido, máximo seis personas, porque en clases más numerosas notaba que nadie corregía su técnica."}
+      ]
+    },
+    {
+      "name": "senderismo-de-fin-de-semana",
+      "domain": "salud",
+      "facts": [
+        {"text": "Elena organiza rutas de senderismo de dificultad baja para salir con sus padres los domingos, siempre con paradas frecuentes y menos de 10 kilómetros."},
+        {"text": "Javier descubrió una ruta circular de dos horas cerca de Montearán que se ha convertido en su paseo fijo cuando necesita despejarse del trabajo."},
+        {"text": "Sofía lleva siempre bastones de trekking en las bajadas, desde que una rodilla empezó a molestarle en descensos largos de piedra suelta."},
+        {"text": "Diego aprendió a revisar el desnivel acumulado de una ruta, no solo la distancia total, después de subestimar una ruta mucho más dura de lo esperado."},
+        {"text": "Carmen hace senderismo con un grupo de WhatsApp de unas quince personas del barrio que organiza una ruta distinta cada mes."},
+        {"text": "Pablo descubrió los beneficios de llevar un botiquín pequeño con tiritas y vendas tras una caída leve de un amigo en una ruta con piedras sueltas."},
+        {"text": "Irene prefiere las rutas con alguna fuente natural en el camino, para no tener que cargar con tanto peso de agua en verano."},
+        {"text": "Álvaro lleva siempre una muda de calcetines de repuesto en la mochila, desde que una vez tuvo que caminar con los pies mojados tras cruzar un riachuelo."},
+        {"text": "Nuria descubrió una app que marca las rutas con el tiempo estimado y el tipo de terreno, y la usa para elegir destino cada fin de semana."},
+        {"text": "Hugo aprendió a llevar comida ligera pero calórica en rutas largas, frutos secos y chocolate, después de quedarse sin energía a mitad de una subida."},
+        {"text": "Marta hace senderismo fotografiando flora y fauna local, y ya lleva un cuaderno con más de cuarenta especies distintas identificadas en sus rutas."},
+        {"text": "Daniel organiza las rutas según la previsión de viento en zonas de cumbre, después de que una vez tuvieran que dar media vuelta por rachas peligrosas."},
+        {"text": "Claudia descubrió que empezar las rutas de verano antes de las ocho de la mañana evita el calor más fuerte de las horas centrales del día."}
+      ]
+    },
+    {
+      "name": "salud-mental-y-terapia",
+      "domain": "salud",
+      "facts": [
+        {"text": "Rubén empezó terapia semanal después de una etapa de mucho estrés laboral, y reconoce que tardó meses en decidirse a pedir la primera cita."},
+        {"text": "Beatriz practica un diario de gratitud cada noche, tres cosas buenas del día, desde que su terapeuta se lo propuso como ejercicio sencillo."},
+        {"text": "Óscar aprendió técnicas de respiración para los ataques de ansiedad, y ahora las usa antes de situaciones que antes evitaba por completo."},
+        {"text": "Cristina descubrió que hablar abiertamente de su terapia con amigos cercanos le quitó parte del peso que sentía al principio por el tema."},
+        {"text": "Iván acude a terapia de pareja desde hace seis meses, una decisión conjunta después de varios meses de discusiones que no sabían resolver solos."},
+        {"text": "Laura aprendió a identificar sus pensamientos automáticos negativos con ayuda de su psicóloga, un trabajo que describe como lento pero que nota que avanza."},
+        {"text": "Sergio dejó de compararse tanto en redes sociales después de un trabajo específico con su terapeuta sobre autoestima y expectativas propias."},
+        {"text": "Paula practica mindfulness diez minutos cada mañana, un hábito que empezó en terapia y que ahora mantiene aunque ya no acuda cada semana."},
+        {"text": "Adrián descubrió que poner límites claros en el trabajo, algo que trabajó en terapia, le redujo mucho los niveles de estrés que arrastraba desde hacía años."},
+        {"text": "Noelia acude a terapia grupal para el duelo tras perder a su padre, y dice que compartir con personas en situaciones parecidas le ha ayudado mucho."},
+        {"text": "Raúl aprendió a reconocer las primeras señales de agotamiento antes de llegar al límite, después de una etapa de baja por ansiedad hace dos años."},
+        {"text": "Patricia empezó terapia a distancia por horarios de trabajo incompatibles con consultas presenciales, y descubrió que le funciona igual de bien."},
+        {"text": "Fernando practica ejercicios de relajación muscular progresiva antes de dormir, una técnica que le enseñó su psicólogo para las noches de más ansiedad."}
+      ]
+    },
+    {
+      "name": "estiramientos-y-movilidad",
+      "domain": "salud",
+      "facts": [
+        {"text": "Silvia dedica diez minutos cada mañana a movilidad de cadera y tobillo antes de cualquier entrenamiento, desde que un fisioterapeuta le explicó su importancia."},
+        {"text": "Gonzalo descubrió que los estiramientos estáticos antes de correr le reducían el rendimiento, así que ahora los deja para después de la carrera."},
+        {"text": "Rocío practica movilidad de hombros cada tarde después de muchas horas sentada frente al ordenador, para contrarrestar la rigidez que se le acumula."},
+        {"text": "Víctor aprendió a usar un rodillo de espuma para liberar tensión en los cuádriceps después de las sesiones largas de pesas."},
+        {"text": "Teresa hace estiramientos de isquiotibiales cada noche antes de dormir, un hábito que le recomendó su fisioterapeuta para el dolor lumbar recurrente."},
+        {"text": "Ignacio descubrió que mejorar la movilidad de tobillo le permitió hacer sentadillas mucho más profundas sin perder el equilibrio."},
+        {"text": "Alba practica una rutina corta de movilidad articular los días que no entrena, para no perder la constancia aunque sea solo un descanso activo."},
+        {"text": "Mateo aprendió a diferenciar el estiramiento normal de una sesión de un dolor que indica lesión, después de forzar demasiado una vez sin darse cuenta."},
+        {"text": "Olga combina estiramientos con respiración profunda, y descubrió que así relaja mucho mejor la musculatura que estirando sin prestar atención a la respiración."},
+        {"text": "Jaime dedica los domingos a una sesión larga de movilidad general, repasando cadera, hombros y columna, como mantenimiento semanal completo."},
+        {"text": "Celia practica estiramientos de cuello y trapecio cada par de horas en el trabajo, desde que empezó a notar tensión constante por las pantallas."},
+        {"text": "Andrés descubrió que estirar en caliente, después de calentar un poco el cuerpo, le daba mucho mejor resultado que estirar en frío al empezar."},
+        {"text": "Lucía aprendió ejercicios específicos de movilidad de columna para la escoliosis leve que le diagnosticaron, como parte del seguimiento con su fisioterapeuta."}
+      ]
+    },
+    {
+      "name": "control-de-tension-y-colesterol",
+      "domain": "salud",
+      "facts": [
+        {"text": "Marcos empezó a controlarse la tensión en casa con un tensiómetro digital después de que en una revisión rutinaria saliera algo más alta de lo normal."},
+        {"text": "Elena redujo el consumo de sal añadida en las comidas, sustituyéndola por hierbas y especias, siguiendo la recomendación de su médico de cabecera."},
+        {"text": "Javier descubrió que caminar 30 minutos diarios le bajó el colesterol en los análisis de control de los seis meses siguientes."},
+        {"text": "Sofía anota la tensión cada mañana en una libreta para llevarla a la revisión con el médico, porque las lecturas sueltas no mostraban el patrón real."},
+        {"text": "Diego dejó la mantequilla por aceite de oliva en casi todas las comidas después de que el colesterol LDL le saliera elevado en el último análisis."},
+        {"text": "Carmen aprendió a leer el etiquetado de grasas saturadas en los productos envasados, un hábito que empezó tras la recomendación de su nutricionista."},
+        {"text": "Pablo redujo el consumo de embutidos a una vez por semana, cambiándolos por pavo o jamón cocido el resto de los días."},
+        {"text": "Irene descubrió que el estrés sostenido le subía la tensión más que la comida, así que empezó a cuidar también el descanso y la gestión del tiempo."},
+        {"text": "Álvaro añadió avena y frutos secos al desayuno después de leer que ayudan a controlar el colesterol de forma natural, junto con el resto de cambios."},
+        {"text": "Nuria acude a revisión de tensión y colesterol cada seis meses desde que a su padre le detectaron hipertensión, por el componente hereditario."},
+        {"text": "Hugo dejó de fumar hace dos años, en parte motivado por los valores de colesterol que veía empeorar en cada análisis anual."},
+        {"text": "Marta sustituyó los refrescos azucarados por agua con limón, un cambio simple que mantiene desde que el médico le avisó de los triglicéridos altos."},
+        {"text": "Daniel aprendió a reconocer los síntomas de tensión alta, dolor de cabeza y mareo, después de un episodio que le llevó a urgencias hace un año."}
+      ]
+    }
+  ]
+}

@@ -1,0 +1,75 @@
+{
+  "queries": [
+    { "query": "¿Qué theme y qué archivos monta la web de Reformaplus?", "expect_neuron": "cliente-reformaplus", "expect_label": "qué plantilla y ficheros usa la página del negocio de obras" },
+    { "query": "¿Cuánto le cobro cada mes a Reformaplus?", "expect_neuron": "cliente-reformaplus", "expect_label": "tarifa periódica acordada con el cliente de obras" },
+    { "query": "¿Cómo le llegan los leads a la web de Reformaplus?", "expect_neuron": "cliente-reformaplus", "expect_label": "mecanismo de recepción de consultas del sitio de obras" },
+    { "query": "¿Qué quedó pendiente con las landings por ciudades de Reformaplus?", "expect_neuron": "cliente-reformaplus", "expect_label": "asunto inacabado sobre las landings geográficas del cliente" },
+
+    { "query": "¿En qué proveedor está el servidor y qué panel usamos?", "expect_neuron": "infraestructura-hosting", "expect_label": "dónde está alojado el servidor y con qué gestor" },
+    { "query": "¿Cuánto cuesta y cuándo caduca el hosting de las webs pequeñas?", "expect_neuron": "infraestructura-hosting", "expect_label": "coste y vencimiento del alojamiento de las webs menores" },
+    { "query": "¿Quién gestiona el DNS y qué plan tiene cada web?", "expect_neuron": "infraestructura-hosting", "expect_label": "quién administra la resolución de nombres y qué nivel paga cada web" },
+    { "query": "¿Qué versión de PHP y qué caché llevan los servidores?", "expect_neuron": "infraestructura-hosting", "expect_label": "versión del lenguaje y aceleración configurada en las máquinas" },
+
+    { "query": "¿Cómo ha evolucionado el tráfico orgánico de la web de Octonove?", "expect_neuron": "seo-octonove", "expect_label": "evolución del tráfico orgánico de la web de la agencia" },
+    { "query": "¿Qué keyword principal estamos posicionando y en qué puesto va?", "expect_neuron": "seo-octonove", "expect_label": "término de búsqueda prioritario y su ranking actual" },
+    { "query": "¿Qué plugin SEO usamos y cómo avisamos a Google?", "expect_neuron": "seo-octonove", "expect_label": "plugin de posicionamiento y aviso al buscador" },
+    { "query": "¿Cada cuánto publicamos en el blog y qué requisitos sigue cada post?", "expect_neuron": "seo-octonove", "expect_label": "cadencia y requisitos de lo que se publica en el blog" },
+
+    { "query": "¿Qué workflows tenemos montados en n8n?", "expect_neuron": "automatizaciones-n8n", "expect_label": "plataforma de orquestación autoalojada y sus procesos" },
+    { "query": "¿Qué automatización clasifica las facturas que nos llegan?", "expect_neuron": "automatizaciones-n8n", "expect_label": "automatización que ordena los recibos entrantes" },
+    { "query": "¿Dónde guardamos la clave de la IA y cuál es su límite?", "expect_neuron": "automatizaciones-n8n", "expect_label": "dónde vive la credencial de IA y su tope de consumo" },
+    { "query": "¿Qué problema tuvo el bot que vigila precios de la competencia?", "expect_neuron": "automatizaciones-n8n", "expect_label": "incidencia del robot que vigila tarifas ajenas" },
+
+    { "query": "¿Qué programa de facturación usamos y cómo cobramos?", "expect_neuron": "facturacion-negocio", "expect_label": "herramienta de contabilidad y ciclo de cobro" },
+    { "query": "¿Cuánto cobro la hora de trabajo?", "expect_neuron": "facturacion-negocio", "expect_label": "precios del trabajo cobrado por tiempo" },
+    { "query": "¿Qué cliente se retrasó con un pago y cómo lo resolvimos?", "expect_neuron": "facturacion-negocio", "expect_label": "morosidad de una cuenta y qué se hizo al respecto" },
+    { "query": "¿Cuál es el objetivo de MRR y cómo vamos?", "expect_neuron": "facturacion-negocio", "expect_label": "meta de ingresos recurrentes y avance actual" },
+
+    { "query": "¿Cómo se actualiza el catálogo de la tienda de CochesChinos?", "expect_neuron": "tienda-cocheschinos", "expect_label": "cómo se renueva el catálogo del ecommerce del cliente" },
+    { "query": "¿Qué pasarela de pago usa la tienda y cómo hacemos pruebas?", "expect_neuron": "tienda-cocheschinos", "expect_label": "sistema de cobros de la tienda y cómo ensayarlo" },
+    { "query": "¿Qué fallaba en el checkout de la tienda y cómo se arregló?", "expect_neuron": "tienda-cocheschinos", "expect_label": "problema con compras que no terminaban y su arreglo" },
+    { "query": "¿Cómo exportamos el catálogo de CochesChinos a Google Shopping?", "expect_neuron": "tienda-cocheschinos", "expect_label": "exportación del listado de artículos al comparador" },
+
+    { "query": "¿Qué plan tenemos del programa de maquetado y dónde se consulta?", "expect_neuron": "herramientas-licencias", "expect_label": "suscripción del maquetador y dónde consultarla" },
+    { "query": "¿Qué plan de prototipado recortamos y dónde quedó el backup?", "expect_neuron": "herramientas-licencias", "expect_label": "recorte en la herramienta de prototipado y respaldo del material" },
+    { "query": "¿Qué equipo y software usamos para grabar vídeos de formación?", "expect_neuron": "herramientas-licencias", "expect_label": "equipo y programa para producir vídeos formativos" },
+    { "query": "¿Cómo repartimos los gastos de las suscripciones de IA?", "expect_neuron": "herramientas-licencias", "expect_label": "reparto de las suscripciones de inteligencia artificial" },
+
+    { "query": "¿Cada cuánto hacemos backup de las webs?", "expect_neuron": "backups-seguridad", "expect_label": "política de salvaguarda de datos de las webs" },
+    { "query": "¿Qué nivel de seguridad tiene cada web?", "expect_neuron": "backups-seguridad", "expect_label": "qué grado de protección tiene cada sitio" },
+    { "query": "¿Qué hicimos cuando hackearon la web de un cliente?", "expect_neuron": "backups-seguridad", "expect_label": "respuesta al ataque sufrido por un cliente" },
+    { "query": "¿Cómo protegemos el acceso remoto a los servidores?", "expect_neuron": "backups-seguridad", "expect_label": "cómo está asegurada la entrada remota a las máquinas" },
+
+    { "query": "¿Qué plataforma usamos para la newsletter y cómo le va?", "expect_neuron": "email-marketing", "expect_label": "boletín periódico: plataforma, audiencia y resultados" },
+    { "query": "¿Tenemos bien configurado el SPF y DKIM del correo?", "expect_neuron": "email-marketing", "expect_label": "autenticación del correo saliente y su estado" },
+    { "query": "¿Cómo funciona el autoresponder de bienvenida y qué resultados tiene?", "expect_neuron": "email-marketing", "expect_label": "serie automática para captados nuevos y su rendimiento" },
+    { "query": "¿Por qué cambiamos de plataforma de email marketing?", "expect_neuron": "email-marketing", "expect_label": "cambio de proveedor de mailing y su motivo" },
+
+    { "query": "¿Qué problemas tuvimos al migrar 8mejor de hosting?", "expect_neuron": "migracion-8mejor", "expect_label": "traslado de una web entre alojamientos y sus incidencias" },
+    { "query": "¿Qué enlaces se rompieron al mover 8mejor y cómo se arreglaron?", "expect_neuron": "migracion-8mejor", "expect_label": "fallo de enlaces rotos al mover el sitio y su solución" },
+    { "query": "¿Qué TTL bajamos temporalmente en el DNS durante la migración?", "expect_neuron": "migracion-8mejor", "expect_label": "ajuste temporal en la caducidad de los registros de nombres" },
+    { "query": "¿Dónde documentamos el proceso de migración para la próxima vez?", "expect_neuron": "migracion-8mejor", "expect_label": "dónde se apuntó el procedimiento para futuros movimientos de sitios" },
+
+    { "query": "¿Qué stack vamos a usar para las próximas webs?", "expect_neuron": "decisiones-desarrollo", "expect_label": "rumbo técnico elegido para construir las próximas webs" },
+    { "query": "¿Dónde tenemos guardado el código que reutilizamos entre proyectos?", "expect_neuron": "decisiones-desarrollo", "expect_label": "dónde vive el código reutilizable de la casa" },
+    { "query": "¿Cómo testeamos los cambios antes de subirlos a producción?", "expect_neuron": "decisiones-desarrollo", "expect_label": "cómo se prueban los cambios antes de publicarlos" },
+    { "query": "¿Bajo qué condiciones aceptamos proyectos a medida?", "expect_neuron": "decisiones-desarrollo", "expect_label": "condiciones para admitir encargos personalizados" },
+
+    { "query": "¿Cuánto invierte en ads un cliente y qué formato funciona mejor?", "expect_neuron": "publicidad-ads", "expect_label": "inversión publicitaria de un cliente y qué formato rinde" },
+    { "query": "¿Cómo llevamos el seguimiento de las conversiones en los anuncios?", "expect_neuron": "publicidad-ads", "expect_label": "seguimiento de los objetivos cumplidos en anuncios" },
+    { "query": "¿Cada cuánto limpiamos las palabras clave negativas de las campañas?", "expect_neuron": "publicidad-ads", "expect_label": "limpieza semanal de consultas irrelevantes en las campañas" },
+    { "query": "¿Cada cuánto enviamos el informe de resultados de publicidad?", "expect_neuron": "publicidad-ads", "expect_label": "reporte periódico de resultados publicitarios y su calendario" }
+  ],
+  "distractors": [
+    { "query": "¿Qué agencia de diseño gráfico subcontratamos para logos?" },
+    { "query": "¿Cuál es el dominio oficial de la web de Reformas Cartagena?" },
+    { "query": "¿Qué CRM usamos para gestionar los leads de los clientes?" },
+    { "query": "¿Cuánto cobramos por el mantenimiento mensual a Fran Cortes Arquitectos?" },
+    { "query": "¿Qué seguro de responsabilidad civil tiene la agencia?" },
+    { "query": "¿Qué certificado SSL usa la web de Majadahonda?" },
+    { "query": "¿Cuántos clientes activos tenemos ahora mismo?" },
+    { "query": "¿Qué red social gestionamos para HealthyBodyChamp?" },
+    { "query": "¿Con qué proveedor de telefonía trabajamos?" },
+    { "query": "¿Qué versión de WordPress corre en Alcalá de Henares?" }
+  ]
+}

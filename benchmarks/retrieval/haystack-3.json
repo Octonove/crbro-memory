@@ -1,0 +1,726 @@
+{
+  "neurons": [
+    {
+      "name": "averias-de-lavadora",
+      "domain": "hogar",
+      "facts": [
+        {"text": "Marcos descubrió que su lavadora no centrifugaba bien porque la correa interna se había desgastado, y el técnico se la cambió en menos de una hora."},
+        {"text": "Elena limpia el filtro de la lavadora cada dos meses después de que una vez se atascara con una moneda olvidada en un bolsillo."},
+        {"text": "Javier descubrió que la lavadora hacía un ruido fuerte al centrifugar por los amortiguadores desgastados, una pieza que tardó una semana en llegar al técnico."},
+        {"text": "Sofía aprendió a no sobrecargar el tambor de la lavadora, desde que el exceso de ropa le dejó varias prendas a medio aclarar."},
+        {"text": "Diego descubrió una fuga de agua en la lavadora por una junta de la puerta deteriorada, que el técnico le cambió sin tener que sustituir el electrodoméstico entero."},
+        {"text": "Carmen limpia el cajetín del detergente cada mes, porque descubrió moho acumulado que le dejaba un olor desagradable en la ropa recién lavada."},
+        {"text": "Pablo descubrió que su lavadora vibraba demasiado porque no estaba bien nivelada sobre el suelo del baño, y ajustando las patas se resolvió el problema."},
+        {"text": "Irene aprendió a dejar la puerta de la lavadora entreabierta después de cada uso, para evitar la humedad y el mal olor que antes se le acumulaba dentro."},
+        {"text": "Álvaro descubrió que la bomba de desagüe de la lavadora estaba obstruida por un calcetín pequeño, algo que resolvió él mismo sin necesidad de técnico."},
+        {"text": "Nuria llama siempre al mismo técnico de electrodomésticos del barrio, porque descubrió que conoce bien el modelo de su lavadora de varios años."},
+        {"text": "Hugo descubrió que el agua dura de su zona dejaba cal acumulada en las resistencias, y ahora usa un producto específico cada mes para evitarlo."},
+        {"text": "Marta aprendió a revisar los bolsillos de la ropa antes de meterla en la lavadora, después de que un bolígrafo arruinara una colada entera."},
+        {"text": "Daniel descubrió que la lavadora tardaba el doble en los programas largos desde que subió la dureza del agua en su zona, y el técnico le recomendó un descalcificador."}
+      ]
+    },
+    {
+      "name": "mantenimiento-de-calefaccion",
+      "domain": "hogar",
+      "facts": [
+        {"text": "Claudia purga los radiadores cada otoño antes de encender la calefacción, desde que descubrió que el aire acumulado le hacía calentar mal una habitación entera."},
+        {"text": "Rubén revisa la presión del circuito de calefacción cada mes en invierno, después de que una caída de presión le dejara dos radiadores fríos."},
+        {"text": "Beatriz descubrió que un radiador no calentaba bien por una válvula atascada, resuelta con un poco de aceite y varios giros suaves."},
+        {"text": "Óscar contrató una revisión anual de la caldera antes de empezar el invierno, siguiendo la recomendación del técnico del año anterior."},
+        {"text": "Cristina descubrió que cerrar las persianas al anochecer le ayudaba a mantener el calor de la casa y reducir el tiempo que la calefacción estaba encendida."},
+        {"text": "Iván aprendió a programar los termostatos por zonas, bajando la temperatura en los dormitorios por la noche y subiéndola solo en las horas de uso."},
+        {"text": "Laura descubrió una fuga pequeña en un radiador antiguo que dejaba manchas de óxido en el suelo, resuelta cambiando una junta desgastada."},
+        {"text": "Sergio purga el radiador del salón con más frecuencia que los demás, porque descubrió que es el que acumula más aire por su posición en la instalación."},
+        {"text": "Paula aprendió a distinguir el ruido normal de la caldera encendiéndose del ruido de una avería, después de una visita innecesaria al técnico."},
+        {"text": "Adrián descubrió que aislar las tuberías de calefacción que pasan por el garaje sin calentar le mejoró bastante el rendimiento general del sistema."},
+        {"text": "Noelia revisa el estado del quemador de la caldera cada temporada, porque descubrió que la suciedad acumulada aumentaba el gasto sin que se notara a simple vista."},
+        {"text": "Raúl descubrió que cambiar los radiadores viejos por unos más eficientes en dos habitaciones redujo bastante el tiempo que tardaban en calentarse."},
+        {"text": "Patricia aprendió a dejar la calefacción en modo reducido en vez de apagarla del todo cuando se va de viaje varios días en invierno."}
+      ]
+    },
+    {
+      "name": "pintura-y-reformas-pequenas",
+      "domain": "hogar",
+      "facts": [
+        {"text": "Fernando pintó el salón él mismo un fin de semana, y descubrió que dos capas finas quedaban mucho mejor que una sola capa gruesa."},
+        {"text": "Silvia lijó la pared antes de pintar después de que la pintura anterior se hubiera descascarillado en varias zonas por la humedad."},
+        {"text": "Gonzalo compró cinta de pintor de buena calidad después de que una barata le dejara los bordes manchados en el marco de la ventana."},
+        {"text": "Rocío descubrió que ventilar bien la habitación mientras se seca la pintura evita que quede un olor fuerte durante varios días."},
+        {"text": "Víctor reformó el cuarto de baño pequeño cambiando solo los azulejos del suelo, sin tocar las paredes, para ajustar el proyecto al presupuesto que tenían."},
+        {"text": "Teresa aprendió a calcular la cantidad de pintura necesaria midiendo bien los metros cuadrados, después de comprar de más en una reforma anterior."},
+        {"text": "Ignacio tapó las grietas pequeñas de la pared con masilla antes de pintar, un paso que se había saltado la primera vez y se notaba después."},
+        {"text": "Alba cambió el suelo de la cocina ella misma con láminas vinílicas, un trabajo que le llevó un fin de semana entero pero le ahorró contratar a nadie."},
+        {"text": "Mateo descubrió que proteger los muebles y el suelo con plástico antes de pintar le ahorró mucho tiempo de limpieza al terminar."},
+        {"text": "Olga reformó el armario del pasillo añadiendo baldas a medida, un cambio pequeño que le ganó mucho espacio de almacenaje."},
+        {"text": "Jaime pintó la habitación de su hijo de un color distinto cada pocos años, siguiendo los gustos cambiantes del niño según iba creciendo."},
+        {"text": "Celia descubrió que elegir pintura lavable para la cocina le facilitó mucho limpiar las manchas de grasa que antes se quedaban marcadas en la pared."},
+        {"text": "Andrés cambió los pomos y tiradores de toda la cocina para renovar el aspecto sin tener que cambiar los muebles enteros."}
+      ]
+    },
+    {
+      "name": "fontaneria-domestica",
+      "domain": "hogar",
+      "facts": [
+        {"text": "Lucía descubrió una fuga pequeña bajo el fregadero que llevaba semanas humedeciendo el mueble, resuelta cambiando una junta del sifón."},
+        {"text": "Marcos aprendió a cerrar la llave de paso general antes de cualquier arreglo de fontanería, después de inundar el baño la primera vez que lo intentó."},
+        {"text": "Elena destapó un desagüe atascado con un producto específico después de que el agua tardara varios minutos en bajar de la bañera."},
+        {"text": "Javier cambió la cisterna del baño él mismo siguiendo un vídeo, y descubrió que la pieza nueva le costó mucho menos que llamar a un fontanero."},
+        {"text": "Sofía descubrió goteras en el grifo de la cocina por una zapata desgastada, resuelta con un juego de piezas de recambio comprado en la ferretería."},
+        {"text": "Diego aprendió a usar cinta de teflón en las roscas de las conexiones después de una pequeña fuga en el calentador que había instalado él mismo."},
+        {"text": "Carmen llamó a un fontanero de confianza para cambiar la instalación antigua del baño, después de varios años de pequeñas averías repetidas."},
+        {"text": "Pablo descubrió que el ruido de martilleo en las tuberías se debía a la presión del agua, resuelto instalando una válvula reguladora."},
+        {"text": "Irene destapó el desagüe de la ducha ella misma con una herramienta de alambre, después de que el pelo acumulado ralentizara el desagüe del agua."},
+        {"text": "Álvaro aprendió a revisar las juntas de goma de los grifos cada par de años, desde que una gastada le provocó un goteo constante durante meses."},
+        {"text": "Nuria descubrió una fuga en la toma de agua de la lavadora que había estado humedeciendo la pared sin que se notara hasta que apareció una mancha."},
+        {"text": "Hugo cambió el calentador de agua antiguo por uno más eficiente después de varios años con averías cada invierno."},
+        {"text": "Marta descubrió que instalar un filtro en la entrada de agua general redujo la cal acumulada en todos los grifos de la casa."}
+      ]
+    },
+    {
+      "name": "electrodomesticos-de-cocina",
+      "domain": "hogar",
+      "facts": [
+        {"text": "Daniel descubrió que el frigorífico gastaba más energía de lo normal por la goma de la puerta desgastada, que dejaba entrar aire caliente."},
+        {"text": "Claudia limpia el filtro de la campana extractora cada mes, desde que la grasa acumulada empezó a dejar un olor persistente en la cocina."},
+        {"text": "Rubén descubrió que el horno tardaba más en calentar por una resistencia a punto de fallar, cambiada antes de que dejara de funcionar del todo."},
+        {"text": "Beatriz aprendió a descongelar el congelador cada seis meses, después de notar que el hielo acumulado reducía mucho el espacio útil dentro."},
+        {"text": "Óscar compró un robot de cocina después de comparar varios modelos durante semanas, buscando uno con piezas fáciles de limpiar."},
+        {"text": "Cristina descubrió que el lavavajillas dejaba los platos con restos porque el filtro inferior estaba obstruido con pequeños restos de comida."},
+        {"text": "Iván aprendió a limpiar la resistencia del microondas con vinagre diluido, después de que las salpicaduras acumuladas empezaran a quemarse y oler mal."},
+        {"text": "Laura descubrió que la nevera hacía un ruido extraño por el ventilador del compresor, resuelto con una simple limpieza de polvo acumulado."},
+        {"text": "Sergio compró una freidora de aire después de que el médico le recomendara reducir las frituras tradicionales en la dieta familiar."},
+        {"text": "Paula aprendió a descalcificar la cafetera cada mes con un producto específico, desde que el café empezó a salir con mal sabor por la cal acumulada."},
+        {"text": "Adrián descubrió que su vitrocerámica se rayaba con los utensilios de fondo rugoso, y cambió las sartenes por otras con base lisa."},
+        {"text": "Noelia limpia las juntas de goma del frigorífico con un cepillo pequeño cada par de meses, para evitar que se acumule moho en los pliegues."},
+        {"text": "Raúl descubrió que el horno gastaba menos energía usando la función de aire con ventilador que la tradicional de calor arriba y abajo."}
+      ]
+    },
+    {
+      "name": "aire-acondicionado-y-climatizacion",
+      "domain": "hogar",
+      "facts": [
+        {"text": "Patricia limpia los filtros del aire acondicionado cada mes en verano, desde que descubrió que el polvo acumulado reducía mucho la eficiencia del equipo."},
+        {"text": "Fernando contrató una revisión anual del aire acondicionado antes del verano, después de que un año el equipo fallara justo en la ola de calor más fuerte."},
+        {"text": "Silvia descubrió que programar el aire acondicionado a 24 grados, en vez de más bajo, gastaba mucho menos sin notar apenas diferencia de confort."},
+        {"text": "Gonzalo aprendió a cerrar puertas y ventanas mientras el aire acondicionado está encendido, después de notar que con una ventana abierta no enfriaba nada."},
+        {"text": "Rocío descubrió una fuga de gas refrigerante en el aire acondicionado que explicaba por qué enfriaba cada vez menos con el paso de los meses."},
+        {"text": "Víctor instaló aire acondicionado por conductos al reformar la casa, en vez de splits por habitación, buscando una estética más discreta."},
+        {"text": "Teresa descubrió que las unidades exteriores del aire acondicionado necesitan espacio libre alrededor para funcionar bien, después de que un vecino tapara la suya con macetas."},
+        {"text": "Ignacio aprendió a usar el modo deshumidificador en primavera, antes de necesitar enfriar de verdad, para que la casa no se sintiera tan húmeda."},
+        {"text": "Alba descubrió que el ruido extraño de su aire acondicionado se debía a un tornillo suelto en la unidad exterior, resuelto en minutos por el técnico."},
+        {"text": "Mateo contrató la instalación de aire acondicionado en dos habitaciones más después de que el calor de los últimos veranos se hiciera cada vez más difícil de soportar."},
+        {"text": "Olga descubrió que su equipo de aire acondicionado tenía más de diez años y consumía mucho más que los modelos actuales de mayor eficiencia."},
+        {"text": "Jaime aprendió a no dirigir el aire frío directamente hacia la cama, después de despertarse varias veces con molestias de cuello por el chorro directo."},
+        {"text": "Celia descubrió que limpiar el desagüe de condensación del aire acondicionado evitó una pequeña gotera que había empezado a mancharle el techo."}
+      ]
+    },
+    {
+      "name": "persianas-y-ventanas",
+      "domain": "hogar",
+      "facts": [
+        {"text": "Andrés cambió la cinta de una persiana que se había partido, un arreglo que aprendió a hacer él mismo tras ver varios vídeos explicativos."},
+        {"text": "Lucía descubrió corrientes de aire frío por una ventana mal sellada, resuelta con burletes de goma baratos comprados en la ferretería."},
+        {"text": "Marcos engrasó los raíles de las persianas correderas del salón después de que empezaran a atascarse al abrir y cerrar cada día."},
+        {"text": "Elena cambió las cortinas finas por otras más gruesas en el dormitorio, y descubrió que dormía mejor sin la luz de las farolas de la calle."},
+        {"text": "Javier descubrió una persiana que no subía bien por culpa de un enrollador desgastado, pieza que el técnico cambió en una sola visita."},
+        {"text": "Sofía instaló doble acristalamiento en las ventanas del salón, y notó una diferencia clara tanto en el ruido de la calle como en el frío del invierno."},
+        {"text": "Diego aprendió a limpiar las guías de las ventanas correderas cada primavera, después de que la arena y el polvo acumulados dificultaran deslizarlas."},
+        {"text": "Carmen descubrió que una persiana se quedaba atascada a media altura por una lama rota, cambiada sin tener que sustituir la persiana entera."},
+        {"text": "Pablo instaló mosquiteras en todas las ventanas del piso después de un verano entero con problemas de mosquitos por las noches."},
+        {"text": "Irene descubrió que sellar bien el marco de una ventana antigua redujo notablemente la condensación que se formaba cada invierno en el cristal."},
+        {"text": "Álvaro cambió el mecanismo de apertura de una ventana oscilobatiente que se había quedado encallada, un arreglo que le explicó un cerrajero del barrio."},
+        {"text": "Nuria aprendió a revisar las persianas antes de cada temporada de mucho viento, desde que una se soltó parcialmente en una noche de tormenta."},
+        {"text": "Hugo descubrió manchas de humedad en el marco de una ventana vieja, señal de que la silicona del sellado llevaba años sin renovarse."}
+      ]
+    },
+    {
+      "name": "mantenimiento-de-caldera",
+      "domain": "hogar",
+      "facts": [
+        {"text": "Marta contrató una revisión anual de la caldera de gas, obligatoria según le explicó el técnico, antes de que empezara cada temporada de frío."},
+        {"text": "Daniel descubrió que la caldera perdía presión poco a poco por una purga mal cerrada, un detalle sencillo que resolvió sin llamar al técnico."},
+        {"text": "Claudia aprendió a reconocer el símbolo de fallo en el panel de la caldera, que antes ignoraba sin saber que indicaba un problema concreto."},
+        {"text": "Rubén descubrió que el agua caliente tardaba más en salir por sedimentos acumulados en el calentador, limpiado durante la revisión anual."},
+        {"text": "Beatriz cambió la caldera después de quince años de uso, cuando el técnico le explicó que las reparaciones ya costaban casi lo mismo que un modelo nuevo más eficiente."},
+        {"text": "Óscar descubrió una pequeña fuga de gas en la caldera gracias al detector que había instalado por recomendación de un vecino."},
+        {"text": "Cristina aprendió a purgar el circuito de la caldera ella misma siguiendo las instrucciones del manual, después de ver al técnico hacerlo una vez."},
+        {"text": "Iván descubrió que su caldera hacía un ruido extraño al encenderse por cal acumulada en el intercambiador, limpiado en la revisión de ese año."},
+        {"text": "Laura instaló un termostato programable conectado a la caldera para no tener que encenderla y apagarla manualmente cada día."},
+        {"text": "Sergio descubrió que la caldera tardaba mucho en calentar el agua de la ducha por una distancia larga entre la caldera y el baño."},
+        {"text": "Paula aprendió a ventilar la zona donde está instalada la caldera, después de que el técnico le explicara la importancia de una buena circulación de aire."},
+        {"text": "Adrián descubrió una avería en la válvula de tres vías de la caldera que afectaba solo al agua caliente, no a la calefacción."},
+        {"text": "Noelia revisa el estado del tubo de salida de humos de la caldera cada año, porque descubrió que una obstrucción podría ser peligrosa."}
+      ]
+    },
+    {
+      "name": "electricidad-domestica",
+      "domain": "hogar",
+      "facts": [
+        {"text": "Raúl cambió los enchufes antiguos de toda la casa después de que uno empezara a chispear al conectar un electrodoméstico."},
+        {"text": "Patricia descubrió que un diferencial saltaba cada vez que usaba el secador y el microondas a la vez, señal de una instalación algo saturada."},
+        {"text": "Fernando instaló regletas con protección contra sobretensión después de que una tormenta estropeara un televisor hace un par de años."},
+        {"text": "Silvia aprendió a identificar los interruptores del cuadro eléctrico etiquetando cada uno con el nombre de la habitación que controla."},
+        {"text": "Gonzalo descubrió un cable pelado detrás de un mueble durante una reforma, un riesgo que llevaba años sin que nadie se diera cuenta."},
+        {"text": "Rocío cambió las bombillas de toda la casa a tipo led, y descubrió una bajada notable en el consumo eléctrico de los recibos siguientes."},
+        {"text": "Víctor contrató a un electricista para ampliar la potencia contratada después de que los plomos saltaran varias veces usando varios aparatos a la vez."},
+        {"text": "Teresa instaló detectores de humo conectados a la instalación eléctrica en la cocina y los pasillos, después de leer sobre su importancia en la prevención de incendios."},
+        {"text": "Ignacio descubrió que un enchufe del baño no tenía la protección adecuada para zonas húmedas, corregido por un electricista antes de que diera ningún problema."},
+        {"text": "Alba aprendió a no sobrecargar una sola regleta con demasiados aparatos, después de que el plástico empezara a calentarse de forma preocupante."},
+        {"text": "Mateo instaló un cuadro eléctrico nuevo al reformar la cocina, aprovechando para separar circuitos que antes compartían varios electrodomésticos grandes."},
+        {"text": "Olga descubrió que la instalación eléctrica de su piso antiguo no soportaba bien los aparatos modernos, y decidió renovarla por completo."},
+        {"text": "Jaime aprendió a cortar siempre la luz del cuadro general antes de cambiar cualquier enchufe o interruptor, un hábito de seguridad que no tenía antes."}
+      ]
+    },
+    {
+      "name": "limpieza-profunda-del-hogar",
+      "domain": "hogar",
+      "facts": [
+        {"text": "Celia organiza una limpieza a fondo de toda la casa cada cambio de estación, revisando armarios y rincones que no se tocan en el día a día."},
+        {"text": "Andrés descubrió que limpiar los colchones con bicarbonato cada par de meses reduce bastante los ácaros, según le explicó un alergólogo."},
+        {"text": "Lucía limpia las cortinas y visillos dos veces al año, porque descubrió que acumulan mucho más polvo del que parece a simple vista."},
+        {"text": "Marcos organiza la limpieza del horno con un producto específico cada mes, dejándolo actuar toda la noche para que salga más fácil la grasa quemada."},
+        {"text": "Elena descubrió que limpiar detrás de la nevera y la lavadora cada pocos meses evita la acumulación de polvo que atasca los motores."},
+        {"text": "Javier organiza un día al mes para limpiar cristales por dentro y por fuera, aprovechando los días nublados para que no se marquen con el sol."},
+        {"text": "Sofía descubrió que airear los armarios de ropa cada cambio de temporada evita el olor a humedad que antes se le quedaba pegado a la ropa."},
+        {"text": "Diego limpia las rejillas de ventilación de la casa cada primavera, después de notar que acumulaban mucho polvo que terminaba circulando por el aire."},
+        {"text": "Carmen organiza la limpieza de la terraza a fondo antes del verano, quitando el musgo acumulado en las juntas de las baldosas durante el invierno."},
+        {"text": "Pablo descubrió que limpiar los grifos con vinagre quita la cal mucho mejor que los productos comerciales que usaba antes."},
+        {"text": "Irene organiza una limpieza profunda de la cocina cada seis meses, vaciando armarios y revisando fechas de caducidad de productos olvidados."},
+        {"text": "Álvaro descubrió que limpiar el polvo de las lámparas y ventiladores de techo mejoraba notablemente la calidad del aire que respiraban en casa."},
+        {"text": "Nuria organiza la limpieza de los filtros de las campanas extractoras cada mes, desde que descubrió que la grasa acumulada era un riesgo de incendio."}
+      ]
+    },
+    {
+      "name": "huerto-urbano-en-terraza",
+      "domain": "jardineria",
+      "facts": [
+        {"text": "Hugo cultiva tomates y pimientos en macetas grandes en la terraza desde hace tres años, aprendiendo cada temporada qué variedades aguantan mejor el sol directo."},
+        {"text": "Marta descubrió que regar el huerto de la terraza por la mañana temprano, en vez de a mediodía, evitaba que el agua se evaporara antes de llegar a la raíz."},
+        {"text": "Daniel instaló un sistema de riego por goteo conectado a un temporizador para no depender de regar manualmente cada día en verano."},
+        {"text": "Claudia cultiva hierbas aromáticas, albahaca y perejil, en jardineras pequeñas junto a la cocina para tenerlas siempre a mano al cocinar."},
+        {"text": "Rubén descubrió que las macetas de barro mantienen mejor la humedad que las de plástico, aunque pesen mucho más al moverlas."},
+        {"text": "Beatriz aprendió a rotar los cultivos de un año a otro en sus jardineras, después de que las mismas plantas agotaran la tierra en la misma maceta."},
+        {"text": "Óscar instaló una pequeña estructura vertical para cultivar fresas, aprovechando un espacio muy reducido en su terraza orientada al sur."},
+        {"text": "Cristina descubrió pulgón en las plantas de tomate y lo trató con un jabón potásico diluido, evitando pesticidas fuertes cerca de donde cultiva para comer."},
+        {"text": "Iván cultiva lechugas en jardineras poco profundas porque descubrió que no necesitan tanta tierra como otras hortalizas más grandes."},
+        {"text": "Laura compostó las sobras de verdura de la cocina en una pequeña compostera de terraza, para abonar directamente las macetas del huerto."},
+        {"text": "Sergio descubrió que las abejas aparecieron en su terraza en cuanto plantó lavanda y romero, atraídas por las flores de esas aromáticas."},
+        {"text": "Paula cultiva calabacines en una maceta grande cada verano, y siempre acaba regalando parte de la cosecha porque le crecen más de lo que esperaba."},
+        {"text": "Adrián aprendió a proteger las plantas de la terraza con una malla de sombreo en los días de más calor, después de quemar varias hojas un verano."}
+      ]
+    },
+    {
+      "name": "plantas-de-interior",
+      "domain": "jardineria",
+      "facts": [
+        {"text": "Noelia aprendió a no regar en exceso sus plantas de interior, después de perder dos por encharcamiento en la maceta sin darse cuenta."},
+        {"text": "Raúl descubrió que su potos crecía mucho mejor cerca de la ventana del salón que en el pasillo oscuro donde lo tenía antes."},
+        {"text": "Patricia cambia el sustrato de sus plantas de interior cada primavera, porque descubrió que la tierra agotada frenaba bastante el crecimiento."},
+        {"text": "Fernando descubrió cochinillas en una planta nueva recién comprada, y la aisló del resto durante semanas hasta asegurarse de que no se contagiaran."},
+        {"text": "Silvia aprendió a limpiar el polvo de las hojas grandes de sus plantas con un paño húmedo, para que respiraran mejor y absorbieran más luz."},
+        {"text": "Gonzalo descubrió que su ficus perdía hojas por corrientes de aire frío cerca de una ventana que abría con frecuencia en invierno."},
+        {"text": "Rocío propaga esquejes de sus plantas de interior en agua antes de pasarlos a tierra, una técnica que aprendió viendo vídeos durante un invierno de poca actividad."},
+        {"text": "Víctor descubrió que algunas plantas de interior, como la sansevieria, aguantan semanas sin agua, perfectas para quien viaja con frecuencia."},
+        {"text": "Teresa cambia de maceta sus plantas cada año o dos, cuando ve raíces saliendo por los agujeros de drenaje de la maceta actual."},
+        {"text": "Ignacio descubrió que pulverizar agua sobre las hojas de sus plantas tropicales ayudaba a mantener la humedad que necesitan en casas con calefacción seca."},
+        {"text": "Alba aprendió a fertilizar sus plantas de interior solo en primavera y verano, descansando en los meses de invierno cuando crecen mucho más despacio."},
+        {"text": "Mateo descubrió que la luz artificial de una lámpara específica le permitía mantener plantas en una habitación sin ventanas de su piso."},
+        {"text": "Olga organiza sus plantas de interior según la cantidad de luz de cada habitación, después de haber colocado varias en el sitio equivocado al principio."}
+      ]
+    },
+    {
+      "name": "riego-automatico",
+      "domain": "jardineria",
+      "facts": [
+        {"text": "Jaime instaló un programador de riego conectado al grifo del jardín, después de que las vacaciones de verano le dejaran el césped completamente seco."},
+        {"text": "Celia descubrió que el riego por goteo en el huerto gastaba mucha menos agua que el riego por aspersión que usaba antes."},
+        {"text": "Andrés programó el riego automático para las primeras horas de la mañana, evitando que el agua se evaporara con el calor del mediodía."},
+        {"text": "Lucía instaló sensores de humedad en las macetas más grandes para que el sistema de riego solo se activara cuando la tierra realmente lo necesitaba."},
+        {"text": "Marcos descubrió una fuga en una manguera de riego enterrada que le había subido el consumo de agua sin que lo notara al principio."},
+        {"text": "Elena ajusta la duración del riego automático según la estación, mucho más corto en invierno que en los meses de más calor del verano."},
+        {"text": "Javier instaló un temporizador sencillo en el grifo del jardín, una solución mucho más barata que el sistema completo que había valorado al principio."},
+        {"text": "Sofía descubrió que el riego automático le permitió irse de vacaciones sin preocuparse de las plantas, algo que antes dependía siempre de un vecino."},
+        {"text": "Diego revisa los goteros del sistema de riego cada primavera, porque descubrió que algunos se obstruían con cal y dejaban de funcionar sin que se viera a simple vista."},
+        {"text": "Carmen instaló válvulas independientes por zonas del jardín, para regar más el césped y menos las plantas que necesitan menos agua."},
+        {"text": "Pablo descubrió que combinar el riego automático con un acolchado de corteza en los arriates reducía mucho la evaporación del agua."},
+        {"text": "Irene programó el riego automático de su huerto con una aplicación sencilla desde el móvil, controlando el gasto de agua semana a semana."},
+        {"text": "Álvaro aprendió a desconectar el riego automático en los días de lluvia prevista, después de regar innecesariamente varias veces el mismo día que llovió."}
+      ]
+    },
+    {
+      "name": "poda-de-arboles-frutales",
+      "domain": "jardineria",
+      "facts": [
+        {"text": "Nuria poda el limonero del jardín cada final de invierno, antes de que empiece la primavera, siguiendo el consejo de un vecino con más experiencia."},
+        {"text": "Hugo descubrió que podar el manzano en exceso un año redujo bastante la cosecha de fruta la temporada siguiente, un error que no ha repetido."},
+        {"text": "Marta aprendió a desinfectar las tijeras de podar entre un árbol y otro, para no transmitir posibles enfermedades de una planta a otra."},
+        {"text": "Daniel poda el olivo del jardín cada dos años, dejando entrar más luz al centro del árbol para que la aceituna madure mejor."},
+        {"text": "Claudia descubrió ramas secas en el melocotonero que retiró antes de que afectaran al resto del árbol, un chequeo que ahora hace cada temporada."},
+        {"text": "Rubén aprendió a hacer el corte de poda en ángulo, para que el agua de lluvia no se acumule justo sobre la herida y favorezca enfermedades."},
+        {"text": "Beatriz podó la higuera demasiado tarde un año y perdió parte de la cosecha, así que ahora anota la fecha ideal en el calendario de jardín."},
+        {"text": "Óscar descubrió que aclarar el exceso de fruta pequeña del árbol en primavera hacía que la fruta restante creciera mucho más grande y dulce."},
+        {"text": "Cristina poda los árboles frutales del jardín comunitario junto con otros vecinos, repartiéndose la tarea una tarde de fin de semana cada año."},
+        {"text": "Iván aprendió a identificar las ramas que crecen hacia dentro del árbol, las primeras que hay que quitar según le explicó un podador profesional."},
+        {"text": "Laura descubrió que su cerezo necesitaba poda mínima, al contrario que otros frutales, porque podarlo demasiado le reducía la producción de fruta."},
+        {"text": "Sergio guarda las ramas podadas para triturarlas y usarlas como mantillo en las zonas del jardín que más lo necesitan."},
+        {"text": "Paula aprendió a podar en luna menguante, una tradición que le enseñó su abuelo, aunque reconoce que lo hace más por costumbre que por certeza científica."}
+      ]
+    },
+    {
+      "name": "compost-domestico",
+      "domain": "jardineria",
+      "facts": [
+        {"text": "Adrián monta una compostera en el jardín con restos de cocina y hojas secas, revolviéndola cada semana para que se airee bien."},
+        {"text": "Noelia descubrió que añadir demasiados restos húmedos sin material seco hacía que el compost oliera mal y atrajera moscas."},
+        {"text": "Raúl guarda las cáscaras de huevo trituradas para el compost, porque descubrió que aportan calcio que luego benefician a las plantas del huerto."},
+        {"text": "Patricia aprendió a no echar restos de carne ni lácteos a la compostera, después de que atrajeran animales no deseados al jardín."},
+        {"text": "Fernando revuelve el compost con una horca cada diez días, un hábito que le enseñó un vecino con más experiencia en huertos."},
+        {"text": "Silvia descubrió que el compost tardaba casi seis meses en estar listo para usar, mucho más de lo que esperaba cuando empezó."},
+        {"text": "Gonzalo añade cartón troceado a la compostera como material seco, después de descubrir que equilibra mucho mejor la humedad que las simples hojas secas."},
+        {"text": "Rocío usa el compost ya maduro para abonar las jardineras de la terraza, y descubrió que las plantas crecían mucho más fuertes que con fertilizante comprado."},
+        {"text": "Víctor instaló la compostera lejos de las ventanas de la casa, después de que el olor de los primeros meses resultara más fuerte de lo esperado."},
+        {"text": "Teresa descubrió lombrices en el compost maduro, señal de que el proceso iba bien, según le confirmó un amigo con más experiencia en huertos."},
+        {"text": "Ignacio separa los restos de cocina en un cubo pequeño cada día para llevarlos a la compostera del jardín comunitario del barrio."},
+        {"text": "Alba aprendió a cortar en trozos pequeños los restos vegetales antes de echarlos al compost, porque descubrió que así se descomponían mucho más rápido."},
+        {"text": "Mateo descubrió que el compost casero le ahorraba comprar abono para todas las plantas del jardín durante casi todo el año."}
+      ]
+    },
+    {
+      "name": "jardin-de-flores-de-temporada",
+      "domain": "jardineria",
+      "facts": [
+        {"text": "Olga planta bulbos de tulipán cada otoño para que florezcan en primavera, siguiendo un calendario que anota cada año en una libreta de jardín."},
+        {"text": "Jaime descubrió que las petunias necesitan sol directo varias horas al día, después de que las que plantó en una zona de sombra apenas florecieran."},
+        {"text": "Celia cultiva un arriate de flores distintas cada temporada, combinando colores según lo que encuentra en el vivero del pueblo."},
+        {"text": "Andrés aprendió a quitar las flores marchitas de las plantas cada semana, descubriendo que así estimulaba la aparición de flores nuevas."},
+        {"text": "Lucía plantó lavanda a lo largo del camino del jardín, y descubrió que además de bonita atrae muchas más abejas y mariposas."},
+        {"text": "Marcos descubrió que las dalias necesitan tutores para sostener los tallos, después de que el viento tumbara varias plantas un verano."},
+        {"text": "Elena cultiva girasoles cada verano con sus hijos, una actividad que disfrutan juntos desde que plantan la semilla hasta que florece."},
+        {"text": "Javier descubrió que regar las flores de temporada por la tarde en vez de a pleno sol evitaba que las hojas se quemaran con las gotas de agua."},
+        {"text": "Sofía planta rosales junto a la entrada de casa, y aprendió a podarlos cada invierno para que florezcan con más fuerza en primavera."},
+        {"text": "Diego descubrió plagas de pulgón en los rosales que trató con mariquitas, un control biológico que le recomendó el vivero del barrio."},
+        {"text": "Carmen cultiva un jardín de flores pensado para cortar y poner en jarrones dentro de casa, con variedades que aguantan bien cortadas."},
+        {"text": "Pablo aprendió a abonar las flores de temporada cada mes durante la floración, un hábito que mejoró mucho la cantidad de flores respecto a años anteriores."},
+        {"text": "Irene descubrió que combinar flores de distinta altura en el mismo arriate le daba un resultado mucho más vistoso que plantarlas todas igual de altas."}
+      ]
+    },
+    {
+      "name": "control-de-plagas-del-jardin",
+      "domain": "jardineria",
+      "facts": [
+        {"text": "Álvaro descubrió pulgón en los rosales del jardín y lo trató con una mezcla de agua y jabón potásico antes de recurrir a productos más fuertes."},
+        {"text": "Nuria instaló trampas de feromonas para controlar una plaga de polilla en los frutales, evitando fumigar todo el jardín de forma indiscriminada."},
+        {"text": "Hugo descubrió caracoles comiéndose las plantas jóvenes del huerto por las noches, y los controla con una barrera de ceniza alrededor de las plantas."},
+        {"text": "Marta aprendió a identificar las mariquitas como aliadas contra el pulgón, y ahora evita productos que también las eliminarían a ellas."},
+        {"text": "Daniel descubrió hormigas subiendo por el tronco de un árbol frutal, señal de que había pulgón en las ramas altas que no había visto antes."},
+        {"text": "Claudia controla los mosquitos del jardín eliminando el agua estancada de los platos de las macetas cada par de días."},
+        {"text": "Rubén descubrió orugas comiéndose las hojas de las coles del huerto, y las retira a mano cada mañana en vez de usar insecticida."},
+        {"text": "Beatriz plantó caléndulas entre las hortalizas del huerto, descubriendo que ayudan a repeler algunos insectos sin necesidad de productos químicos."},
+        {"text": "Óscar descubrió una plaga de cochinilla en un árbol ornamental, tratada con aceite de neem después de que los remedios caseros no fueran suficientes."},
+        {"text": "Cristina revisa el envés de las hojas cada semana en verano, porque descubrió que ahí es donde suelen aparecer primero los insectos antes de extenderse."},
+        {"text": "Iván descubrió topos en el jardín que levantaban pequeños montículos de tierra, y los ahuyentó con un repelente de ultrasonidos sin dañarlos."},
+        {"text": "Laura aprendió a rotar los cultivos del huerto cada año, descubriendo que así reducía bastante las plagas que se acumulaban en el mismo lugar."},
+        {"text": "Sergio descubrió babosas en el huerto después de una semana de lluvias, y las controla con trampas de cerveza colocadas entre las hortalizas."}
+      ]
+    },
+    {
+      "name": "cesped-y-mantenimiento",
+      "domain": "jardineria",
+      "facts": [
+        {"text": "Paula siega el césped cada semana en primavera y verano, bajando la frecuencia a cada dos semanas cuando llega el otoño."},
+        {"text": "Adrián descubrió calvas en el césped por un riego desigual, resuelto ajustando los aspersores para que cubrieran toda la superficie por igual."},
+        {"text": "Noelia airea el césped una vez al año con un rastrillo especial, después de que un jardinero le explicara que mejora mucho la absorción de agua."},
+        {"text": "Raúl descubrió musgo en las zonas de más sombra del jardín, tratado con un producto específico antes de resembrar esas calvas con semilla nueva."},
+        {"text": "Patricia siega el césped más alto en los meses de más calor, porque descubrió que así retiene mejor la humedad y se quema menos con el sol."},
+        {"text": "Fernando abona el césped en primavera y otoño, dos momentos del año que descubrió que son los más efectivos para el crecimiento de la hierba."},
+        {"text": "Silvia descubrió que su césped necesitaba un resembrado parcial después de un verano muy seco que dejó varias zonas completamente peladas."},
+        {"text": "Gonzalo instaló un borde de piedra entre el césped y los arriates, para que la hierba no invadiera las zonas de flores con el tiempo."},
+        {"text": "Rocío descubrió que cortar el césped demasiado corto lo debilitaba frente al calor del verano, así que ahora deja más altura en esos meses."},
+        {"text": "Víctor compró una cortadora de césped eléctrica más silenciosa después de quejas de un vecino por el ruido de la antigua de gasolina."},
+        {"text": "Teresa descubrió hongos en el césped tras varios días de lluvia seguida, tratados con un fungicida específico recomendado en el vivero."},
+        {"text": "Ignacio airea y escarifica el césped cada otoño, retirando el musgo y los restos de hierba muerta acumulados durante el verano."},
+        {"text": "Alba descubrió que dejar los recortes de césped como abono natural, en pequeña cantidad, mejoraba la tierra sin tener que comprar fertilizante extra."}
+      ]
+    },
+    {
+      "name": "invernadero-pequeno",
+      "domain": "jardineria",
+      "facts": [
+        {"text": "Mateo montó un invernadero pequeño de madera y plástico en el jardín para alargar la temporada de cultivo de tomates varias semanas más."},
+        {"text": "Olga descubrió que el invernadero se sobrecalentaba en los días soleados de primavera si no abría la ventilación a tiempo por la mañana."},
+        {"text": "Jaime cultiva plántulas de hortalizas en el invernadero en febrero, para trasplantarlas al huerto exterior cuando ya no hay riesgo de heladas."},
+        {"text": "Celia instaló una malla de sombreo dentro del invernadero para los meses más calurosos, cuando el plástico concentraba demasiado el sol."},
+        {"text": "Andrés descubrió que el riego dentro del invernadero debía ser más espaciado que fuera, porque la humedad se mantenía mucho más tiempo en ese espacio cerrado."},
+        {"text": "Lucía cultiva pimientos y berenjenas en el invernadero porque descubrió que necesitan más calor constante del que ofrece el clima exterior de su zona."},
+        {"text": "Marcos revisa el invernadero cada mañana en invierno para comprobar que no haya helado dentro, algo que podría dañar las plántulas más jóvenes."},
+        {"text": "Elena descubrió hongos en las plántulas del invernadero por exceso de humedad y poca ventilación, un problema que resolvió abriendo más tiempo las puertas."},
+        {"text": "Javier construyó el invernadero orientado al sur, siguiendo el consejo de un vecino con experiencia, para aprovechar mejor la luz durante todo el día."},
+        {"text": "Sofía cultiva hierbas aromáticas en el invernadero durante el invierno, cuando fuera ya hace demasiado frío para que crezcan con normalidad."},
+        {"text": "Diego descubrió que ventilar el invernadero a mediodía, aunque hiciera frío fuera, evitaba que las plantas sufrieran por el exceso de calor acumulado dentro."},
+        {"text": "Carmen instaló estanterías dentro del invernadero para aprovechar mejor el espacio vertical con macetas de distintos tamaños."},
+        {"text": "Pablo descubrió que las plantas del invernadero necesitaban polinización manual con un pincel pequeño, al no entrar insectos como en el huerto exterior."}
+      ]
+    },
+    {
+      "name": "veterinario-del-perro",
+      "domain": "mascotas",
+      "facts": [
+        {"text": "Irene lleva a su perro al veterinario cada año para la revisión general y las vacunas, siguiendo el calendario que le marcaron desde que era cachorro."},
+        {"text": "Álvaro descubrió una leve cojera en su perro que resultó ser una displasia de cadera leve, controlada ahora con suplementos y ejercicio moderado."},
+        {"text": "Nuria lleva a su perra a desparasitar cada tres meses, tanto por dentro como por fuera, después de que una vez le detectaran parásitos intestinales."},
+        {"text": "Hugo descubrió que su perro tenía una infección de oído recurrente relacionada con alergias, tratada con un champú específico y gotas recetadas."},
+        {"text": "Marta lleva el carnet de vacunación de su perro siempre actualizado, porque lo necesita cada vez que lo deja en la residencia canina de vacaciones."},
+        {"text": "Daniel descubrió un bulto pequeño en el costado de su perro mayor, que el veterinario confirmó benigno tras una biopsia sencilla."},
+        {"text": "Claudia lleva a su cachorro al veterinario cada mes durante los primeros seis meses, para completar el calendario de vacunas y revisar su crecimiento."},
+        {"text": "Rubén descubrió que su perro necesitaba una dieta especial por una leve insuficiencia renal detectada en un análisis de sangre rutinario."},
+        {"text": "Beatriz lleva a su perra castrada al veterinario para una revisión anual de rutina, aunque ya no necesite las vacunas con tanta frecuencia."},
+        {"text": "Óscar descubrió garrapatas en su perro después de una ruta de montaña, y desde entonces usa una pipeta antiparasitaria todo el año, no solo en verano."},
+        {"text": "Cristina lleva a su perro al veterinario de urgencias una noche por haber comido algo en la calle que le sentó muy mal."},
+        {"text": "Iván descubrió que su perro necesitaba limpieza dental profesional, con sarro acumulado que el cepillado en casa no conseguía eliminar del todo."},
+        {"text": "Laura lleva a su perro a revisiones más frecuentes desde que entró en la edad senior, siguiendo la recomendación del veterinario para detectar problemas a tiempo."}
+      ]
+    },
+    {
+      "name": "alimentacion-del-gato",
+      "domain": "mascotas",
+      "facts": [
+        {"text": "Sergio cambió el pienso de su gato después de que el veterinario detectara sobrepeso en una revisión rutinaria, ajustando también las raciones diarias."},
+        {"text": "Paula descubrió que su gato prefería comer en varias tomas pequeñas al día en vez de tener el plato siempre lleno, y así controla mejor su peso."},
+        {"text": "Adrián aprendió que el chocolate y la cebolla son tóxicos para los gatos, después de leer sobre alimentos peligrosos que antes no sabía que lo eran."},
+        {"text": "Noelia cambió a su gato mayor a un pienso específico para gatos senior, con menos fósforo, por recomendación del veterinario tras un análisis de riñón."},
+        {"text": "Raúl descubrió que su gato bebía poca agua del plato normal, y desde que instaló una fuente de agua en movimiento bebe mucho más cada día."},
+        {"text": "Patricia alimenta a sus dos gatos en platos separados después de descubrir que uno comía más rápido y le robaba la comida al otro."},
+        {"text": "Fernando descubrió que su gato tenía una leve intolerancia alimentaria que le provocaba vómitos frecuentes, resuelta con un pienso hipoalergénico recetado."},
+        {"text": "Silvia introduce comida húmeda en la dieta de su gato varias veces por semana, porque descubrió que le ayuda a mantenerse mejor hidratado."},
+        {"text": "Gonzalo descubrió que su gatito necesitaba un pienso específico para cachorros, con más calorías que el de los gatos adultos de casa."},
+        {"text": "Rocío pesa la ración diaria de pienso de su gato con una báscula de cocina, desde que el veterinario le explicó que calcularla a ojo le hacía sobrealimentarlo."},
+        {"text": "Víctor descubrió que su gato dejaba de comer cuando cambiaba de marca de pienso de forma brusca, así que ahora hace la transición mezclando ambos durante una semana."},
+        {"text": "Teresa consulta siempre al veterinario antes de dar premios nuevos a su gato, después de que uno le sentara mal y le provocara diarrea."},
+        {"text": "Ignacio descubrió que su gato mayor necesitaba comida más blanda por problemas dentales, y ahora humedece el pienso seco con un poco de agua."}
+      ]
+    },
+    {
+      "name": "adiestramiento-canino",
+      "domain": "mascotas",
+      "facts": [
+        {"text": "Alba contrató a un adiestrador canino para corregir los tirones de su perro con la correa, después de varios paseos complicados por el barrio."},
+        {"text": "Mateo entrena a su cachorro con refuerzo positivo, premiando con pequeños trozos de comida cada vez que responde bien a una orden nueva."},
+        {"text": "Olga descubrió que las sesiones cortas de diez minutos funcionaban mejor que las largas, porque su perro perdía la concentración después de ese tiempo."},
+        {"text": "Jaime enseñó a su perro a quedarse quieto en la puerta antes de salir, un hábito que evitó varios sustos con el tráfico de la calle."},
+        {"text": "Celia trabaja la socialización de su cachorro llevándolo a un parque canino dos veces por semana, para que se acostumbre a otros perros y personas."},
+        {"text": "Andrés descubrió que su perro reactivo con otros perros mejoró bastante con ejercicios de desensibilización progresiva guiados por un adiestrador."},
+        {"text": "Lucía enseñó a su perro a no subirse al sofá usando una palabra clave y premios, en vez de regañarle cuando ya estaba arriba."},
+        {"text": "Marcos entrena a su perro en el parque con el adiestrador cada sábado, practicando órdenes básicas antes de pasar a ejercicios más avanzados."},
+        {"text": "Elena descubrió que la impaciencia al enseñar órdenes nuevas solo confundía a su perro, así que ahora dedica más tiempo a cada paso pequeño."},
+        {"text": "Javier enseñó a su cachorro a hacer sus necesidades fuera de casa con un sistema de premios inmediatos cada vez que lo hacía en el lugar correcto."},
+        {"text": "Sofía trabaja con su perro el contacto visual antes de cada orden, un ejercicio básico que el adiestrador le explicó que mejora mucho la obediencia general."},
+        {"text": "Diego descubrió que su perro aprendía mejor las órdenes nuevas por la mañana, cuando todavía no estaba cansado del resto del día."},
+        {"text": "Carmen enseñó a su perro a esperar sentado antes de comer, un ejercicio sencillo de autocontrol que luego le ayudó con otras órdenes más complejas."}
+      ]
+    },
+    {
+      "name": "paseos-y-ejercicio-del-perro",
+      "domain": "mascotas",
+      "facts": [
+        {"text": "Pablo saca a pasear a su perro tres veces al día, con un paseo largo por la mañana y dos más cortos a mediodía y por la noche."},
+        {"text": "Irene descubrió que su perro necesitaba más ejercicio del que le daba, después de que empezara a destrozar cosas en casa por aburrimiento."},
+        {"text": "Álvaro lleva a su perro a correr con él los fines de semana, una actividad que descubrió que le cansa mucho más que el paseo normal de cada día."},
+        {"text": "Nuria varía la ruta del paseo de su perro cada día, porque descubrió que explorar sitios nuevos le estimula mucho más que repetir siempre el mismo camino."},
+        {"text": "Hugo lleva a su perro a una zona de juego libre sin correa en un parque vallado, donde puede correr y socializar con otros perros con seguridad."},
+        {"text": "Marta descubrió que su perro mayor necesitaba paseos más cortos y frecuentes en vez de uno largo, por las molestias de artrosis en las patas."},
+        {"text": "Daniel juega a lanzar la pelota con su perro cada tarde en el parque, una rutina que ambos esperan con ganas al llegar del trabajo."},
+        {"text": "Claudia lleva a su perro a nadar en un río en verano, descubriendo que le encanta el agua y es un ejercicio suave para sus articulaciones."},
+        {"text": "Rubén acorta los paseos de su perro en las horas de más calor del verano, sacándolo muy temprano o al anochecer para evitar quemarle las patas en el asfalto."},
+        {"text": "Beatriz descubrió que su perro necesitaba estimulación mental además de ejercicio físico, así que ahora esconde premios por el jardín para que los busque."},
+        {"text": "Óscar lleva a su perro a hacer senderismo los fines de semana, con un arnés específico adaptado para rutas de montaña más exigentes."},
+        {"text": "Cristina descubrió que caminar con su perro por terrenos distintos, arena, hierba y piedra, le ayudaba a fortalecer las almohadillas de las patas."},
+        {"text": "Iván pasea a su perro con otros vecinos del barrio que también tienen perros, convirtiendo el paseo diario en un momento social además de ejercicio."}
+      ]
+    },
+    {
+      "name": "mascota-nueva-adopcion",
+      "domain": "mascotas",
+      "facts": [
+        {"text": "Laura adoptó un perro de una protectora después de meses pensándolo, y descubrió que el periodo de adaptación le llevó casi un mes entero."},
+        {"text": "Sergio preparó la casa antes de la llegada del gato adoptado, retirando plantas tóxicas y objetos pequeños que pudiera tragarse."},
+        {"text": "Paula adoptó dos gatitos hermanos a la vez, después de leer que así se adaptan mejor que estando solos los primeros meses."},
+        {"text": "Adrián descubrió que su perro adoptado tenía miedo a los ruidos fuertes, probablemente por experiencias pasadas antes de llegar a la protectora."},
+        {"text": "Noelia llevó al gato adoptado al veterinario en la primera semana para un chequeo general y empezar el calendario de vacunas desde cero."},
+        {"text": "Raúl adoptó un perro mayor de una protectora, descubriendo que los perros adultos se adaptan muchas veces más rápido que los cachorros a la rutina familiar."},
+        {"text": "Patricia preparó una zona tranquila de la casa para el gato recién adoptado, dejándolo explorar poco a poco en vez de todo el piso de golpe."},
+        {"text": "Fernando descubrió que adoptar un perro con antecedentes de abandono requería mucha paciencia los primeros meses hasta que ganó confianza plena."},
+        {"text": "Silvia adoptó a su perro a través de una protectora que le pidió una visita previa a casa, un proceso que le pareció muy cuidadoso."},
+        {"text": "Gonzalo descubrió que su gato adoptado tardó casi dos semanas en salir de debajo de la cama, hasta que empezó a sentirse seguro en el nuevo hogar."},
+        {"text": "Rocío adoptó un conejo de una protectora de animales exóticos, aprendiendo sobre la marcha sus necesidades específicas de alimentación y espacio."},
+        {"text": "Víctor preparó un transportín cómodo con la manta del refugio para que su perro adoptado tuviera un olor familiar durante el primer viaje a casa."},
+        {"text": "Teresa adoptó una perra con necesidades especiales de movilidad, y adaptó parte de la casa con rampas para facilitarle los desplazamientos."}
+      ]
+    },
+    {
+      "name": "residencia-canina-en-vacaciones",
+      "domain": "mascotas",
+      "facts": [
+        {"text": "Ignacio reserva la residencia canina para su perro con un mes de antelación en verano, porque descubrió que en esas fechas se llenan muy rápido."},
+        {"text": "Alba visitó tres residencias distintas antes de elegir una para su perro, fijándose en el espacio al aire libre y en cómo trataban a los animales."},
+        {"text": "Mateo lleva la manta y los juguetes habituales de su perro a la residencia, para que tenga algo familiar durante los días que está fuera de casa."},
+        {"text": "Olga descubrió que su perro se adaptó mejor a la residencia después de una primera estancia corta de prueba, antes de dejarlo dos semanas enteras."},
+        {"text": "Jaime pide siempre el informe diario de la residencia canina sobre cómo come y se comporta su perro durante la estancia de vacaciones."},
+        {"text": "Celia lleva actualizado el carnet de vacunas de su perro cada vez que lo deja en la residencia, porque es un requisito obligatorio del centro."},
+        {"text": "Andrés descubrió una residencia canina con cuidadores de confianza gracias a la recomendación de otro dueño de perro del parque."},
+        {"text": "Lucía prefiere dejar a su perro con una cuidadora en casa particular, en vez de en una residencia grande, porque descubrió que se adapta mejor en espacios pequeños."},
+        {"text": "Marcos avisa a la residencia canina de cualquier medicación que su perro necesite tomar durante la estancia, con las dosis exactas por escrito."},
+        {"text": "Elena descubrió que su perro volvía algo más nervioso de residencias muy grandes, así que ahora busca sitios con menos animales a la vez."},
+        {"text": "Javier reservó la residencia canina para dos perros de la familia a la vez, asegurándose de que pudieran compartir el mismo espacio durante la estancia."},
+        {"text": "Sofía visita la residencia antes de reservar para comprobar las instalaciones en persona, en vez de confiar solo en las fotos de internet."},
+        {"text": "Diego descubrió que algunas residencias caninas ofrecen paseos extra opcionales, algo que decidió añadir para que su perro no estuviera tanto tiempo quieto."}
+      ]
+    },
+    {
+      "name": "salud-dental-de-mascotas",
+      "domain": "mascotas",
+      "facts": [
+        {"text": "Carmen cepilla los dientes de su perro tres veces por semana con una pasta específica, desde que el veterinario le advirtió del riesgo de sarro acumulado."},
+        {"text": "Pablo descubrió mal aliento persistente en su gato que resultó ser una gingivitis incipiente, tratada antes de que avanzara más."},
+        {"text": "Irene lleva a su perro a limpieza dental profesional cada dos años, complementando el cepillado diario que hace en casa desde cachorro."},
+        {"text": "Álvaro descubrió que los premios dentales específicos ayudaban a reducir el sarro de su perro entre una limpieza profesional y la siguiente."},
+        {"text": "Nuria revisa la boca de su gato cada mes buscando signos de inflamación, después de que a un gato de una amiga le detectaran tarde un problema serio."},
+        {"text": "Hugo descubrió que su perro mayor había perdido varios dientes por enfermedad periodontal no tratada a tiempo en sus primeros años."},
+        {"text": "Marta introdujo el cepillado dental desde cachorro en su perro, acostumbrándolo poco a poco con paciencia hasta que lo acepta sin problema."},
+        {"text": "Daniel descubrió que su gato rechazaba la comida dura por dolor dental, un síntoma que al principio confundió con simple mal humor."},
+        {"text": "Claudia lleva a su perro al veterinario en cuanto nota babeo excesivo, después de que una vez resultara ser un diente roto que necesitaba extracción."},
+        {"text": "Rubén descubrió juguetes específicos de masticar que ayudan a limpiar los dientes de su perro de forma natural durante el juego diario."},
+        {"text": "Beatriz revisa las encías de su gato comparando el color con fotos anteriores, un truco que le enseñó el veterinario para detectar cambios a tiempo."},
+        {"text": "Óscar descubrió que la alimentación húmeda, aunque más cómoda para su gato mayor, requería un cepillado dental más frecuente que el pienso seco."},
+        {"text": "Cristina lleva a sus dos perros a revisión dental el mismo día, aprovechando el desplazamiento al veterinario para ambos a la vez."}
+      ]
+    },
+    {
+      "name": "peluqueria-canina",
+      "domain": "mascotas",
+      "facts": [
+        {"text": "Iván lleva a su perro de pelo largo a la peluquería canina cada seis semanas, porque descubrió que sin ese mantenimiento se le enredaba y apelmazaba el pelo."},
+        {"text": "Laura cepilla a su perro todos los días entre visitas a la peluquería, un hábito que redujo bastante la cantidad de pelo suelto por toda la casa."},
+        {"text": "Sergio descubrió una peluquera canina que trabaja despacio y con mucha paciencia, ideal para su perro nervioso que antes se agobiaba con el secador."},
+        {"text": "Paula lleva a su perro a cortar el pelo más corto en verano, descubriendo que así lleva mejor el calor sin perder la protección básica de la piel."},
+        {"text": "Adrián descubrió nudos escondidos detrás de las orejas de su perro que el cepillado normal en casa no alcanzaba a desenredar bien."},
+        {"text": "Noelia lleva a su perro a la peluquería antes de cada verano para cortarle el pelo de las almohadillas, que se le enredaba con facilidad en los paseos."},
+        {"text": "Raúl descubrió que su perro necesitaba corte de uñas regular en la peluquería, porque en casa le daba demasiado respeto hacerlo él mismo."},
+        {"text": "Patricia lleva a su perra a la peluquería con más frecuencia desde que empezó a hacerle mudar el pelo de forma irregular por una alergia leve."},
+        {"text": "Fernando descubrió que un buen cepillado antes del baño en la peluquería evitaba que el pelo se apelmazara todavía más al mojarse."},
+        {"text": "Silvia lleva a su perro a una peluquera especializada en razas de pelo rizado, después de que un corte mal hecho en otro sitio le dejara el pelo desigual."},
+        {"text": "Gonzalo aprendió a limpiar las orejas de su perro en casa entre visitas a la peluquería, un cuidado extra que le recomendó la peluquera."},
+        {"text": "Rocío lleva a su perro a la peluquería canina justo antes de una reunión familiar grande, para que luzca presentable delante de todos."},
+        {"text": "Víctor descubrió que cortar el pelo alrededor de los ojos de su perro mejoraba mucho su visión, algo que no se le había ocurrido antes."}
+      ]
+    },
+    {
+      "name": "convivencia-entre-mascotas",
+      "domain": "mascotas",
+      "facts": [
+        {"text": "Teresa introdujo a su gato nuevo poco a poco con el perro ya residente en casa, separados primero por una puerta y dejando que se olieran sin verse."},
+        {"text": "Ignacio descubrió que sus dos gatos tardaron casi un mes en dejar de bufarse al cruzarse por el pasillo del piso."},
+        {"text": "Alba alimenta a su perro y a su gato en zonas separadas de la cocina, después de que el gato le robara la comida al perro varias veces."},
+        {"text": "Mateo descubrió que presentar a los animales en un espacio neutro, no en el territorio de uno de ellos, facilitó mucho la primera toma de contacto."},
+        {"text": "Olga tiene dos perros que se llevan bien gracias a paseos conjuntos desde el principio, una recomendación que le dio el adiestrador antes de adoptar el segundo."},
+        {"text": "Jaime descubrió que su gato mayor necesitaba zonas altas propias donde refugiarse del gatito nuevo, más juguetón de lo que el adulto quería tolerar."},
+        {"text": "Celia separó los areneros de sus dos gatos en habitaciones distintas, después de que compartir uno solo generara tensión entre ellos."},
+        {"text": "Andrés descubrió que su perro y su conejo podían convivir con supervisión, pero nunca los deja solos juntos sin vigilancia por precaución."},
+        {"text": "Lucía introdujo juguetes nuevos para cada mascota por separado, evitando que compitieran por el mismo juguete durante las primeras semanas de convivencia."},
+        {"text": "Marcos descubrió celos claros en su perro mayor cuando llegó el cachorro nuevo, resueltos dedicándole tiempo individual aparte del que compartían los dos juntos."},
+        {"text": "Elena separa las camas de sus dos gatos en rincones distintos de la casa, después de notar que preferían no compartir el mismo espacio de descanso."},
+        {"text": "Javier descubrió que su perro protegía demasiado los juguetes delante del gato nuevo, un comportamiento que trabajó con ayuda de un adiestrador."},
+        {"text": "Sofía presentó a su nuevo cachorro a la gata de la casa con mucha calma, dejando que la gata marcara la distancia las primeras semanas sin forzar el contacto."}
+      ]
+    },
+    {
+      "name": "ahorro-mensual-familiar",
+      "domain": "finanzas",
+      "facts": [
+        {"text": "Diego y su pareja apartan el 10 % de los ingresos cada mes en cuanto cobran, antes de gastar en cualquier otra cosa, siguiendo la regla de pagarse primero a sí mismos."},
+        {"text": "Carmen descubrió que automatizar una transferencia a la cuenta de ahorro el día uno de mes le evitaba la tentación de gastarlo entre semana."},
+        {"text": "Pablo revisa el ahorro familiar cada domingo con su pareja, un rato corto que les ayuda a no perder de vista el objetivo del año."},
+        {"text": "Irene descubrió que fijar una cantidad de ahorro realista, no demasiado ambiciosa, le ayudó a mantener el hábito durante todo el año sin frustrarse."},
+        {"text": "Álvaro ahorra en una cuenta separada de la del día a día, para no mezclar el dinero destinado a imprevistos con el de los gastos normales."},
+        {"text": "Nuria descubrió que ahorrar las pagas extra casi por completo, en vez del sueldo mensual, le resultaba mucho más fácil psicológicamente."},
+        {"text": "Hugo y su pareja se marcan un objetivo de ahorro concreto cada año, como cambiar de coche o reformar el baño, para que el esfuerzo tenga un sentido claro."},
+        {"text": "Marta descubrió que anotar cada gasto grande antes de hacerlo le ayudaba a frenar compras impulsivas que luego comprometían el ahorro del mes."},
+        {"text": "Daniel ahorra en efectivo una pequeña cantidad cada semana en un bote de casa, una costumbre que mantiene desde que era joven junto con sus padres."},
+        {"text": "Claudia descubrió que revisar el ahorro familiar cada trimestre, no solo cada mes, le daba una visión más realista de si iban por buen camino."},
+        {"text": "Rubén y su pareja reparten el ahorro en distintos objetivos, vacaciones, imprevistos y fondo a largo plazo, para no mezclarlo todo en un solo bote."},
+        {"text": "Beatriz descubrió que reducir pequeños gastos diarios, el café fuera o los pedidos de comida, le permitió ahorrar más de lo que esperaba sin grandes sacrificios."},
+        {"text": "Óscar ahorra automáticamente cada vez que recibe un ingreso extra, como una devolución de impuestos, en vez de gastarlo en algo puntual."}
+      ]
+    },
+    {
+      "name": "presupuesto-de-la-compra",
+      "domain": "finanzas",
+      "facts": [
+        {"text": "Cristina fija un presupuesto semanal para la compra del supermercado y lo lleva anotado en el móvil mientras recorre los pasillos."},
+        {"text": "Iván descubrió que ir a comprar con lista cerrada, sin desviarse, le ahorraba bastante dinero frente a improvisar según lo que veía en las estanterías."},
+        {"text": "Laura compara precios por kilo entre marcas antes de decidir, después de descubrir que algunas marcas blancas le salían mucho más baratas sin gran diferencia de calidad."},
+        {"text": "Sergio planea el menú semanal antes de ir a comprar, para no comprar de más ni tener que tirar comida que se queda sin usar."},
+        {"text": "Paula descubrió que comprar fruta y verdura de temporada le bajaba bastante el presupuesto semanal frente a comprar fuera de temporada."},
+        {"text": "Adrián evita ir a comprar con hambre, desde que descubrió que así acababa metiendo en el carro muchas más cosas de las que necesitaba."},
+        {"text": "Noelia aprovecha las ofertas de productos no perecederos para comprar en cantidad cuando el precio baja de verdad, y así ahorrar a medio plazo."},
+        {"text": "Raúl descubrió que cocinar en casa casi toda la semana, reservando el pedir fuera para ocasiones puntuales, le cambió por completo el presupuesto mensual de comida."},
+        {"text": "Patricia revisa el recibo de la compra al llegar a casa, comprobando que los precios cobrados coinciden con los que vio en la estantería."},
+        {"text": "Fernando compara el presupuesto de la compra mes a mes en una hoja sencilla, para detectar si algún mes se ha ido más de lo habitual."},
+        {"text": "Silvia descubrió que comprar en un mercado de barrio, en vez de en el supermercado grande, le salía más barato en frutas y verduras de temporada."},
+        {"text": "Gonzalo reserva un pequeño margen extra en el presupuesto de la compra para imprevistos, como una visita inesperada o un antojo puntual."},
+        {"text": "Rocío descubrió que llevar efectivo contado para la compra, en vez de tarjeta, la ayudaba a no pasarse del presupuesto que se había marcado."}
+      ]
+    },
+    {
+      "name": "fondo-de-emergencia",
+      "domain": "finanzas",
+      "facts": [
+        {"text": "Víctor tardó casi dos años en reunir un fondo de emergencia equivalente a seis meses de gastos, ahorrando una cantidad fija cada mes sin tocarlo."},
+        {"text": "Teresa descubrió la importancia de un fondo de emergencia cuando se le rompió la caldera justo el mismo mes que el coche necesitó una reparación grande."},
+        {"text": "Ignacio guarda el fondo de emergencia en una cuenta distinta a la del día a día, para no verlo como dinero disponible para gastos normales."},
+        {"text": "Alba se marcó como primer objetivo tener al menos un mes de gastos ahorrado, antes de pensar en cualquier otro objetivo de ahorro más ambicioso."},
+        {"text": "Mateo descubrió que tener el fondo de emergencia le quitó mucha ansiedad cuando se quedó sin trabajo durante unos meses el año pasado."},
+        {"text": "Olga repone el fondo de emergencia en cuanto lo usa para algo puntual, antes de retomar cualquier otro objetivo de ahorro de la familia."},
+        {"text": "Jaime descubrió que calcular bien sus gastos fijos mensuales le ayudó a saber exactamente cuánto necesitaba en el fondo de emergencia para sentirse tranquilo."},
+        {"text": "Celia mantiene el fondo de emergencia en un producto de fácil acceso, aunque gane menos interés, porque prioriza poder usarlo de inmediato si hace falta."},
+        {"text": "Andrés descubrió que explicar a sus hijos adolescentes para qué sirve el fondo de emergencia familiar les ayudó a entender mejor las decisiones de ahorro de la casa."},
+        {"text": "Lucía empezó el fondo de emergencia con una cantidad pequeña y lo fue aumentando poco a poco, sin agobiarse por no llegar al objetivo final de golpe."},
+        {"text": "Marcos descubrió que tener el fondo de emergencia separado le evitó pedir dinero prestado cuando se le averió el coche de forma inesperada."},
+        {"text": "Elena revisa el fondo de emergencia cada año para ajustarlo si sus gastos fijos han cambiado, por ejemplo tras una mudanza o un hijo más."},
+        {"text": "Javier descubrió que un fondo de emergencia bien dimensionado le dio la tranquilidad necesaria para tomar decisiones laborales con menos miedo al cambio."}
+      ]
+    },
+    {
+      "name": "ahorro-para-vacaciones",
+      "domain": "finanzas",
+      "facts": [
+        {"text": "Sofía abre una cuenta de ahorro específica para las vacaciones de verano cada enero, calculando el presupuesto total y dividiéndolo entre los meses que quedan."},
+        {"text": "Diego descubrió que ahorrar poco a poco todo el año para las vacaciones le evitaba el agobio de pagarlo todo de golpe en julio."},
+        {"text": "Carmen apunta en una libreta el presupuesto estimado de cada parte del viaje, alojamiento, comidas y actividades, para ahorrar la cantidad justa necesaria."},
+        {"text": "Pablo descubrió que viajar en temporada baja le permitía ahorrar bastante en el mismo destino que en temporada alta le habría costado mucho más."},
+        {"text": "Irene ahorra para las vacaciones familiares repartiendo el objetivo entre los dos progenitores, cada uno aportando una parte fija cada mes."},
+        {"text": "Álvaro descubrió que fijar el destino de las vacaciones con antelación le ayudaba a calcular mejor cuánto necesitaba ahorrar cada mes."},
+        {"text": "Nuria guarda las propinas y cambios sueltos del día a día en un bote etiquetado como vacaciones, una costumbre que mantiene desde hace años."},
+        {"text": "Hugo descubrió que reservar vuelos y alojamiento con varios meses de antelación le permitía ahorrar bastante frente a reservar todo de última hora."},
+        {"text": "Marta ahorra parte del dinero que gastaría en comer fuera entre semana para sumarlo al presupuesto de las vacaciones familiares de agosto."},
+        {"text": "Daniel descubrió que un viaje más sencillo pero bien planificado le dejaba mejores recuerdos que uno más caro organizado con prisas de última hora."},
+        {"text": "Claudia reparte el ahorro para vacaciones en dos partes, una para el viaje grande de verano y otra para las escapadas cortas del resto del año."},
+        {"text": "Rubén descubrió que comparar precios de varios destinos antes de decidir le ayudó a elegir unas vacaciones que se ajustaban mejor al ahorro que tenían reunido."},
+        {"text": "Beatriz ahorra para las vacaciones vendiendo cosas que ya no usa en casa, una costumbre que empezó casi como juego y que ya repite cada primavera."}
+      ]
+    },
+    {
+      "name": "plan-de-pensiones-privado",
+      "domain": "finanzas",
+      "facts": [
+        {"text": "Óscar abrió un plan de pensiones privado a los treinta años, después de que un asesor le explicara la diferencia de rentabilidad por empezar antes o después."},
+        {"text": "Cristina aporta una cantidad fija cada mes a su plan de pensiones, automatizada igual que cualquier otro ahorro, para no depender de acordarse cada vez."},
+        {"text": "Iván descubrió que revisar las comisiones de su plan de pensiones cada año le ayudó a cambiar a uno con condiciones más favorables."},
+        {"text": "Laura aumenta la aportación a su plan de pensiones cada vez que recibe una subida de sueldo, para que el ahorro crezca junto con sus ingresos."},
+        {"text": "Sergio descubrió que combinar el plan de pensiones privado con otros ahorros le daba más tranquilidad que depender de una sola fuente para el futuro."},
+        {"text": "Paula consultó con un asesor financiero antes de elegir el perfil de riesgo de su plan de pensiones, ajustándolo a su edad y su situación actual."},
+        {"text": "Adrián descubrió que empezar el plan de pensiones diez años antes que su hermano le suponía una diferencia notable en el total acumulado, según le explicaron."},
+        {"text": "Noelia revisa el rendimiento de su plan de pensiones una vez al año, sin obsesionarse con mirarlo cada mes y angustiarse con las subidas y bajadas normales."},
+        {"text": "Raúl aporta una cantidad extra a su plan de pensiones cuando recibe la paga extra, en vez de gastarla por completo en algo puntual."},
+        {"text": "Patricia descubrió distintos tipos de planes de pensiones, con más o menos riesgo, y eligió uno acorde a los años que le quedan hasta la jubilación."},
+        {"text": "Fernando abrió un plan de pensiones también para su pareja, que trabaja por cuenta propia y no tenía ningún ahorro específico para la jubilación."},
+        {"text": "Silvia descubrió que aportar de forma constante, aunque fuera poco cada mes, le daba mejores resultados a largo plazo que aportaciones grandes pero irregulares."},
+        {"text": "Gonzalo consulta cada par de años si le compensa seguir con el mismo plan de pensiones o cambiar a otro con mejores condiciones en el mercado."}
+      ]
+    },
+    {
+      "name": "gastos-fijos-del-hogar",
+      "domain": "finanzas",
+      "facts": [
+        {"text": "Rocío hizo una lista completa de los gastos fijos del hogar, alquiler, luz, agua y gas, para tener claro cuánto necesitaba cada mes antes de gastar en cualquier otra cosa."},
+        {"text": "Víctor descubrió que revisar el recibo de la luz cada mes le ayudó a detectar un consumo extraño que resultó ser un electrodoméstico viejo gastando de más."},
+        {"text": "Teresa agrupó los gastos fijos del hogar en un solo documento compartido con su pareja, para que ambos supieran exactamente en qué se iba el dinero cada mes."},
+        {"text": "Ignacio descubrió que cambiar de compañía de gas le bajó el recibo mensual sin cambiar en nada sus hábitos de consumo en casa."},
+        {"text": "Alba revisa los gastos fijos cada seis meses para ver si alguno ha subido sin que lo notaran, como el seguro del hogar o el del coche."},
+        {"text": "Mateo descubrió que domiciliar todos los pagos fijos en la misma fecha le facilitaba mucho organizar el resto del presupuesto del mes."},
+        {"text": "Olga calculó el gasto fijo real del hogar sumando también los gastos que solo aparecen una o dos veces al año, como el mantenimiento de la comunidad."},
+        {"text": "Jaime descubrió que su recibo del agua subió notablemente un mes por una pequeña fuga en el baño que no habían detectado a tiempo."},
+        {"text": "Celia reparte los gastos fijos del hogar con su pareja según un porcentaje acordado entre los dos, proporcional a lo que gana cada uno."},
+        {"text": "Andrés descubrió que revisar cada año las condiciones del seguro del hogar le permitía encontrar coberturas parecidas a mejor precio."},
+        {"text": "Lucía anota los gastos fijos del hogar en una hoja sencilla que revisa el primer día de cada mes, antes de planificar cualquier gasto adicional."},
+        {"text": "Marcos descubrió que algunos gastos fijos, como la comunidad de vecinos, subían cada año y conviene revisarlos en la reunión anual de vecinos."},
+        {"text": "Elena calculó que los gastos fijos del hogar se llevaban casi la mitad de los ingresos familiares, lo que le ayudó a ajustar mejor el resto del presupuesto."}
+      ]
+    },
+    {
+      "name": "ahorro-para-estudios-de-los-hijos",
+      "domain": "finanzas",
+      "facts": [
+        {"text": "Javier abrió una cuenta de ahorro para los estudios de su hija el mismo mes que nació, aportando una cantidad pequeña pero constante cada mes."},
+        {"text": "Sofía descubrió que empezar a ahorrar para la universidad de sus hijos muy pronto le permitía aportar menos cada mes que si empezaba más tarde."},
+        {"text": "Diego reparte el ahorro para estudios entre sus dos hijos en cuentas separadas, para que cada uno tenga claro lo que se ha ahorrado para él."},
+        {"text": "Carmen descubrió que algunas ayudas y becas podían complementar el ahorro familiar para los estudios de su hijo, así que empezó a informarse con tiempo."},
+        {"text": "Pablo ahorra para los estudios de su hija aportando parte de la paga extra de verano, una costumbre que mantiene desde que ella empezó primaria."},
+        {"text": "Irene descubrió que hablar con sus hijos adolescentes sobre el coste real de estudiar fuera les ayudó a valorar mejor el ahorro que la familia hacía por ellos."},
+        {"text": "Álvaro calculó el coste aproximado de la universidad dentro de diez años, con cierta subida estimada, para saber cuánto necesitaba ahorrar cada mes desde ahora."},
+        {"text": "Nuria ahorra para los estudios de sus hijos en un producto a largo plazo, aceptando algo más de riesgo porque todavía quedan muchos años para necesitarlo."},
+        {"text": "Hugo descubrió que sus padres habían hecho lo mismo por él de joven, y ahora entiende mejor el esfuerzo que supuso en su momento."},
+        {"text": "Marta reparte el ahorro familiar priorizando primero el fondo de emergencia y después el ahorro para los estudios de sus hijos, nunca al revés."},
+        {"text": "Daniel descubrió que ahorrar una cantidad modesta pero constante durante quince años sumaba mucho más de lo que había imaginado al principio."},
+        {"text": "Claudia ajusta el ahorro para los estudios de sus hijos cada vez que cambian sus ingresos, sin dejar de aportar nunca del todo aunque sea menos algún mes."},
+        {"text": "Rubén descubrió que su hijo valoraba mucho más los estudios al saber que parte del ahorro familiar llevaba años destinado específicamente a eso."}
+      ]
+    },
+    {
+      "name": "control-de-gastos-con-app",
+      "domain": "finanzas",
+      "facts": [
+        {"text": "Beatriz usa una aplicación gratuita para anotar cada gasto del día, un hábito que adoptó después de no saber nunca bien en qué se le iba el dinero."},
+        {"text": "Óscar descubrió que categorizar los gastos por tipo, ocio, comida o transporte, le ayudó a ver claramente dónde se le escapaba más dinero del esperado."},
+        {"text": "Cristina revisa el resumen mensual de la aplicación de gastos cada domingo con su pareja, un rato que han convertido en rutina fija."},
+        {"text": "Iván descubrió gastos pequeños y repetidos, como el café de cada mañana, que sumados al mes resultaban mucho más altos de lo que pensaba."},
+        {"text": "Laura conecta la aplicación de control de gastos con su cuenta bancaria para no tener que anotar cada movimiento a mano."},
+        {"text": "Sergio descubrió que fijar alertas cuando se acerca al límite de una categoría de gasto le ayudó a frenar antes de pasarse del presupuesto."},
+        {"text": "Paula usa la aplicación de gastos compartida con su pareja, para que ambos vean en tiempo real cómo va el presupuesto familiar del mes."},
+        {"text": "Adrián descubrió que anotar los gastos justo al hacerlos, no al final del día, le daba mucha más precisión que intentar recordarlo todo por la noche."},
+        {"text": "Noelia revisa cada trimestre la evolución de sus gastos en la aplicación, comparando con los meses anteriores para ver si va mejorando o empeorando."},
+        {"text": "Raúl descubrió categorías de gasto que ni se había planteado, como las pequeñas compras de impulso, gracias al desglose detallado de la aplicación."},
+        {"text": "Patricia usa la aplicación para marcar objetivos de ahorro mensuales y ver visualmente cuánto le falta para alcanzarlos cada mes."},
+        {"text": "Fernando descubrió que compartir los datos de gasto con su pareja, de forma transparente, redujo bastante las discusiones de dinero que tenían antes."},
+        {"text": "Silvia revisa la aplicación de gastos antes de cualquier compra grande, para confirmar que no descompensa el presupuesto del resto del mes."}
+      ]
+    },
+    {
+      "name": "reparto-de-gastos-en-pareja",
+      "domain": "finanzas",
+      "facts": [
+        {"text": "Gonzalo y su pareja reparten los gastos del hogar proporcionalmente a lo que gana cada uno, en vez de dividirlo siempre a partes iguales."},
+        {"text": "Rocío descubrió que tener una cuenta común solo para gastos compartidos, y cuentas propias para lo personal, le simplificó mucho la convivencia con su pareja."},
+        {"text": "Víctor y su pareja revisan el reparto de gastos cada vez que cambia la situación laboral de alguno de los dos, ajustándolo a la nueva realidad."},
+        {"text": "Teresa descubrió que hablar abiertamente de dinero con su pareja desde el principio evitó muchos malentendidos que había visto en otras parejas conocidas."},
+        {"text": "Ignacio y su pareja se reparten los gastos fijos del hogar y dejan los gastos personales, como la ropa, totalmente separados en cuentas individuales."},
+        {"text": "Alba descubrió que anotar quién ha pagado qué en una aplicación compartida evitaba discusiones sobre quién debía a quién al final del mes."},
+        {"text": "Mateo y su pareja fijaron una reunión mensual breve para hablar de dinero, un hábito que descubrieron que evitaba acumular tensiones sobre el tema."},
+        {"text": "Olga descubrió que su pareja y ella tenían formas muy distintas de ver el ahorro, y tuvieron que negociar un término medio con el que ambos se sintieran cómodos."},
+        {"text": "Jaime y su pareja reparten los gastos de las vacaciones familiares según un presupuesto acordado con antelación, para evitar sorpresas durante el viaje."},
+        {"text": "Celia descubrió que incluir también el tiempo y las tareas del hogar en la conversación sobre dinero le dio una visión más justa del reparto total."},
+        {"text": "Andrés y su pareja decidieron juntos un límite de gasto personal mensual para cada uno, sin tener que justificar en qué se lo gastaban."},
+        {"text": "Lucía descubrió que revisar juntos los gastos cada mes, en vez de cada uno por su lado, les ayudó a sentirse más equipo en las decisiones de dinero."},
+        {"text": "Marcos y su pareja reparten los gastos imprevistos grandes a partes iguales, independientemente de quién gane más, porque lo consideran una responsabilidad conjunta."}
+      ]
+    },
+    {
+      "name": "ahorro-en-energia-domestica",
+      "domain": "finanzas",
+      "facts": [
+        {"text": "Elena cambió las bombillas de toda la casa a tipo led, y descubrió una bajada notable en el recibo de la luz de los meses siguientes."},
+        {"text": "Javier aprendió a desenchufar los aparatos que no usa, después de descubrir que algunos seguían consumiendo energía incluso apagados en modo de espera."},
+        {"text": "Sofía instaló un programador en el calentador de agua para que solo funcionara en las horas en que realmente lo necesitaban en casa."},
+        {"text": "Diego descubrió que poner lavadoras y lavavajillas en horas de tarifa más barata le ahorraba una cantidad notable al mes sin cambiar de aparatos."},
+        {"text": "Carmen aisló las ventanas antiguas de casa con burletes, reduciendo bastante la necesidad de calefacción en invierno y de aire acondicionado en verano."},
+        {"text": "Pablo descubrió que bajar un solo grado la temperatura de la calefacción en invierno apenas se notaba en confort pero sí en el recibo del gas."},
+        {"text": "Irene aprendió a usar electrodomésticos de alta eficiencia energética al renovar la nevera y la lavadora, fijándose en la etiqueta antes de comprar."},
+        {"text": "Álvaro descubrió que cerrar las persianas en las horas de más sol de verano mantenía la casa fresca sin necesidad de encender tanto el aire acondicionado."},
+        {"text": "Nuria aprendió a secar la ropa al aire siempre que puede, reservando la secadora solo para los días de lluvia o mucha prisa."},
+        {"text": "Hugo descubrió un enchufe inteligente que le permite programar y medir el consumo real de los aparatos más grandes de la casa."},
+        {"text": "Marta aisló el techo del ático al reformar la casa, notando una diferencia notable en la temperatura general de las habitaciones de abajo."},
+        {"text": "Daniel descubrió que cocinar con tapa en las ollas reducía bastante el tiempo de cocción y, por tanto, el consumo de gas en la cocina."},
+        {"text": "Claudia aprendió a aprovechar la luz natural moviendo el escritorio del teletrabajo cerca de la ventana, reduciendo la necesidad de luz artificial durante el día."}
+      ]
+    }
+  ]
+}
