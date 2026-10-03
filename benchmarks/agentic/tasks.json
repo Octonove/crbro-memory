@@ -1,5 +1,5 @@
 {
-  "frozen": "2026-09-20",
+  "frozen": "2026-10-03",
   "suffix": "Responde en una sola línea, solo con el dato y nada más. Si no tienes forma de saberlo, responde exactamente NO_LO_SE.",
   "seed": [
     { "topic": "Albatros", "domain": "proyectos-web", "type": "fact", "text": "La API de staging de Albatros escucha en el puerto 8443, detrás de Caddy." },
@@ -23,7 +23,7 @@
     { "id": "s3", "kind": "stale", "prompt": "¿Cuánto cuesta al mes el plan Pro de Ferralia?", "expect": "\\b49\\b", "stale": "\\b39\\b" },
     { "id": "s4", "kind": "stale", "prompt": "¿Desde qué rama se despliega Albatros?", "expect": "\\brelease\\b", "stale": "\\bmaster\\b" },
     { "id": "c1", "kind": "control-prompt", "prompt": "El código de la incidencia es ZX-4471. ¿Cuál es el código de la incidencia?", "expect": "zx-?4471" },
-    { "id": "c2", "kind": "control-prompt", "prompt": "La reunión con el cliente se ha movido al 14 de noviembre. ¿Qué día es la reunión?", "expect": "14" },
+    { "id": "c2", "kind": "control-prompt", "prompt": "La reunión con el cliente se ha movido al 14 de noviembre. ¿A qué fecha se ha movido la reunión?", "expect": "14" },
     { "id": "a1", "kind": "control-absent", "prompt": "¿Cuál es el número de colegiado del arquitecto de Ferralia?", "expect": null },
     { "id": "a2", "kind": "control-absent", "prompt": "¿Qué contraseña tiene el wifi de la oficina de Albatros?", "expect": null }
   ],
