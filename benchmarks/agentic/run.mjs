@@ -74,14 +74,25 @@ function cellDir(arm, id) {
 function claudeArgs(dir, arm, { tools }) {
   return ['-p', '--model', MODEL, '--output-format', 'json', '--no-session-persistence',
     '--setting-sources', 'project', '--strict-mcp-config', '--mcp-config', join(dir, 'mcp.json'),
-    '--tools', '', '--max-turns', '8',
+    '--tools', '', '--max-turns', '8', '--disable-slash-commands',
     ...(arm === 'crbro' && tools ? ['--allowedTools', READ_TOOLS] : [])];
 }
+
+/**
+ * `--setting-sources project` keeps the user's settings and hooks out, but NOT
+ * the user's CLAUDE.md: on 2026-10-03 the first run's canary caught the global
+ * CLAUDE.md (Orchestrator, Card Zero, the crbro tool names) in the baseline arm
+ * and aborted. `--safe-mode` removes it but also drops the --mcp-config server,
+ * so the crbro arm lost its tools. These two variables remove the memory files
+ * and nothing else; `--disable-slash-commands` keeps the user's skills (among
+ * them the zero-crbro card) from helping the crbro arm.
+ */
+const CELL_ENV = { ...process.env, CLAUDE_CODE_DISABLE_CLAUDE_MDS: '1', CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1' };
 
 /** The prompt goes through stdin: no shell quoting between us and the question. */
 function ask(dir, arm, prompt, opts = { tools: true }) {
   return new Promise(resolve => {
-    const child = spawn('claude', claudeArgs(dir, arm, opts), { cwd: join(dir, 'cwd'), shell: process.platform === 'win32', stdio: ['pipe', 'pipe', 'pipe'] });
+    const child = spawn('claude', claudeArgs(dir, arm, opts), { cwd: join(dir, 'cwd'), shell: process.platform === 'win32', stdio: ['pipe', 'pipe', 'pipe'], env: CELL_ENV });
     let out = '';
     const timer = setTimeout(() => child.kill(), 240_000);
     child.stdout.on('data', c => { out += c; });
