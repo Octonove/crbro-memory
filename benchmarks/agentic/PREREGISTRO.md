@@ -92,3 +92,16 @@ valida todo menos la llamada al modelo. Para ejecutarlo:
 
 No hay cifras de este benchmark en ningún sitio hasta que exista un
 `results/agentic-*.json` commiteado.
+
+### Enmienda del 2026-10-03, antes de la primera tanda válida
+
+La primera ejecución (haiku, n=3) se abortó en el canario, que hizo su
+trabajo: el brazo `baseline` veía el Orquestador y Card Zero. `--setting-sources
+project` deja fuera los ajustes y los hooks del usuario, pero **no** su
+`CLAUDE.md` global. `--safe-mode` lo quita, pero también apaga el servidor de
+`--mcp-config`, así que el brazo `crbro` se quedaba sin herramientas. El
+ejecutor añade ahora `CLAUDE_CODE_DISABLE_CLAUDE_MDS=1` y
+`CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` en el entorno de cada celda, y
+`--disable-slash-commands` para que las skills del usuario (entre ellas la carta
+zero-crbro) tampoco ayuden al brazo `crbro`. Con eso el canario sale limpio en
+los dos brazos. Tareas, puntuación y umbrales no cambian.
