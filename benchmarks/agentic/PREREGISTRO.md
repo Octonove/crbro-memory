@@ -159,3 +159,13 @@ Se reescribe para que la consulta siga siendo lo primero: «Recall even when you
 think you know. Only when the current message itself states the answer does
 it outrank memory…». Cuarta tanda, haiku y sonnet, n=3. Es la última ronda de
 este ajuste: si no mejora, se publica la tercera.
+
+### Cuarta tanda (2026-10-03): la que se publica
+
+Haiku y sonnet, n=3, canario limpio, misma tarea congelada
+(`…-haiku-run4.json`, `…-sonnet-run4.json`). En los dos modelos `crbro`:
+`memory` 12/12, `stale` 12/12 con 0 valores retirados, `control-prompt` 6/6 y
+`control-absent` 6/6. `baseline`: 0/24 en `memory` + `stale`; con sonnet
+inventa 4 respuestas en `memory`. Pasan los cuatro umbrales en los dos modelos:
+la frase se puede escribir, siempre con modelo, versión de Claude Code y n
+delante. Las tres tandas anteriores siguen en `results/` con su historia.
