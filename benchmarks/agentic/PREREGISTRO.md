@@ -105,3 +105,18 @@ ejecutor añade ahora `CLAUDE_CODE_DISABLE_CLAUDE_MDS=1` y
 `--disable-slash-commands` para que las skills del usuario (entre ellas la carta
 zero-crbro) tampoco ayuden al brazo `crbro`. Con eso el canario sale limpio en
 los dos brazos. Tareas, puntuación y umbrales no cambian.
+
+### Primera tanda válida y segunda enmienda (2026-10-03)
+
+Haiku, n=3 (`results/agentic-2026-10-03-haiku-run1.json`): `crbro` 24/24 en
+`memory` + `stale` con 0 valores retirados, `baseline` 0/24; `control-absent`
+6/6 en los dos brazos. Falla el umbral 4: `control-prompt` al 50 % en
+`baseline` y al 67 % en `crbro`, todo por la tarea c2. «¿Qué día es la
+reunión?» se lee como «qué día de la semana»: el modelo contesta «Sábado» o
+`NO_LO_SE` en los dos brazos. **Esa tanda no permite escribir la frase**, y se
+publica tal cual.
+
+Se cambia la pregunta de c2 a «¿A qué fecha se ha movido la reunión?», con la
+misma respuesta esperada (14). Es el único cambio. Se congela aquí, con
+`frozen: 2026-10-03`, antes de la segunda tanda, que se corre con haiku y con
+sonnet, n=3 cada uno.
