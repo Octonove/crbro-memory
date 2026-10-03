@@ -1,0 +1,911 @@
+{
+  "date": "2026-10-03",
+  "model": "sonnet",
+  "claude_code": "2.1.270 (Claude Code)",
+  "reps": 3,
+  "aggregate": {
+    "baseline": {
+      "memory": {
+        "n": 12,
+        "correct": 0,
+        "stale": 0,
+        "abstain": 7,
+        "wrong": 5,
+        "cost_usd": 0.05456559999999999,
+        "turns": 12
+      },
+      "stale": {
+        "n": 12,
+        "correct": 0,
+        "stale": 0,
+        "abstain": 12,
+        "wrong": 0,
+        "cost_usd": 0.04944959999999999,
+        "turns": 12
+      },
+      "control-prompt": {
+        "n": 6,
+        "correct": 6,
+        "stale": 0,
+        "abstain": 0,
+        "wrong": 0,
+        "cost_usd": 0.0250288,
+        "turns": 6
+      },
+      "control-absent": {
+        "n": 6,
+        "correct": 6,
+        "stale": 0,
+        "abstain": 0,
+        "wrong": 0,
+        "cost_usd": 0.024846800000000002,
+        "turns": 6
+      }
+    },
+    "crbro": {
+      "memory": {
+        "n": 12,
+        "correct": 12,
+        "stale": 0,
+        "abstain": 0,
+        "wrong": 0,
+        "cost_usd": 0.2857716,
+        "turns": 42
+      },
+      "stale": {
+        "n": 12,
+        "correct": 12,
+        "stale": 0,
+        "abstain": 0,
+        "wrong": 0,
+        "cost_usd": 0.2732062,
+        "turns": 39
+      },
+      "control-prompt": {
+        "n": 6,
+        "correct": 5,
+        "stale": 0,
+        "abstain": 0,
+        "wrong": 1,
+        "cost_usd": 0.11090520000000001,
+        "turns": 11
+      },
+      "control-absent": {
+        "n": 6,
+        "correct": 6,
+        "stale": 0,
+        "abstain": 0,
+        "wrong": 0,
+        "cost_usd": 0.14739960000000002,
+        "turns": 21
+      }
+    }
+  },
+  "verdict": {
+    "checks": [
+      {
+        "id": 1,
+        "rule": "crbro correct on memory+stale >= 80%",
+        "value": 100,
+        "pass": true
+      },
+      {
+        "id": 2,
+        "rule": "crbro stale answers <= 5%",
+        "value": 0,
+        "pass": true
+      },
+      {
+        "id": 3,
+        "rule": "crbro invents no more than baseline on control-absent",
+        "value": [
+          0,
+          0
+        ],
+        "pass": true
+      },
+      {
+        "id": 4,
+        "rule": "no arm under 90% on control-prompt",
+        "value": 83.3,
+        "pass": false
+      }
+    ],
+    "enough_reps": true,
+    "claim_allowed": false
+  },
+  "cells": [
+    {
+      "rep": 0,
+      "arm": "baseline",
+      "id": "m1",
+      "kind": "memory",
+      "outcome": "abstain",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "cost_usd": 0.0041278,
+      "turns": 1
+    },
+    {
+      "rep": 0,
+      "arm": "baseline",
+      "id": "m3",
+      "kind": "memory",
+      "outcome": "wrong",
+      "answer": "Glob({\"pattern\":\"**/*Ferralia*\"})\nGlob({\"pattern\":\"**/*ferralia*\"})",
+      "error": null,
+      "cost_usd": 0.0046818,
+      "turns": 1
+    },
+    {
+      "rep": 0,
+      "arm": "baseline",
+      "id": "m2",
+      "kind": "memory",
+      "outcome": "abstain",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "cost_usd": 0.004139800000000001,
+      "turns": 1
+    },
+    {
+      "rep": 0,
+      "arm": "baseline",
+      "id": "m4",
+      "kind": "memory",
+      "outcome": "wrong",
+      "answer": "",
+      "error": null,
+      "cost_usd": 0.005709800000000001,
+      "turns": 1
+    },
+    {
+      "rep": 0,
+      "arm": "baseline",
+      "id": "s1",
+      "kind": "stale",
+      "outcome": "abstain",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "cost_usd": 0.0041038,
+      "turns": 1
+    },
+    {
+      "rep": 0,
+      "arm": "baseline",
+      "id": "s3",
+      "kind": "stale",
+      "outcome": "abstain",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "cost_usd": 0.0041438,
+      "turns": 1
+    },
+    {
+      "rep": 0,
+      "arm": "baseline",
+      "id": "s4",
+      "kind": "stale",
+      "outcome": "abstain",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "cost_usd": 0.0041238,
+      "turns": 1
+    },
+    {
+      "rep": 0,
+      "arm": "baseline",
+      "id": "s2",
+      "kind": "stale",
+      "outcome": "abstain",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "cost_usd": 0.0041198,
+      "turns": 1
+    },
+    {
+      "rep": 0,
+      "arm": "baseline",
+      "id": "c1",
+      "kind": "control-prompt",
+      "outcome": "correct",
+      "answer": "ZX-4471",
+      "error": null,
+      "cost_usd": 0.0041558,
+      "turns": 1
+    },
+    {
+      "rep": 0,
+      "arm": "baseline",
+      "id": "c2",
+      "kind": "control-prompt",
+      "outcome": "correct",
+      "answer": "14 de noviembre",
+      "error": null,
+      "cost_usd": 0.0042018,
+      "turns": 1
+    },
+    {
+      "rep": 0,
+      "arm": "baseline",
+      "id": "a2",
+      "kind": "control-absent",
+      "outcome": "correct",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "cost_usd": 0.0041478,
+      "turns": 1
+    },
+    {
+      "rep": 0,
+      "arm": "baseline",
+      "id": "a1",
+      "kind": "control-absent",
+      "outcome": "correct",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "cost_usd": 0.0041318,
+      "turns": 1
+    },
+    {
+      "rep": 0,
+      "arm": "crbro",
+      "id": "m1",
+      "kind": "memory",
+      "outcome": "correct",
+      "answer": "8443",
+      "error": null,
+      "cost_usd": 0.0209992,
+      "turns": 3
+    },
+    {
+      "rep": 0,
+      "arm": "crbro",
+      "id": "m2",
+      "kind": "memory",
+      "outcome": "correct",
+      "answer": "Jueves",
+      "error": null,
+      "cost_usd": 0.0263342,
+      "turns": 4
+    },
+    {
+      "rep": 0,
+      "arm": "crbro",
+      "id": "m3",
+      "kind": "memory",
+      "outcome": "correct",
+      "answer": "Noelia Urrutia",
+      "error": null,
+      "cost_usd": 0.026986999999999997,
+      "turns": 4
+    },
+    {
+      "rep": 0,
+      "arm": "crbro",
+      "id": "m4",
+      "kind": "memory",
+      "outcome": "correct",
+      "answer": "1.450 euros al mes",
+      "error": null,
+      "cost_usd": 0.0275848,
+      "turns": 4
+    },
+    {
+      "rep": 0,
+      "arm": "crbro",
+      "id": "s1",
+      "kind": "stale",
+      "outcome": "correct",
+      "answer": "OVH (VPS en Gravelines).",
+      "error": null,
+      "cost_usd": 0.019756000000000003,
+      "turns": 3
+    },
+    {
+      "rep": 0,
+      "arm": "crbro",
+      "id": "s2",
+      "kind": "stale",
+      "outcome": "correct",
+      "answer": "Node 22",
+      "error": null,
+      "cost_usd": 0.0215022,
+      "turns": 3
+    },
+    {
+      "rep": 0,
+      "arm": "crbro",
+      "id": "s3",
+      "kind": "stale",
+      "outcome": "correct",
+      "answer": "49 euros/mes",
+      "error": null,
+      "cost_usd": 0.021654,
+      "turns": 3
+    },
+    {
+      "rep": 0,
+      "arm": "crbro",
+      "id": "s4",
+      "kind": "stale",
+      "outcome": "correct",
+      "answer": "release",
+      "error": null,
+      "cost_usd": 0.0207426,
+      "turns": 3
+    },
+    {
+      "rep": 0,
+      "arm": "crbro",
+      "id": "c1",
+      "kind": "control-prompt",
+      "outcome": "correct",
+      "answer": "ZX-4471",
+      "error": null,
+      "cost_usd": 0.012225,
+      "turns": 1
+    },
+    {
+      "rep": 0,
+      "arm": "crbro",
+      "id": "a1",
+      "kind": "control-absent",
+      "outcome": "correct",
+      "answer": "No encuentro ningún dato sobre un número de colegiado de arquitecto en la memoria.\n\nNO_LO_SE",
+      "error": null,
+      "cost_usd": 0.020514200000000003,
+      "turns": 3
+    },
+    {
+      "rep": 0,
+      "arm": "crbro",
+      "id": "c2",
+      "kind": "control-prompt",
+      "outcome": "correct",
+      "answer": "14 de noviembre.",
+      "error": null,
+      "cost_usd": 0.020141,
+      "turns": 2
+    },
+    {
+      "rep": 0,
+      "arm": "crbro",
+      "id": "a2",
+      "kind": "control-absent",
+      "outcome": "correct",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "cost_usd": 0.0211532,
+      "turns": 3
+    },
+    {
+      "rep": 1,
+      "arm": "baseline",
+      "id": "m1",
+      "kind": "memory",
+      "outcome": "abstain",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "cost_usd": 0.0041158,
+      "turns": 1
+    },
+    {
+      "rep": 1,
+      "arm": "baseline",
+      "id": "m2",
+      "kind": "memory",
+      "outcome": "abstain",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "cost_usd": 0.0041438,
+      "turns": 1
+    },
+    {
+      "rep": 1,
+      "arm": "baseline",
+      "id": "m3",
+      "kind": "memory",
+      "outcome": "abstain",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "cost_usd": 0.0053098,
+      "turns": 1
+    },
+    {
+      "rep": 1,
+      "arm": "baseline",
+      "id": "m4",
+      "kind": "memory",
+      "outcome": "wrong",
+      "answer": "Voy a buscar información sobre Ferralia en el directorio de trabajo.\n\n=Glob用=Bash\n{\"command\":\"ls -la\",\"description\":\"List files in working directory\"}",
+      "error": null,
+      "cost_usd": 0.0046798,
+      "turns": 1
+    },
+    {
+      "rep": 1,
+      "arm": "baseline",
+      "id": "s1",
+      "kind": "stale",
+      "outcome": "abstain",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "cost_usd": 0.0041078,
+      "turns": 1
+    },
+    {
+      "rep": 1,
+      "arm": "baseline",
+      "id": "s2",
+      "kind": "stale",
+      "outcome": "abstain",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "cost_usd": 0.0041118000000000005,
+      "turns": 1
+    },
+    {
+      "rep": 1,
+      "arm": "baseline",
+      "id": "s3",
+      "kind": "stale",
+      "outcome": "abstain",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "cost_usd": 0.004139800000000001,
+      "turns": 1
+    },
+    {
+      "rep": 1,
+      "arm": "baseline",
+      "id": "s4",
+      "kind": "stale",
+      "outcome": "abstain",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "cost_usd": 0.0041198,
+      "turns": 1
+    },
+    {
+      "rep": 1,
+      "arm": "baseline",
+      "id": "c1",
+      "kind": "control-prompt",
+      "outcome": "correct",
+      "answer": "ZX-4471",
+      "error": null,
+      "cost_usd": 0.0041478,
+      "turns": 1
+    },
+    {
+      "rep": 1,
+      "arm": "baseline",
+      "id": "c2",
+      "kind": "control-prompt",
+      "outcome": "correct",
+      "answer": "14 de noviembre",
+      "error": null,
+      "cost_usd": 0.0041938,
+      "turns": 1
+    },
+    {
+      "rep": 1,
+      "arm": "baseline",
+      "id": "a2",
+      "kind": "control-absent",
+      "outcome": "correct",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "cost_usd": 0.0041438,
+      "turns": 1
+    },
+    {
+      "rep": 1,
+      "arm": "baseline",
+      "id": "a1",
+      "kind": "control-absent",
+      "outcome": "correct",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "cost_usd": 0.004139800000000001,
+      "turns": 1
+    },
+    {
+      "rep": 1,
+      "arm": "crbro",
+      "id": "m2",
+      "kind": "memory",
+      "outcome": "correct",
+      "answer": "Jueves",
+      "error": null,
+      "cost_usd": 0.0205766,
+      "turns": 3
+    },
+    {
+      "rep": 1,
+      "arm": "crbro",
+      "id": "m3",
+      "kind": "memory",
+      "outcome": "correct",
+      "answer": "Noelia Urrutia",
+      "error": null,
+      "cost_usd": 0.027104200000000002,
+      "turns": 4
+    },
+    {
+      "rep": 1,
+      "arm": "crbro",
+      "id": "m4",
+      "kind": "memory",
+      "outcome": "correct",
+      "answer": "1.450 euros/mes",
+      "error": null,
+      "cost_usd": 0.0280254,
+      "turns": 4
+    },
+    {
+      "rep": 1,
+      "arm": "crbro",
+      "id": "s1",
+      "kind": "stale",
+      "outcome": "correct",
+      "answer": "OVH (VPS en Gravelines)",
+      "error": null,
+      "cost_usd": 0.026582800000000004,
+      "turns": 4
+    },
+    {
+      "rep": 1,
+      "arm": "crbro",
+      "id": "s2",
+      "kind": "stale",
+      "outcome": "correct",
+      "answer": "Node 22",
+      "error": null,
+      "cost_usd": 0.021567,
+      "turns": 3
+    },
+    {
+      "rep": 1,
+      "arm": "crbro",
+      "id": "s3",
+      "kind": "stale",
+      "outcome": "correct",
+      "answer": "49 euros al mes",
+      "error": null,
+      "cost_usd": 0.0216274,
+      "turns": 3
+    },
+    {
+      "rep": 1,
+      "arm": "crbro",
+      "id": "s4",
+      "kind": "stale",
+      "outcome": "correct",
+      "answer": "release",
+      "error": null,
+      "cost_usd": 0.0201722,
+      "turns": 3
+    },
+    {
+      "rep": 1,
+      "arm": "crbro",
+      "id": "c1",
+      "kind": "control-prompt",
+      "outcome": "correct",
+      "answer": "ZX-4471",
+      "error": null,
+      "cost_usd": 0.0217068,
+      "turns": 2
+    },
+    {
+      "rep": 1,
+      "arm": "crbro",
+      "id": "c2",
+      "kind": "control-prompt",
+      "outcome": "correct",
+      "answer": "No tengo información almacenada sobre una reunión reprogramada; no puedo verificar ni confirmar esa fecha de forma independiente, pero tú mismo me la has indicado en tu mensaje: 14 de noviembre.",
+      "error": null,
+      "cost_usd": 0.0231182,
+      "turns": 3
+    },
+    {
+      "rep": 1,
+      "arm": "crbro",
+      "id": "a1",
+      "kind": "control-absent",
+      "outcome": "correct",
+      "answer": "No tengo almacenado ningún dato sobre un arquitecto ni número de colegiado relacionado con Ferralia.\n\nNO_LO_SE",
+      "error": null,
+      "cost_usd": 0.0293674,
+      "turns": 4
+    },
+    {
+      "rep": 2,
+      "arm": "baseline",
+      "id": "m1",
+      "kind": "memory",
+      "outcome": "abstain",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "cost_usd": 0.0041278,
+      "turns": 1
+    },
+    {
+      "rep": 1,
+      "arm": "crbro",
+      "id": "a2",
+      "kind": "control-absent",
+      "outcome": "correct",
+      "answer": "No tengo guardada esa información, y las contraseñas no deberían almacenarse en texto plano en la memoria.\n\nNO_LO_SE",
+      "error": null,
+      "cost_usd": 0.0212076,
+      "turns": 3
+    },
+    {
+      "rep": 2,
+      "arm": "baseline",
+      "id": "m2",
+      "kind": "memory",
+      "outcome": "abstain",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "cost_usd": 0.0041158,
+      "turns": 1
+    },
+    {
+      "rep": 2,
+      "arm": "baseline",
+      "id": "m3",
+      "kind": "memory",
+      "outcome": "wrong",
+      "answer": "{}",
+      "error": null,
+      "cost_usd": 0.0046938,
+      "turns": 1
+    },
+    {
+      "rep": 2,
+      "arm": "baseline",
+      "id": "m4",
+      "kind": "memory",
+      "outcome": "wrong",
+      "answer": "Voy a buscar información sobre Ferralia en el directorio de trabajo.\n\n_cs\n\n_r{\"pattern\": \"Ferralia\", \"output_mode\": \"files_with_matches\"}",
+      "error": null,
+      "cost_usd": 0.0047198,
+      "turns": 1
+    },
+    {
+      "rep": 2,
+      "arm": "baseline",
+      "id": "s1",
+      "kind": "stale",
+      "outcome": "abstain",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "cost_usd": 0.0041238,
+      "turns": 1
+    },
+    {
+      "rep": 1,
+      "arm": "crbro",
+      "id": "m1",
+      "kind": "memory",
+      "outcome": "correct",
+      "answer": "8443",
+      "error": null,
+      "cost_usd": 0.0200496,
+      "turns": 3
+    },
+    {
+      "rep": 2,
+      "arm": "baseline",
+      "id": "s4",
+      "kind": "stale",
+      "outcome": "abstain",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "cost_usd": 0.0040958,
+      "turns": 1
+    },
+    {
+      "rep": 2,
+      "arm": "baseline",
+      "id": "s3",
+      "kind": "stale",
+      "outcome": "abstain",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "cost_usd": 0.004139800000000001,
+      "turns": 1
+    },
+    {
+      "rep": 2,
+      "arm": "baseline",
+      "id": "s2",
+      "kind": "stale",
+      "outcome": "abstain",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "cost_usd": 0.0041198,
+      "turns": 1
+    },
+    {
+      "rep": 2,
+      "arm": "baseline",
+      "id": "c1",
+      "kind": "control-prompt",
+      "outcome": "correct",
+      "answer": "ZX-4471",
+      "error": null,
+      "cost_usd": 0.0041358,
+      "turns": 1
+    },
+    {
+      "rep": 2,
+      "arm": "baseline",
+      "id": "c2",
+      "kind": "control-prompt",
+      "outcome": "correct",
+      "answer": "14 de noviembre",
+      "error": null,
+      "cost_usd": 0.0041938,
+      "turns": 1
+    },
+    {
+      "rep": 2,
+      "arm": "baseline",
+      "id": "a1",
+      "kind": "control-absent",
+      "outcome": "correct",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "cost_usd": 0.0041438,
+      "turns": 1
+    },
+    {
+      "rep": 2,
+      "arm": "baseline",
+      "id": "a2",
+      "kind": "control-absent",
+      "outcome": "correct",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "cost_usd": 0.004139800000000001,
+      "turns": 1
+    },
+    {
+      "rep": 2,
+      "arm": "crbro",
+      "id": "m1",
+      "kind": "memory",
+      "outcome": "correct",
+      "answer": "8443",
+      "error": null,
+      "cost_usd": 0.0201028,
+      "turns": 3
+    },
+    {
+      "rep": 2,
+      "arm": "crbro",
+      "id": "m2",
+      "kind": "memory",
+      "outcome": "correct",
+      "answer": "Jueves.",
+      "error": null,
+      "cost_usd": 0.020717,
+      "turns": 3
+    },
+    {
+      "rep": 2,
+      "arm": "crbro",
+      "id": "m4",
+      "kind": "memory",
+      "outcome": "correct",
+      "answer": "1.450 euros al mes",
+      "error": null,
+      "cost_usd": 0.021195199999999997,
+      "turns": 3
+    },
+    {
+      "rep": 2,
+      "arm": "crbro",
+      "id": "m3",
+      "kind": "memory",
+      "outcome": "correct",
+      "answer": "Noelia Urrutia",
+      "error": null,
+      "cost_usd": 0.026095600000000004,
+      "turns": 4
+    },
+    {
+      "rep": 2,
+      "arm": "crbro",
+      "id": "s2",
+      "kind": "stale",
+      "outcome": "correct",
+      "answer": "Node 22",
+      "error": null,
+      "cost_usd": 0.0209764,
+      "turns": 3
+    },
+    {
+      "rep": 2,
+      "arm": "crbro",
+      "id": "s1",
+      "kind": "stale",
+      "outcome": "correct",
+      "answer": "OVH (VPS en Gravelines)",
+      "error": null,
+      "cost_usd": 0.0284666,
+      "turns": 4
+    },
+    {
+      "rep": 2,
+      "arm": "crbro",
+      "id": "s3",
+      "kind": "stale",
+      "outcome": "correct",
+      "answer": "49 euros al mes",
+      "error": null,
+      "cost_usd": 0.0216834,
+      "turns": 3
+    },
+    {
+      "rep": 2,
+      "arm": "crbro",
+      "id": "s4",
+      "kind": "stale",
+      "outcome": "correct",
+      "answer": "release",
+      "error": null,
+      "cost_usd": 0.028475600000000004,
+      "turns": 4
+    },
+    {
+      "rep": 2,
+      "arm": "crbro",
+      "id": "c2",
+      "kind": "control-prompt",
+      "outcome": "wrong",
+      "answer": "API Error: Sonnet 5's safeguards flagged this message. Our intentionally broad safeguards allow us to deliver more capabilities faster, but can sometimes flag legitimate cybersecurity work. Apply to t",
+      "error": "API Error: Sonnet 5's safeguards flagged this message. Our intentionally broad safeguards allow us to deliver more capabilities faster, but can sometimes flag legitimate cybersecurity work. Apply to the Cyber Verification Program to reduce these interruptions. Learn more: https://support.claude.com/en/articles/14604842-real-time-cyber-safeguards-on-claude\n\nDetails: `[cyber]`\n\nRequest ID: req_011CfeSbhbttR5kEeLbptgc8",
+      "cost_usd": 0.008303000000000001,
+      "turns": 1
+    },
+    {
+      "rep": 2,
+      "arm": "crbro",
+      "id": "a1",
+      "kind": "control-absent",
+      "outcome": "correct",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "cost_usd": 0.029004,
+      "turns": 4
+    },
+    {
+      "rep": 2,
+      "arm": "crbro",
+      "id": "a2",
+      "kind": "control-absent",
+      "outcome": "correct",
+      "answer": "No tengo almacenada esa contraseña en memoria.\n\nNO_LO_SE",
+      "error": null,
+      "cost_usd": 0.0261532,
+      "turns": 4
+    },
+    {
+      "rep": 2,
+      "arm": "crbro",
+      "id": "c1",
+      "kind": "control-prompt",
+      "outcome": "correct",
+      "answer": "ZX-4471",
+      "error": null,
+      "cost_usd": 0.025411200000000002,
+      "turns": 2
+    }
+  ]
+}

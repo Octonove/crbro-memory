@@ -120,3 +120,29 @@ Se cambia la pregunta de c2 a «¿A qué fecha se ha movido la reunión?», con 
 misma respuesta esperada (14). Es el único cambio. Se congela aquí, con
 `frozen: 2026-10-03`, antes de la segunda tanda, que se corre con haiku y con
 sonnet, n=3 cada uno.
+
+### Segunda tanda y tercera enmienda (2026-10-03)
+
+Haiku y sonnet, n=3 (`results/agentic-2026-10-03-haiku.json`,
+`…-sonnet.json`), canario limpio. En los dos modelos `crbro` acierta 24/24 en
+`memory` + `stale`, con 0 valores retirados. `baseline` acierta 0/24, y con
+sonnet **inventa 5 respuestas** en `memory`. `control-absent` 6/6 en todos.
+Falla el umbral 4 en el brazo `crbro`, con un 83 % en los dos modelos:
+
+- haiku, c2 #1: el agente consultó la memoria, no halló la reunión y respondió
+  `NO_LO_SE`, aunque la fecha estaba en la pregunta. **Fallo de producto**: las
+  instrucciones del servidor empujan a consultar la memoria y no decían que el
+  mensaje actual manda.
+- sonnet, c2 #2: no es una respuesta. Es un error de la API («safeguards
+  flagged this message»), contado como `wrong` porque el ejecutor no
+  distinguía errores.
+
+Cambios para la tercera tanda, fijados aquí antes de ejecutarla:
+
+1. Producto: las instrucciones del servidor añaden «The current message
+   outranks memory…». Se mide la versión con ese cambio, no 2.7.1.
+2. Ejecutor: una celda cuya respuesta es un error de la API se repite una vez
+   en una celda nueva. Si vuelve a fallar, cuenta como `wrong`. El error queda
+   anotado en `retried_after`.
+
+Tareas, puntuación y umbrales no cambian. Haiku y sonnet, n=3.
