@@ -149,9 +149,13 @@ let next = 0;
 await Promise.all(Array.from({ length: Math.max(1, PARALLEL) }, async () => {
   while (next < jobs.length) {
     const { rep, arm, task } = jobs[next++];
-    const r = await ask(cellDir(arm, `${task.id}-${rep}`), arm, `${task.prompt} ${spec.suffix}`);
+    let r = await ask(cellDir(arm, `${task.id}-${rep}`), arm, `${task.prompt} ${spec.suffix}`);
+    // An API error is not an answer: one retry on a fresh cell (amendment 3,
+    // 2026-10-03). A second error still counts as wrong, and both are kept.
+    let retried = null;
+    if (r.error) { retried = r.error; r = await ask(cellDir(arm, `${task.id}-${rep}-retry`), arm, `${task.prompt} ${spec.suffix}`); }
     const outcome = r.error ? 'wrong' : scoreAnswer(task, r.answer);
-    cells.push({ rep, arm, id: task.id, kind: task.kind, outcome, answer: r.answer.slice(0, 200), error: r.error, cost_usd: r.cost_usd, turns: r.turns });
+    cells.push({ rep, arm, id: task.id, kind: task.kind, outcome, answer: r.answer.slice(0, 200), error: r.error, retried_after: retried, cost_usd: r.cost_usd, turns: r.turns });
     process.stdout.write(`  ${arm.padEnd(8)} ${task.id} #${rep}  ${outcome}\n`);
   }
 }));

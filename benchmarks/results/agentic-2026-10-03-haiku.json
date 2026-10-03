@@ -1,0 +1,911 @@
+{
+  "date": "2026-10-03",
+  "model": "haiku",
+  "claude_code": "2.1.270 (Claude Code)",
+  "reps": 3,
+  "aggregate": {
+    "baseline": {
+      "memory": {
+        "n": 12,
+        "correct": 0,
+        "stale": 0,
+        "abstain": 12,
+        "wrong": 0,
+        "cost_usd": 0.060249000000000004,
+        "turns": 12
+      },
+      "stale": {
+        "n": 12,
+        "correct": 0,
+        "stale": 0,
+        "abstain": 12,
+        "wrong": 0,
+        "cost_usd": 0.06126299999999999,
+        "turns": 12
+      },
+      "control-prompt": {
+        "n": 6,
+        "correct": 6,
+        "stale": 0,
+        "abstain": 0,
+        "wrong": 0,
+        "cost_usd": 0.026479,
+        "turns": 6
+      },
+      "control-absent": {
+        "n": 6,
+        "correct": 6,
+        "stale": 0,
+        "abstain": 0,
+        "wrong": 0,
+        "cost_usd": 0.029327,
+        "turns": 6
+      }
+    },
+    "crbro": {
+      "memory": {
+        "n": 12,
+        "correct": 12,
+        "stale": 0,
+        "abstain": 0,
+        "wrong": 0,
+        "cost_usd": 0.142456,
+        "turns": 36
+      },
+      "stale": {
+        "n": 12,
+        "correct": 12,
+        "stale": 0,
+        "abstain": 0,
+        "wrong": 0,
+        "cost_usd": 0.13636700000000002,
+        "turns": 36
+      },
+      "control-prompt": {
+        "n": 6,
+        "correct": 5,
+        "stale": 0,
+        "abstain": 1,
+        "wrong": 0,
+        "cost_usd": 0.039840400000000005,
+        "turns": 8
+      },
+      "control-absent": {
+        "n": 6,
+        "correct": 6,
+        "stale": 0,
+        "abstain": 0,
+        "wrong": 0,
+        "cost_usd": 0.0849901,
+        "turns": 19
+      }
+    }
+  },
+  "verdict": {
+    "checks": [
+      {
+        "id": 1,
+        "rule": "crbro correct on memory+stale >= 80%",
+        "value": 100,
+        "pass": true
+      },
+      {
+        "id": 2,
+        "rule": "crbro stale answers <= 5%",
+        "value": 0,
+        "pass": true
+      },
+      {
+        "id": 3,
+        "rule": "crbro invents no more than baseline on control-absent",
+        "value": [
+          0,
+          0
+        ],
+        "pass": true
+      },
+      {
+        "id": 4,
+        "rule": "no arm under 90% on control-prompt",
+        "value": 83.3,
+        "pass": false
+      }
+    ],
+    "enough_reps": true,
+    "claim_allowed": false
+  },
+  "cells": [
+    {
+      "rep": 0,
+      "arm": "baseline",
+      "id": "m3",
+      "kind": "memory",
+      "outcome": "abstain",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "cost_usd": 0.004642,
+      "turns": 1
+    },
+    {
+      "rep": 0,
+      "arm": "baseline",
+      "id": "m4",
+      "kind": "memory",
+      "outcome": "abstain",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "cost_usd": 0.00481,
+      "turns": 1
+    },
+    {
+      "rep": 0,
+      "arm": "baseline",
+      "id": "m2",
+      "kind": "memory",
+      "outcome": "abstain",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "cost_usd": 0.00499,
+      "turns": 1
+    },
+    {
+      "rep": 0,
+      "arm": "baseline",
+      "id": "m1",
+      "kind": "memory",
+      "outcome": "abstain",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "cost_usd": 0.004905,
+      "turns": 1
+    },
+    {
+      "rep": 0,
+      "arm": "baseline",
+      "id": "s3",
+      "kind": "stale",
+      "outcome": "abstain",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "cost_usd": 0.004632,
+      "turns": 1
+    },
+    {
+      "rep": 0,
+      "arm": "baseline",
+      "id": "s1",
+      "kind": "stale",
+      "outcome": "abstain",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "cost_usd": 0.005045,
+      "turns": 1
+    },
+    {
+      "rep": 0,
+      "arm": "baseline",
+      "id": "s4",
+      "kind": "stale",
+      "outcome": "abstain",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "cost_usd": 0.00508,
+      "turns": 1
+    },
+    {
+      "rep": 0,
+      "arm": "baseline",
+      "id": "s2",
+      "kind": "stale",
+      "outcome": "abstain",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "cost_usd": 0.005124,
+      "turns": 1
+    },
+    {
+      "rep": 0,
+      "arm": "baseline",
+      "id": "c1",
+      "kind": "control-prompt",
+      "outcome": "correct",
+      "answer": "ZX-4471",
+      "error": null,
+      "cost_usd": 0.004249,
+      "turns": 1
+    },
+    {
+      "rep": 0,
+      "arm": "baseline",
+      "id": "c2",
+      "kind": "control-prompt",
+      "outcome": "correct",
+      "answer": "14 de noviembre",
+      "error": null,
+      "cost_usd": 0.004469,
+      "turns": 1
+    },
+    {
+      "rep": 0,
+      "arm": "baseline",
+      "id": "a1",
+      "kind": "control-absent",
+      "outcome": "correct",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "cost_usd": 0.005017000000000001,
+      "turns": 1
+    },
+    {
+      "rep": 0,
+      "arm": "baseline",
+      "id": "a2",
+      "kind": "control-absent",
+      "outcome": "correct",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "cost_usd": 0.004575,
+      "turns": 1
+    },
+    {
+      "rep": 0,
+      "arm": "crbro",
+      "id": "m1",
+      "kind": "memory",
+      "outcome": "correct",
+      "answer": "8443",
+      "error": null,
+      "cost_usd": 0.0124377,
+      "turns": 3
+    },
+    {
+      "rep": 0,
+      "arm": "crbro",
+      "id": "m2",
+      "kind": "memory",
+      "outcome": "correct",
+      "answer": "Jueves",
+      "error": null,
+      "cost_usd": 0.010787600000000001,
+      "turns": 3
+    },
+    {
+      "rep": 0,
+      "arm": "crbro",
+      "id": "m3",
+      "kind": "memory",
+      "outcome": "correct",
+      "answer": "Noelia Urrutia",
+      "error": null,
+      "cost_usd": 0.011792500000000001,
+      "turns": 3
+    },
+    {
+      "rep": 0,
+      "arm": "crbro",
+      "id": "m4",
+      "kind": "memory",
+      "outcome": "correct",
+      "answer": "1.450 euros",
+      "error": null,
+      "cost_usd": 0.0105881,
+      "turns": 3
+    },
+    {
+      "rep": 0,
+      "arm": "crbro",
+      "id": "s2",
+      "kind": "stale",
+      "outcome": "correct",
+      "answer": "Node 22",
+      "error": null,
+      "cost_usd": 0.010195200000000001,
+      "turns": 3
+    },
+    {
+      "rep": 0,
+      "arm": "crbro",
+      "id": "s3",
+      "kind": "stale",
+      "outcome": "correct",
+      "answer": "49 euros",
+      "error": null,
+      "cost_usd": 0.0110661,
+      "turns": 3
+    },
+    {
+      "rep": 0,
+      "arm": "crbro",
+      "id": "s1",
+      "kind": "stale",
+      "outcome": "correct",
+      "answer": "OVH",
+      "error": null,
+      "cost_usd": 0.011489300000000001,
+      "turns": 3
+    },
+    {
+      "rep": 0,
+      "arm": "crbro",
+      "id": "s4",
+      "kind": "stale",
+      "outcome": "correct",
+      "answer": "release",
+      "error": null,
+      "cost_usd": 0.013383200000000001,
+      "turns": 3
+    },
+    {
+      "rep": 0,
+      "arm": "crbro",
+      "id": "c1",
+      "kind": "control-prompt",
+      "outcome": "correct",
+      "answer": "ZX-4471",
+      "error": null,
+      "cost_usd": 0.0049808,
+      "turns": 1
+    },
+    {
+      "rep": 0,
+      "arm": "crbro",
+      "id": "c2",
+      "kind": "control-prompt",
+      "outcome": "correct",
+      "answer": "14 de noviembre",
+      "error": null,
+      "cost_usd": 0.0048718,
+      "turns": 1
+    },
+    {
+      "rep": 0,
+      "arm": "crbro",
+      "id": "a1",
+      "kind": "control-absent",
+      "outcome": "correct",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "cost_usd": 0.01097,
+      "turns": 3
+    },
+    {
+      "rep": 1,
+      "arm": "baseline",
+      "id": "m2",
+      "kind": "memory",
+      "outcome": "abstain",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "cost_usd": 0.0046489999999999995,
+      "turns": 1
+    },
+    {
+      "rep": 1,
+      "arm": "baseline",
+      "id": "m1",
+      "kind": "memory",
+      "outcome": "abstain",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "cost_usd": 0.005122,
+      "turns": 1
+    },
+    {
+      "rep": 1,
+      "arm": "baseline",
+      "id": "m3",
+      "kind": "memory",
+      "outcome": "abstain",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "cost_usd": 0.004733,
+      "turns": 1
+    },
+    {
+      "rep": 0,
+      "arm": "crbro",
+      "id": "a2",
+      "kind": "control-absent",
+      "outcome": "correct",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "cost_usd": 0.0164971,
+      "turns": 3
+    },
+    {
+      "rep": 1,
+      "arm": "baseline",
+      "id": "m4",
+      "kind": "memory",
+      "outcome": "abstain",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "cost_usd": 0.005006,
+      "turns": 1
+    },
+    {
+      "rep": 1,
+      "arm": "baseline",
+      "id": "s1",
+      "kind": "stale",
+      "outcome": "abstain",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "cost_usd": 0.005673,
+      "turns": 1
+    },
+    {
+      "rep": 1,
+      "arm": "baseline",
+      "id": "s2",
+      "kind": "stale",
+      "outcome": "abstain",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "cost_usd": 0.0051129999999999995,
+      "turns": 1
+    },
+    {
+      "rep": 1,
+      "arm": "baseline",
+      "id": "c1",
+      "kind": "control-prompt",
+      "outcome": "correct",
+      "answer": "ZX-4471",
+      "error": null,
+      "cost_usd": 0.004388,
+      "turns": 1
+    },
+    {
+      "rep": 1,
+      "arm": "baseline",
+      "id": "s3",
+      "kind": "stale",
+      "outcome": "abstain",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "cost_usd": 0.004891,
+      "turns": 1
+    },
+    {
+      "rep": 1,
+      "arm": "baseline",
+      "id": "s4",
+      "kind": "stale",
+      "outcome": "abstain",
+      "answer": "Let me check the current directory for information about Albatros deployment configuration.\n\n<function_calls>\n<invoke name=\"glob\">\n<parameter name=\"pattern\">*</parameter>\n</invoke>\n</function_calls>\n<",
+      "error": null,
+      "cost_usd": 0.005937,
+      "turns": 1
+    },
+    {
+      "rep": 1,
+      "arm": "baseline",
+      "id": "c2",
+      "kind": "control-prompt",
+      "outcome": "correct",
+      "answer": "14 de noviembre",
+      "error": null,
+      "cost_usd": 0.004733,
+      "turns": 1
+    },
+    {
+      "rep": 1,
+      "arm": "baseline",
+      "id": "a1",
+      "kind": "control-absent",
+      "outcome": "correct",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "cost_usd": 0.004639,
+      "turns": 1
+    },
+    {
+      "rep": 1,
+      "arm": "baseline",
+      "id": "a2",
+      "kind": "control-absent",
+      "outcome": "correct",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "cost_usd": 0.0051719999999999995,
+      "turns": 1
+    },
+    {
+      "rep": 1,
+      "arm": "crbro",
+      "id": "m1",
+      "kind": "memory",
+      "outcome": "correct",
+      "answer": "8443",
+      "error": null,
+      "cost_usd": 0.0108314,
+      "turns": 3
+    },
+    {
+      "rep": 1,
+      "arm": "crbro",
+      "id": "m2",
+      "kind": "memory",
+      "outcome": "correct",
+      "answer": "Jueves",
+      "error": null,
+      "cost_usd": 0.012158500000000001,
+      "turns": 3
+    },
+    {
+      "rep": 1,
+      "arm": "crbro",
+      "id": "m4",
+      "kind": "memory",
+      "outcome": "correct",
+      "answer": "1.450 euros",
+      "error": null,
+      "cost_usd": 0.0119718,
+      "turns": 3
+    },
+    {
+      "rep": 1,
+      "arm": "crbro",
+      "id": "m3",
+      "kind": "memory",
+      "outcome": "correct",
+      "answer": "Noelia Urrutia",
+      "error": null,
+      "cost_usd": 0.0123179,
+      "turns": 3
+    },
+    {
+      "rep": 1,
+      "arm": "crbro",
+      "id": "s1",
+      "kind": "stale",
+      "outcome": "correct",
+      "answer": "OVH",
+      "error": null,
+      "cost_usd": 0.0101581,
+      "turns": 3
+    },
+    {
+      "rep": 1,
+      "arm": "crbro",
+      "id": "s2",
+      "kind": "stale",
+      "outcome": "correct",
+      "answer": "Node 22",
+      "error": null,
+      "cost_usd": 0.012095700000000001,
+      "turns": 3
+    },
+    {
+      "rep": 1,
+      "arm": "crbro",
+      "id": "c1",
+      "kind": "control-prompt",
+      "outcome": "correct",
+      "answer": "ZX-4471",
+      "error": null,
+      "cost_usd": 0.0046298,
+      "turns": 1
+    },
+    {
+      "rep": 1,
+      "arm": "crbro",
+      "id": "s4",
+      "kind": "stale",
+      "outcome": "correct",
+      "answer": "release",
+      "error": null,
+      "cost_usd": 0.0101413,
+      "turns": 3
+    },
+    {
+      "rep": 1,
+      "arm": "crbro",
+      "id": "s3",
+      "kind": "stale",
+      "outcome": "correct",
+      "answer": "49 euros al mes.",
+      "error": null,
+      "cost_usd": 0.0114084,
+      "turns": 3
+    },
+    {
+      "rep": 2,
+      "arm": "baseline",
+      "id": "m1",
+      "kind": "memory",
+      "outcome": "abstain",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "cost_usd": 0.004718,
+      "turns": 1
+    },
+    {
+      "rep": 1,
+      "arm": "crbro",
+      "id": "a2",
+      "kind": "control-absent",
+      "outcome": "correct",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "cost_usd": 0.0124988,
+      "turns": 3
+    },
+    {
+      "rep": 1,
+      "arm": "crbro",
+      "id": "c2",
+      "kind": "control-prompt",
+      "outcome": "abstain",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "cost_usd": 0.016216400000000002,
+      "turns": 3
+    },
+    {
+      "rep": 1,
+      "arm": "crbro",
+      "id": "a1",
+      "kind": "control-absent",
+      "outcome": "correct",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "cost_usd": 0.0190524,
+      "turns": 4
+    },
+    {
+      "rep": 2,
+      "arm": "baseline",
+      "id": "m2",
+      "kind": "memory",
+      "outcome": "abstain",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "cost_usd": 0.0067989999999999995,
+      "turns": 1
+    },
+    {
+      "rep": 2,
+      "arm": "baseline",
+      "id": "m3",
+      "kind": "memory",
+      "outcome": "abstain",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "cost_usd": 0.004858,
+      "turns": 1
+    },
+    {
+      "rep": 2,
+      "arm": "baseline",
+      "id": "m4",
+      "kind": "memory",
+      "outcome": "abstain",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "cost_usd": 0.005017000000000001,
+      "turns": 1
+    },
+    {
+      "rep": 2,
+      "arm": "baseline",
+      "id": "s1",
+      "kind": "stale",
+      "outcome": "abstain",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "cost_usd": 0.005007,
+      "turns": 1
+    },
+    {
+      "rep": 2,
+      "arm": "baseline",
+      "id": "s2",
+      "kind": "stale",
+      "outcome": "abstain",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "cost_usd": 0.004781,
+      "turns": 1
+    },
+    {
+      "rep": 2,
+      "arm": "baseline",
+      "id": "s3",
+      "kind": "stale",
+      "outcome": "abstain",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "cost_usd": 0.004821,
+      "turns": 1
+    },
+    {
+      "rep": 2,
+      "arm": "baseline",
+      "id": "s4",
+      "kind": "stale",
+      "outcome": "abstain",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "cost_usd": 0.0051589999999999995,
+      "turns": 1
+    },
+    {
+      "rep": 2,
+      "arm": "baseline",
+      "id": "c1",
+      "kind": "control-prompt",
+      "outcome": "correct",
+      "answer": "ZX-4471",
+      "error": null,
+      "cost_usd": 0.004273,
+      "turns": 1
+    },
+    {
+      "rep": 2,
+      "arm": "baseline",
+      "id": "c2",
+      "kind": "control-prompt",
+      "outcome": "correct",
+      "answer": "14 de noviembre",
+      "error": null,
+      "cost_usd": 0.004366999999999999,
+      "turns": 1
+    },
+    {
+      "rep": 2,
+      "arm": "baseline",
+      "id": "a1",
+      "kind": "control-absent",
+      "outcome": "correct",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "cost_usd": 0.0049889999999999995,
+      "turns": 1
+    },
+    {
+      "rep": 2,
+      "arm": "baseline",
+      "id": "a2",
+      "kind": "control-absent",
+      "outcome": "correct",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "cost_usd": 0.004935,
+      "turns": 1
+    },
+    {
+      "rep": 2,
+      "arm": "crbro",
+      "id": "m1",
+      "kind": "memory",
+      "outcome": "correct",
+      "answer": "8443",
+      "error": null,
+      "cost_usd": 0.012154499999999999,
+      "turns": 3
+    },
+    {
+      "rep": 2,
+      "arm": "crbro",
+      "id": "m2",
+      "kind": "memory",
+      "outcome": "correct",
+      "answer": "Jueves",
+      "error": null,
+      "cost_usd": 0.0127058,
+      "turns": 3
+    },
+    {
+      "rep": 2,
+      "arm": "crbro",
+      "id": "m3",
+      "kind": "memory",
+      "outcome": "correct",
+      "answer": "Noelia Urrutia",
+      "error": null,
+      "cost_usd": 0.012556499999999998,
+      "turns": 3
+    },
+    {
+      "rep": 2,
+      "arm": "crbro",
+      "id": "m4",
+      "kind": "memory",
+      "outcome": "correct",
+      "answer": "1.450 euros",
+      "error": null,
+      "cost_usd": 0.0121537,
+      "turns": 3
+    },
+    {
+      "rep": 2,
+      "arm": "crbro",
+      "id": "s1",
+      "kind": "stale",
+      "outcome": "correct",
+      "answer": "OVH",
+      "error": null,
+      "cost_usd": 0.0099135,
+      "turns": 3
+    },
+    {
+      "rep": 2,
+      "arm": "crbro",
+      "id": "s2",
+      "kind": "stale",
+      "outcome": "correct",
+      "answer": "Node 22",
+      "error": null,
+      "cost_usd": 0.010363400000000002,
+      "turns": 3
+    },
+    {
+      "rep": 2,
+      "arm": "crbro",
+      "id": "s4",
+      "kind": "stale",
+      "outcome": "correct",
+      "answer": "release",
+      "error": null,
+      "cost_usd": 0.012655900000000001,
+      "turns": 3
+    },
+    {
+      "rep": 2,
+      "arm": "crbro",
+      "id": "c1",
+      "kind": "control-prompt",
+      "outcome": "correct",
+      "answer": "ZX-4471",
+      "error": null,
+      "cost_usd": 0.0046318,
+      "turns": 1
+    },
+    {
+      "rep": 2,
+      "arm": "crbro",
+      "id": "c2",
+      "kind": "control-prompt",
+      "outcome": "correct",
+      "answer": "14 de noviembre",
+      "error": null,
+      "cost_usd": 0.0045098,
+      "turns": 1
+    },
+    {
+      "rep": 2,
+      "arm": "crbro",
+      "id": "s3",
+      "kind": "stale",
+      "outcome": "correct",
+      "answer": "49 euros al mes",
+      "error": null,
+      "cost_usd": 0.013496900000000001,
+      "turns": 3
+    },
+    {
+      "rep": 2,
+      "arm": "crbro",
+      "id": "a2",
+      "kind": "control-absent",
+      "outcome": "correct",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "cost_usd": 0.0130294,
+      "turns": 3
+    },
+    {
+      "rep": 2,
+      "arm": "crbro",
+      "id": "a1",
+      "kind": "control-absent",
+      "outcome": "correct",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "cost_usd": 0.012942400000000001,
+      "turns": 3
+    }
+  ]
+}
