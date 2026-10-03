@@ -217,6 +217,41 @@ Lectura honesta:
   esta medición dice lo que pasa cuando lo hace con criterio, no garantiza
   que lo haga siempre.
 
+## Re-medición del 03-10-2026 (2.7.1)
+
+Las tablas de arriba son las de 1.13-1.15 y se dejan tal cual: son el
+historial. Esta es la misma batería, con los mismos ficheros congelados, sobre
+2.7.1 (commit 057aa3a). Se reproduce con `node benchmarks/retrieval/run.mjs`
+y las variables `CRBRO_SEMANTIC`, `CRBRO_BENCH_KEYS` y `CRBRO_BENCH_ALTS`.
+
+| configuración | recall@1 | recall@3 | MRR | con also_matched @1 / @3 | distractores confiados | en 1.15 (@1 / @3) |
+|---|--:|--:|--:|--:|--:|--:|
+| motor léxico | 71% | 77% | 0.744 | 77% / 83% | 2 / 14 | 71% / 77% |
+| + reformulaciones | 71% | 83% | 0.776 | 79% / 92% | 1 / 14 | 71% / 79% |
+| + palabras clave | 83% | 90% | 0.870 | 85% / 94% | 1 / 14 | 83% / 90% |
+| + palabras clave + reformulaciones | 85% | 90% | 0.877 | 92% / 98% | 1 / 14 | 85% / 90% |
+| capa semántica (como se instala) | **73%** | **79%** | 0.760 | 81% / 90% | 0 / 14 | **79% / 83%** |
+| semántica + reformulaciones | 79% | 83% | 0.820 | 88% / 92% | 1 / 14 | 81% / 85% |
+| semántica + palabras clave | **81%** | 88% | 0.844 | 85% / 94% | 0 / 14 | **85%** / 88% |
+| **todo activado** | **90%** | **92%** | **0.911** | 94% / 96% | 0 / 14 | 90% / 92% |
+
+Lectura honesta:
+
+- Sin la capa semántica, recall@1 no se ha movido en ninguna configuración, y
+  las reformulaciones solas suben en el top 3 (79% → 83%). Con also_matched el
+  motor léxico da 2 puntos menos que cuando se publicó en 1.13 (79% / 85% →
+  77% / 83%).
+- Lo que ha bajado es la capa semántica: −6 puntos a la primera sola
+  (79% → 73%) y −4 con palabras clave (85% → 81%). Con palabras clave y sin
+  reformulaciones, hoy la capa semántica resta 2 puntos frente a no tenerla
+  (81% frente a 83%).
+- Con todo activado el resultado es el mismo que en 1.15 (90% / 92%).
+- 2.6.0 mide igual que 2.7.x. La causa de la bajada no está localizada: el
+  fixture, las consultas y el suelo de coseno (0.84) son los mismos y el motor
+  léxico no ha cambiado, lo que apunta a la fusión o al modelo y su runtime,
+  en algún punto entre 1.16 y 2.6.0 (sin comprobar). Hasta saberlo, el README publica las cifras de hoy, no
+  las de 1.15.
+
 ## Security — el filtro de redacción
 
 Un **piso, no una prueba** de seguridad (como dice Ponytail de su check
@@ -247,23 +282,28 @@ casi nadie publica: un filtro que grita a todo acaba desactivado.
 
 CRBRO no es gratis, y publicarlo es lo que hace creíble el resto.
 
-- **~750 tokens** de contexto que el arranque añade a cada sesión (el bloque de
-  protocolos), y lo mismo por cada subagente que inyecta el hook.
-- **~6,5k tokens** de definiciones de las 15 tools de 2.0: 25.866 caracteres
-  de descripción + esquema de entrada (10.725 + 15.141), medidos el 03-09-2026
+- **~1.000 tokens** de contexto que el arranque añade a cada sesión (el bloque
+  de protocolos de Card Zero, 4.035 caracteres con sus diez protocolos, medido
+  el 03-10-2026 con `node benchmarks/cost/run.mjs`; eran ~750 con nueve), y lo
+  mismo por cada subagente que inyecta el hook.
+- **~7,4k tokens** de definiciones de las 15 tools en 2.7.1: 29.757 caracteres
+  de descripción + esquema de entrada (11.545 + 18.212), medidos el 03-10-2026
   con un `tools/list` real — un `listTools()` del cliente del SDK contra el
   servidor sobre `InMemoryTransport`, como hace
   `tests/tool.definitions.test.ts` — y divididos por 4, la aproximación de
   caracteres por token de siempre, no un recuento de tokenizador. Con los
   esquemas de salida de las tres tools de lectura el payload completo son
-  34.047 caracteres (~8,5k tokens). Lo pagan en cada petición los clientes que
+  35.276 caracteres (~8,8k tokens). En 2.0 (03-09-2026) eran 25.866 y 34.047. Lo pagan en cada petición los clientes que
   cargan todas las tools (Claude Desktop, Cursor); Claude Code las difiere y
   paga solo las que usa. Menos tools no es menos texto: las 23 de 1.13 medían
   21.662 caracteres (~5,4k tokens), porque cada parámetro absorbido sigue
   explicándose en la tool que lo acogió — `crbro_inspect` sola pesa 5.529
   caracteres con sus cinco vistas y su esquema de salida. En 1.12 eran 25.086
   caracteres (~6,3k tokens) y no se decía.
-- **~0,15 ms** de latencia por recall (local, sin red).
+- **~1 ms** de latencia por recall con el motor léxico y **~10 ms** con la
+  capa semántica, que calcula el vector de la pregunta (local, sin red, cerebro
+  de 300 hechos; medido el 03-10-2026 con `benchmarks/cost/run.mjs`). Se
+  publicaba ~0,15 ms, medido antes de que la capa semántica viniera de serie.
 - El cerebro de referencia: 1.145 neuronas, ~30 MB en disco (índice 25 MB).
 
 En una sesión sin memoria relevante, eso es coste puro; se amortiza cuando hay
