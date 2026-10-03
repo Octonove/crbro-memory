@@ -146,3 +146,16 @@ Cambios para la tercera tanda, fijados aquí antes de ejecutarla:
    anotado en `retried_after`.
 
 Tareas, puntuación y umbrales no cambian. Haiku y sonnet, n=3.
+
+### Tercera tanda y cuarta enmienda (2026-10-03)
+
+Pasan los cuatro umbrales en los dos modelos (`…-haiku-run3.json`,
+`…-sonnet-run3.json`): claim allowed. Sonnet: 24/24 en `memory` + `stale`,
+`control-prompt` 6/6, 0 retirados, y `baseline` vuelve a inventar 4
+respuestas. Haiku: 22/24, porque en s3 se abstuvo dos veces **sin consultar la
+memoria** (1 turno, frente a 3 en la tanda 2). La frase nueva, tal como estaba
+escrita, a veces se leía como «el mensaje primero, la memoria después».
+Se reescribe para que la consulta siga siendo lo primero: «Recall even when you
+think you know. Only when the current message itself states the answer does
+it outrank memory…». Cuarta tanda, haiku y sonnet, n=3. Es la última ronda de
+este ajuste: si no mejora, se publica la tercera.
