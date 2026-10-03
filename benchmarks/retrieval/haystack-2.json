@@ -1,0 +1,726 @@
+{
+  "neurons": [
+    {
+      "name": "revision-dental-anual",
+      "domain": "salud",
+      "facts": [
+        {"text": "Patricia lleva a toda la familia al dentista cada mes de septiembre, antes de que empiece el curso escolar, para no tener que faltar a clase después."},
+        {"text": "El dentista le recomendó a Fernando un enjuague específico con flúor después de detectarle principio de sensibilidad en dos muelas durante la revisión anual."},
+        {"text": "Silvia descubrió que su hijo mayor necesitaba ortodoncia después de que la revisión rutinaria mostrara un problema de mordida que no se veía a simple vista."},
+        {"text": "Gonzalo cambió de clínica dental después de que la anterior le cobrara dos limpiezas que, según otro dentista, no hacían falta con esa frecuencia."},
+        {"text": "Rocío lleva un cepillo eléctrico desde que el higienista le explicó que elimina mucho mejor la placa que el cepillo manual que usaba antes."},
+        {"text": "Víctor descubrió una pequeña caries en una muela del fondo gracias a una radiografía de rutina, antes de que le diera ningún síntoma."},
+        {"text": "Teresa programa la revisión dental de sus hijos coincidiendo con la suya propia, así solo pierden una mañana de trabajo en vez de dos distintas."},
+        {"text": "Ignacio aprendió a usar hilo dental todas las noches después de que el dentista le señalara el inicio de una inflamación de encías."},
+        {"text": "Alba lleva a su hija a una dentista especializada en niños porque la consulta tiene una sala de espera pensada para que los pequeños no se pongan nerviosos."},
+        {"text": "Mateo descubrió que rechinar los dientes por la noche le estaba desgastando el esmalte, y ahora duerme con una férula de descarga a medida."},
+        {"text": "Olga pregunta siempre por el estado de las encías además de las caries, desde que a su padre le diagnosticaron una enfermedad periodontal avanzada demasiado tarde."},
+        {"text": "Jaime lleva el historial dental de toda la familia anotado en una libreta, con la fecha de cada limpieza y empaste, para no perder la cuenta."},
+        {"text": "Celia descubrió que evitar picar entre horas le redujo bastante las caries en las últimas dos revisiones, según le confirmó su dentista."}
+      ]
+    },
+    {
+      "name": "oftalmologia-y-gafas",
+      "domain": "salud",
+      "facts": [
+        {"text": "Andrés notó que forzaba la vista al leer el móvil y la revisión oftalmológica confirmó que necesitaba graduación nueva después de cuatro años sin cambiar de gafas."},
+        {"text": "Lucía lleva lentillas diarias desde que la sequedad ocular con las mensuales le generaba molestias al final del día frente al ordenador."},
+        {"text": "Marcos llevó a su hijo al oftalmólogo porque entornaba los ojos para ver la pizarra, y le diagnosticaron miopía leve que corrigieron con gafas."},
+        {"text": "Elena descubrió en una revisión rutinaria que tenía la presión ocular algo elevada, y ahora la controla cada seis meses por posible riesgo de glaucoma."},
+        {"text": "Javier compró gafas con filtro de luz azul para las horas delante de pantallas, después de notar los ojos cansados al final de la jornada."},
+        {"text": "Sofía aprendió a hacer la regla de los 20-20-20 en el trabajo, mirar lejos 20 segundos cada 20 minutos, para descansar la vista en pantallas."},
+        {"text": "Diego descubrió que necesitaba gafas de cerca separadas de las de lejos cuando empezó a notar que leía con el brazo más estirado de lo normal."},
+        {"text": "Carmen lleva a revisión oftalmológica a sus dos hijos cada año desde preescolar, porque el pediatra le explicó que los problemas de vista pasan desapercibidos a esa edad."},
+        {"text": "Pablo probó la cirugía refractiva después de más de quince años con gafas, y ahora solo necesita unas de lectura para los textos pequeños."},
+        {"text": "Irene descubrió un ojo seco crónico que le provocaba visión borrosa intermitente, y ahora usa lágrimas artificiales varias veces al día."},
+        {"text": "Álvaro cambió de montura a una más ligera después de notar marcas rojas en la nariz tras usar gafas pesadas durante años."},
+        {"text": "Nuria lleva gafas de sol graduadas para conducir desde que notó deslumbramiento fuerte al atardecer que le dificultaba ver bien la carretera."},
+        {"text": "Hugo descubrió daltonismo leve en una revisión rutinaria a los treinta años, algo que nunca le habían diagnosticado de niño."}
+      ]
+    },
+    {
+      "name": "analisis-de-sangre-rutinarios",
+      "domain": "salud",
+      "facts": [
+        {"text": "Marta se hace un análisis de sangre completo cada año por su cumpleaños, una costumbre que mantiene desde que a su madre le detectaron anemia tarde."},
+        {"text": "Daniel descubrió en un análisis rutinario que tenía la vitamina D muy baja, algo común según su médico por pasar poco tiempo al sol."},
+        {"text": "Claudia ayuna doce horas antes de cada análisis de sangre, porque una vez el resultado de glucosa le salió alterado por no hacerlo bien."},
+        {"text": "Rubén lleva un registro de sus análisis de los últimos cinco años en una carpeta para comparar la evolución del colesterol con el médico."},
+        {"text": "Beatriz descubrió hierro bajo en un análisis de rutina y empezó un suplemento recetado que le mejoró el cansancio en pocas semanas."},
+        {"text": "Óscar pide siempre que le incluyan las hormonas tiroideas en el análisis anual, desde que a su hermana le diagnosticaron hipotiroidismo."},
+        {"text": "Cristina aprendió que algunos valores, como las plaquetas, pueden variar por una infección reciente, así que repitió el análisis un mes después para confirmar."},
+        {"text": "Iván se hace análisis de sangre antes de cada revisión con el cardiólogo, para que el médico tenga los datos actualizados el día de la consulta."},
+        {"text": "Laura descubrió un déficit de vitamina B12 que explicaba el cansancio que arrastraba desde hacía meses sin saber la causa."},
+        {"text": "Sergio lleva el brazo relajado y avisa siempre si tiene miedo a las agujas, después de marearse una vez en una extracción anterior."},
+        {"text": "Paula pide cita para análisis a primera hora de la mañana, porque el ayuno se le hace mucho más llevadero si no tiene que esperar hasta mediodía."},
+        {"text": "Adrián descubrió el colesterol alto heredado de su padre en un análisis rutinario a los 35 años, y desde entonces lo controla cada seis meses."},
+        {"text": "Noelia anota en el móvil las fechas de cada análisis y los valores fuera de rango, para llevar un seguimiento claro entre una revisión y la siguiente."}
+      ]
+    },
+    {
+      "name": "dermatologia-y-lunares",
+      "domain": "salud",
+      "facts": [
+        {"text": "Raúl acude al dermatólogo una vez al año para revisar los lunares, desde que a un tío le diagnosticaron un melanoma detectado a tiempo."},
+        {"text": "Patricia fotografía sus lunares con el móvil cada seis meses para comparar si alguno cambia de forma, color o tamaño con el tiempo."},
+        {"text": "Fernando descubrió una queratosis actínica en la frente durante una revisión rutinaria, y se la trataron con frío en la misma consulta."},
+        {"text": "Silvia lleva a sus hijos al dermatólogo cada verano antes de la piscina, por los lunares que les han salido nuevos durante el año."},
+        {"text": "Gonzalo aprendió a aplicar protector solar también en las orejas y el cuero cabelludo, después de una quemadura fuerte que le dejó la piel irritada varios días."},
+        {"text": "Rocío descubrió que la dermatitis que le salía en invierno mejoraba mucho con una crema específica recetada, distinta de las hidratantes normales."},
+        {"text": "Víctor se hizo una dermatoscopia digital de cuerpo completo para tener un mapa de referencia de todos sus lunares antes de empezar un tratamiento nuevo."},
+        {"text": "Teresa aprendió a usar la regla del ABCDE para vigilar lunares, asimetría, bordes, color, diámetro y evolución, por recomendación de su dermatóloga."},
+        {"text": "Ignacio descubrió una alergia de contacto a un níquel de la hebilla del cinturón, después de meses con irritación sin saber la causa."},
+        {"text": "Alba lleva protector solar de uso diario incluso en días nublados desde que el dermatólogo le explicó que la radiación atraviesa las nubes igualmente."},
+        {"text": "Mateo se quitó un lunar que le molestaba al afeitarse, y el resultado de la biopsia confirmó que era completamente benigno."},
+        {"text": "Olga descubrió psoriasis leve en los codos a los cuarenta años, un diagnóstico que tardó varias visitas en confirmarse del todo."},
+        {"text": "Jaime pide revisión dermatológica cada vez que pasa un verano entero trabajando al aire libre, por la exposición acumulada de esos meses."}
+      ]
+    },
+    {
+      "name": "pediatra-de-los-ninos",
+      "domain": "familia",
+      "facts": [
+        {"text": "Celia lleva a su hija a revisión del pediatra cada tres meses durante el primer año, siguiendo el calendario oficial de seguimiento infantil."},
+        {"text": "Andrés anota las preguntas para el pediatra en el móvil durante la semana, porque en la consulta siempre se le olvidaba la mitad."},
+        {"text": "Lucía descubrió que su hijo tenía una leve anemia en un control rutinario, y el pediatra le recetó un suplemento de hierro durante tres meses."},
+        {"text": "Marcos lleva el calendario de vacunación de sus dos hijos en una app, con alertas para no pasarse de la fecha de ninguna dosis."},
+        {"text": "Elena consultó al pediatra por las rabietas frecuentes de su hijo de tres años, y le explicaron que entraba dentro del desarrollo normal a esa edad."},
+        {"text": "Javier descubrió que su hija tenía una leve intolerancia a la lactosa después de varias consultas por dolores de barriga recurrentes."},
+        {"text": "Sofía pide siempre cita con el mismo pediatra desde que nació su hijo, porque conoce todo el historial y no tiene que repetir la misma información."},
+        {"text": "Diego aprendió a medir la fiebre con un termómetro de oído después de que el pediatra le explicara que es más fiable que el de contacto."},
+        {"text": "Carmen llevó a su hijo a urgencias pediátricas una noche por una fiebre muy alta que no bajaba con el antitérmico habitual."},
+        {"text": "Pablo descubrió que su hija necesitaba gafas a los cinco años, gracias a que el pediatra la derivó al oftalmólogo en una revisión de rutina."},
+        {"text": "Irene consulta con el pediatra antes de cada viaje largo para asegurarse de que las vacunas de sus hijos están al día para el destino."},
+        {"text": "Álvaro aprendió pautas claras sobre cuándo llevar a su hijo a urgencias y cuándo esperar a la consulta normal, después de varias visitas innecesarias al principio."},
+        {"text": "Nuria lleva un cuaderno con el peso y la altura de sus hijos en cada revisión, para ver la curva de crecimiento junto con el pediatra."}
+      ]
+    },
+    {
+      "name": "fisioterapia-de-espalda",
+      "domain": "salud",
+      "facts": [
+        {"text": "Hugo empezó fisioterapia de espalda después de varios meses de dolor lumbar que achacaba solo a las horas sentado en la oficina."},
+        {"text": "Marta descubrió que un desequilibrio entre ambas piernas le estaba generando sobrecarga en la zona lumbar, algo que el fisioterapeuta corrigió con ejercicios específicos."},
+        {"text": "Daniel lleva una almohadilla lumbar en la silla de trabajo desde que el fisioterapeuta le explicó la importancia de mantener la curva natural de la espalda."},
+        {"text": "Claudia aprendió ejercicios de activación del core que hace cada mañana, apenas cinco minutos, como mantenimiento después de terminar las sesiones de fisioterapia."},
+        {"text": "Rubén descubrió una contractura crónica en el trapecio relacionada con el estrés, que el fisioterapeuta trata con sesiones de liberación miofascial."},
+        {"text": "Beatriz cambió el colchón después de que el fisioterapeuta le preguntara por la postura al dormir como posible causa del dolor lumbar matutino."},
+        {"text": "Óscar aprendió a levantar peso flexionando las rodillas y no la espalda, después de una lumbalgia aguda al coger una caja pesada mal."},
+        {"text": "Cristina hace estiramientos de piriforme cada noche, un ejercicio que le enseñó su fisioterapeuta para el dolor que le bajaba hacia la pierna."},
+        {"text": "Iván descubrió que caminar con mochila mal ajustada le generaba dolor de espalda, y el fisioterapeuta le ayudó a corregir cómo la llevaba."},
+        {"text": "Laura combina las sesiones de fisioterapia con pilates clínico, una combinación que su médico le recomendó para la hernia discal que le diagnosticaron."},
+        {"text": "Sergio aprendió a identificar cuándo el dolor de espalda requiere descanso y cuándo conviene mantenerse activo, algo contrario a lo que pensaba antes."},
+        {"text": "Paula descubrió que el estrés del trabajo le tensaba la zona cervical tanto como una mala postura, y empezó a trabajar también la respiración."},
+        {"text": "Adrián lleva varias sesiones de fisioterapia preventiva al año, aunque no tenga dolor, porque descubrió que así evita que las molestias se agraven."}
+      ]
+    },
+    {
+      "name": "ginecologia-revision-anual",
+      "domain": "salud",
+      "facts": [
+        {"text": "Noelia acude a revisión ginecológica cada año, con citología incluida, siguiendo el calendario que le marca su ginecóloga desde hace una década."},
+        {"text": "Raúl acompañó a su pareja a la primera ecografía del embarazo, una cita que ambos describen como el momento en que el embarazo se hizo real."},
+        {"text": "Patricia descubrió unos miomas pequeños en una revisión rutinaria, que su ginecóloga decidió solo vigilar porque no le daban ningún síntoma."},
+        {"text": "Fernando y su pareja consultaron juntos sobre métodos anticonceptivos después de dejar la píldora, para decidir la opción que mejor se adaptaba a ellos."},
+        {"text": "Silvia cambió de ginecóloga después de que la anterior nunca le dedicara más de cinco minutos a explicar los resultados de las pruebas."},
+        {"text": "Gonzalo acompañó a su mujer a las revisiones del embarazo, y entre los dos llevan un cuaderno con todas las fechas y resultados de las ecografías."},
+        {"text": "Rocío descubrió una alteración hormonal que explicaba la irregularidad de su ciclo desde hacía meses, gracias a un análisis que pidió su ginecóloga."},
+        {"text": "Víctor aprendió, acompañando a su pareja, que la revisión del posparto es tan importante como las del propio embarazo, aunque muchas veces se descuida."},
+        {"text": "Teresa pide siempre la revisión anual en la misma época del año, para no perder la cuenta de cuándo le toca la siguiente citología."},
+        {"text": "Ignacio y su pareja consultaron sobre fertilidad después de un año intentando quedarse embarazados, y les derivaron a pruebas más específicas."},
+        {"text": "Alba descubrió en una ecografía rutinaria un quiste ovárico que se resolvió solo en los meses siguientes sin necesidad de intervención."},
+        {"text": "Mateo acompañó a su mujer a la consulta de planificación familiar antes de decidir juntos buscar el segundo hijo."},
+        {"text": "Olga anota las fechas de sus revisiones en el calendario compartido con su pareja, para que ninguno de los dos pierda el día de la consulta."}
+      ]
+    },
+    {
+      "name": "otorrino-y-alergias",
+      "domain": "salud",
+      "facts": [
+        {"text": "Jaime descubrió una alergia al polen de gramíneas después de años de estornudos cada primavera que achacaba solo a un simple catarro recurrente."},
+        {"text": "Celia lleva a su hijo al otorrino cada invierno porque tiene tendencia a las otitis, y el especialista le revisa los oídos antes de que empeoren."},
+        {"text": "Andrés hizo pruebas de alergia cutáneas que confirmaron una sensibilidad a los ácaros del polvo, y cambió la ropa de cama por fundas antiácaros."},
+        {"text": "Lucía descubrió un tapón de cera que le llevaba meses provocando pérdida de audición en un oído, resuelto en una sola visita al otorrino."},
+        {"text": "Marcos lleva un spray nasal recetado durante la primavera desde que le diagnosticaron rinitis alérgica estacional hace un par de años."},
+        {"text": "Elena consultó al otorrino por mareos frecuentes, y descubrieron un problema en el oído interno que se trató con ejercicios específicos de rehabilitación vestibular."},
+        {"text": "Javier descubrió que su ronquido fuerte se debía a unas amígdalas grandes, y después de una valoración decidió operarse con buenos resultados."},
+        {"text": "Sofía lleva a sus hijos a hacer pruebas de alergia alimentaria después de que uno de ellos tuviera una reacción tras comer frutos secos."},
+        {"text": "Diego aprendió a reconocer los síntomas de una sinusitis crónica después de meses de congestión que no mejoraba con los tratamientos habituales."},
+        {"text": "Carmen descubrió que la tos seca persistente de su hija tenía un origen alérgico, no infeccioso, después de varias visitas al otorrino."},
+        {"text": "Pablo lleva un purificador de aire en el dormitorio desde que le diagnosticaron alergia a los ácaros y notó mejoría al dormir."},
+        {"text": "Irene consultó al otorrino por un pitido constante en el oído, y le explicaron que era un tinnitus relacionado con el estrés acumulado."},
+        {"text": "Álvaro descubrió una desviación del tabique nasal que le dificultaba respirar bien por la noche, pendiente de valorar una intervención con el especialista."}
+      ]
+    },
+    {
+      "name": "nutricionista-consulta",
+      "domain": "salud",
+      "facts": [
+        {"text": "Nuria consulta a una nutricionista desde hace un año para ajustar su alimentación al entrenamiento de pesas que hace cuatro días por semana."},
+        {"text": "Hugo descubrió, en la primera consulta, que comía muchas menos proteínas de las que necesitaba para su nivel de actividad física."},
+        {"text": "Marta acude a la nutricionista cada dos meses para ajustar el plan según cómo le han ido las comidas, sin seguir una dieta rígida."},
+        {"text": "Daniel consultó por un sobrepeso leve que el médico le recomendó vigilar, y en seis meses perdió el peso que se había propuesto sin pasar hambre."},
+        {"text": "Claudia llevó a su hija a una nutricionista infantil después de que el pediatra detectara que comía muy poca variedad de verduras."},
+        {"text": "Rubén descubrió que picaba mucho entre horas por no desayunar suficiente, un patrón que la nutricionista le ayudó a corregir con comidas más completas."},
+        {"text": "Beatriz aprendió a planificar los menús semanales con la nutricionista, repartiendo proteína, verdura e hidratos en proporciones que antes no respetaba."},
+        {"text": "Óscar consultó para mejorar su rendimiento en las carreras, y descubrió que necesitaba más hidratos antes de las tiradas largas de domingo."},
+        {"text": "Cristina acude a la consulta con su pareja, porque descubrieron que cocinar y planificar juntos les resultaba mucho más fácil para mantener los cambios."},
+        {"text": "Iván descubrió una intolerancia leve a la lactosa gracias a un seguimiento detallado de síntomas que hizo junto con la nutricionista."},
+        {"text": "Laura consultó antes de un viaje largo para aprender a mantener hábitos saludables fuera de casa sin renunciar del todo a probar la gastronomía local."},
+        {"text": "Sergio lleva un diario de comidas que revisa con la nutricionista cada visita, porque descubrió patrones de picoteo nocturno que no era consciente de tener."},
+        {"text": "Paula consultó tras el parto para recuperar energía mientras daba el pecho, y ajustó las comidas sin reducir calorías de forma brusca."}
+      ]
+    },
+    {
+      "name": "cardiologia-revision",
+      "domain": "salud",
+      "facts": [
+        {"text": "Adrián empezó revisiones de cardiología después de que un electrocardiograma de rutina mostrara una arritmia leve sin síntomas evidentes."},
+        {"text": "Noelia acude al cardiólogo cada año por antecedentes familiares de infarto, y se hace una prueba de esfuerzo cada dos revisiones."},
+        {"text": "Raúl descubrió el colesterol alto en una revisión de cardiología que le llevó a cambiar la dieta y empezar a caminar a diario."},
+        {"text": "Patricia lleva un Holter de 24 horas una vez al año para controlar unas palpitaciones ocasionales que el cardiólogo quiere seguir vigilando."},
+        {"text": "Fernando aprendió a identificar los síntomas de alarma de un posible infarto después de una charla que le dio su cardiólogo tras un susto familiar."},
+        {"text": "Silvia descubrió una tensión arterial elevada en una revisión general y la derivaron a cardiología para un seguimiento más de cerca."},
+        {"text": "Gonzalo hizo una ecocardiografía de rutina que confirmó que su corazón funcionaba con normalidad, después de notar unas palpitaciones que le habían preocupado."},
+        {"text": "Rocío lleva el registro de su actividad física al cardiólogo en cada revisión, porque descubrió que valora mucho ese dato además de los análisis."},
+        {"text": "Víctor empezó a caminar 40 minutos diarios después de que el cardiólogo le explicara el riesgo cardiovascular asociado a su vida sedentaria."},
+        {"text": "Teresa acude a cardiología de seguimiento desde que a su madre le pusieron un marcapasos, por la relación hereditaria de algunos problemas de ritmo."},
+        {"text": "Ignacio descubrió que dejar de fumar mejoró sus valores cardiovasculares de forma notable en la revisión del año siguiente."},
+        {"text": "Alba lleva una pulsera que registra el ritmo cardíaco y la comparte con el cardiólogo en cada cita para completar el seguimiento habitual."},
+        {"text": "Mateo aprendió a controlar el estrés con técnicas de respiración después de que el cardiólogo le explicara su relación directa con la tensión arterial."}
+      ]
+    },
+    {
+      "name": "traumatologia-hombro",
+      "domain": "salud",
+      "facts": [
+        {"text": "Olga empezó a ir al traumatólogo por un dolor de hombro que le impedía levantar el brazo por encima de la cabeza sin molestias."},
+        {"text": "Jaime descubrió una tendinitis en el manguito rotador después de meses de dolor que achacaba solo al entrenamiento de pesas."},
+        {"text": "Celia hizo una resonancia que confirmó una pequeña rotura parcial del tendón, tratada con fisioterapia antes de plantear cualquier intervención."},
+        {"text": "Andrés aprendió ejercicios específicos de estabilización escapular que el traumatólogo le recomendó antes de volver a nadar con normalidad."},
+        {"text": "Lucía descubrió que dormir siempre del mismo lado le sobrecargaba el hombro, un detalle que el traumatólogo relacionó directamente con el dolor nocturno."},
+        {"text": "Marcos se lesionó el hombro jugando al pádel y tardó tres meses de recuperación guiada antes de volver a jugar sin restricciones."},
+        {"text": "Elena aprendió a distinguir entre el dolor normal de la recuperación y una señal de alarma que debía consultar de inmediato con el especialista."},
+        {"text": "Javier descubrió una calcificación en el tendón del hombro que le explicaba un dolor agudo que apareció de la noche a la mañana."},
+        {"text": "Sofía combina las sesiones de fisioterapia con ejercicios en casa con bandas elásticas, siguiendo el plan que le marcó el traumatólogo tras la revisión."},
+        {"text": "Diego se lesionó el hombro levantando peso con mala técnica, y el traumatólogo le insistió en revisar la postura antes de volver al gimnasio."},
+        {"text": "Carmen descubrió que una mala postura en el trabajo, encorvada frente al ordenador, agravaba el dolor de hombro que arrastraba desde hacía meses."},
+        {"text": "Pablo aprendió que el reposo total no siempre es la mejor opción para una lesión de hombro, según le explicó su traumatólogo con ejercicios progresivos."},
+        {"text": "Irene acudió al traumatólogo después de una caída en bicicleta, y una radiografía confirmó que no había fractura, solo un esguince leve de hombro."}
+      ]
+    },
+    {
+      "name": "horario-escolar-de-los-ninos",
+      "domain": "familia",
+      "facts": [
+        {"text": "Álvaro organiza las mañanas con una pizarra en la cocina donde apunta quién lleva a cada niño al colegio esa semana según turnos con su pareja."},
+        {"text": "Nuria descubrió que preparar las mochilas la noche antes le ahorra al menos quince minutos de prisas cada mañana antes de salir de casa."},
+        {"text": "Hugo cambió el horario de desayuno de sus hijos media hora antes, después de que el colegio avisara de llegadas tarde repetidas el curso pasado."},
+        {"text": "Marta organiza un calendario familiar compartido en la nevera con los horarios de entrada y salida de cada hijo, distintos por edad."},
+        {"text": "Daniel descubrió que su hijo rendía mejor en los deberes si los hacía justo al llegar del colegio, antes de cualquier distracción con pantallas."},
+        {"text": "Claudia reparte con su pareja quién recoge a los niños los días que ambos trabajan hasta tarde, turnándose por semanas completas."},
+        {"text": "Rubén aprendió a dejar la ropa del día siguiente elegida la noche antes, porque las discusiones matutinas por la ropa le quitaban toda la paciencia."},
+        {"text": "Beatriz organiza el desayuno de sus hijos con los mismos horarios los fines de semana que entre semana, para no desajustar el ritmo de sueño."},
+        {"text": "Óscar descubrió que su hija necesitaba más tiempo para vestirse sola de lo que él calculaba, y adelantó la rutina matutina diez minutos."},
+        {"text": "Cristina lleva una lista fija de lo que no puede faltar en la mochila cada día, agenda, estuche y merienda, pegada dentro de la puerta."},
+        {"text": "Iván organiza el turno de llevar y recoger a los niños según su horario laboral, que cambia cada mes, y lo revisa con su pareja los domingos."},
+        {"text": "Laura descubrió que madrugar diez minutos más ella misma le quitaba todo el estrés de las prisas matutinas con los niños."},
+        {"text": "Sergio prepara los bocadillos del almuerzo escolar la noche anterior, porque por la mañana nunca tiene tiempo de hacerlo con calma."}
+      ]
+    },
+    {
+      "name": "extraescolares-y-actividades",
+      "domain": "familia",
+      "facts": [
+        {"text": "Paula apuntó a su hijo a fútbol y a su hija a baile, y organiza la semana según los días de entrenamiento de cada uno."},
+        {"text": "Adrián descubrió que tres extraescolares a la semana dejaban a su hija demasiado cansada, y decidió recortar a dos para que descansara más."},
+        {"text": "Noelia lleva a sus hijos a clases de robótica los sábados por la mañana, una actividad que eligieron ellos mismos después de probar varias opciones."},
+        {"text": "Raúl organiza el coche compartido con otras dos familias del barrio para llevar a los niños a judo, turnándose una semana cada uno."},
+        {"text": "Patricia descubrió que su hijo disfrutaba mucho más del ajedrez que del fútbol, aunque al principio ella hubiera preferido un deporte de equipo."},
+        {"text": "Fernando apuntó a su hija a clases de natación porque el pediatra le recomendó actividad física regular tras un periodo de poco movimiento."},
+        {"text": "Silvia revisa cada trimestre si las extraescolares siguen gustando a sus hijos, porque descubrió que forzarlas a continuar solo generaba rechazo."},
+        {"text": "Gonzalo lleva a su hijo a clases de música los martes, el único día de la semana que no tiene ninguna otra actividad programada."},
+        {"text": "Rocío descubrió que organizar un grupo de mensajes con otros padres de la misma extraescolar facilita mucho los cambios de horario de última hora."},
+        {"text": "Víctor apuntó a sus dos hijos a la misma academia de teatro para ahorrar desplazamientos, aunque tengan grupos y horarios distintos."},
+        {"text": "Teresa descubrió que su hija prefería una sola actividad bien elegida a varias apuntadas solo porque las hacían sus amigas del colegio."},
+        {"text": "Ignacio lleva a su hijo a baloncesto los jueves, y aprovecha esa hora y media para hacer la compra de la semana cerca del pabellón."},
+        {"text": "Alba organiza las vacaciones de las extraescolares con las del colegio, para no tener que buscar alternativas de última hora en septiembre."}
+      ]
+    },
+    {
+      "name": "reuniones-de-padres",
+      "domain": "familia",
+      "facts": [
+        {"text": "Mateo apunta en el calendario todas las reuniones de padres del curso en cuanto el colegio las comunica, para no cruzarlas con el trabajo."},
+        {"text": "Olga aprendió a preparar preguntas concretas antes de cada reunión con el tutor, porque antes se quedaba con dudas que no sabía cómo plantear."},
+        {"text": "Jaime descubrió en una reunión de padres que su hijo tenía dificultades de atención en clase que en casa no se notaban igual."},
+        {"text": "Celia acude siempre con su pareja a las reuniones importantes del colegio, aunque eso signifique pedir permiso los dos el mismo día en el trabajo."},
+        {"text": "Andrés aprendió a tomar notas durante la reunión con el tutor, porque luego se le olvidaban detalles importantes sobre el comportamiento de su hija."},
+        {"text": "Lucía descubrió que participar en la asociación de padres le dio información que nunca llegaba por los canales oficiales del colegio."},
+        {"text": "Marcos pidió una tutoría individual aparte de la reunión general, porque quería hablar de un tema concreto sin la presencia de otros padres."},
+        {"text": "Elena aprendió a no comparar a su hijo con otros niños de la clase después de que el tutor le explicara que cada ritmo es distinto."},
+        {"text": "Javier descubrió gracias a una reunión de padres que el colegio cambiaba el sistema de deberes ese curso, algo que no había visto en ninguna comunicación anterior."},
+        {"text": "Sofía lleva una libreta específica para anotar los acuerdos de cada reunión con el tutor, y los repasa antes de la siguiente cita."},
+        {"text": "Diego aprendió a preguntar directamente por el comportamiento social de su hijo en el patio, un tema que antes nunca se le ocurría plantear."},
+        {"text": "Carmen descubrió que asistir a las reuniones de padres en pareja ayudaba a tomar decisiones conjuntas sobre refuerzo escolar casi al momento."},
+        {"text": "Pablo pidió cambiar el horario de una reunión porque coincidía con la de su otro hijo en un colegio distinto, y el centro se lo facilitó sin problema."}
+      ]
+    },
+    {
+      "name": "deberes-y-rutina-de-estudio",
+      "domain": "familia",
+      "facts": [
+        {"text": "Irene fija una hora concreta para los deberes cada tarde, justo después de la merienda, para que no se alargue hasta la noche."},
+        {"text": "Álvaro descubrió que su hijo se concentraba mejor estudiando en la mesa de la cocina que en su propia habitación, llena de distracciones."},
+        {"text": "Nuria usa un temporizador de 25 minutos de estudio seguido de un descanso corto, un método que a su hija le funciona mejor que estudiar de golpe."},
+        {"text": "Hugo revisa los deberes de su hijo sin hacerlos por él, aunque reconoce que al principio le costaba resistir la tentación de corregir todo."},
+        {"text": "Marta descubrió que su hija aprendía mejor explicando en voz alta lo que había estudiado, así que ahora se lo cuenta cada noche antes de cenar."},
+        {"text": "Daniel organiza un horario visual de estudio en una cartulina en la pared, con los días y las asignaturas de cada tarde."},
+        {"text": "Claudia aprendió a dejar que su hijo se equivocara en los deberes, porque corregirle todo antes de entregarlos no le ayudaba a aprender de sus errores."},
+        {"text": "Rubén descubrió que quitar el móvil de la habitación durante el estudio mejoró notablemente la concentración de su hija adolescente."},
+        {"text": "Beatriz prepara un espacio fijo de estudio con buena luz y sin ruido, porque notó que su hijo rendía mucho peor estudiando frente al televisor."},
+        {"text": "Óscar lleva un cuaderno donde anota con su hijo los exámenes de cada semana, para repartir el estudio y no acumularlo todo al final."},
+        {"text": "Cristina descubrió que recompensar el esfuerzo, no solo las notas, motivaba mucho más a su hija que prometerle un regalo por cada sobresaliente."},
+        {"text": "Iván aprendió técnicas de estudio con mapas mentales que ahora comparte con su hijo para las asignaturas de memorización, como historia o biología."},
+        {"text": "Laura organiza sesiones de repaso en grupo con otras familias del colegio antes de los exámenes finales de cada trimestre."}
+      ]
+    },
+    {
+      "name": "cumpleanos-infantiles",
+      "domain": "familia",
+      "facts": [
+        {"text": "Sergio organizó el cumpleaños de su hija en un parque con juegos tradicionales en vez de contratar animación, y los niños se lo pasaron igual de bien."},
+        {"text": "Paula prepara siempre una tarta casera para el cumpleaños de sus hijos, desde que descubrió que las compradas no se adaptaban a la alergia de un amigo del cole."},
+        {"text": "Adrián alquiló un castillo hinchable para el cumpleaños de su hijo, y descubrió que reservarlo con dos meses de antelación le salió mucho más barato."},
+        {"text": "Noelia hizo bolsas de chuches personalizadas para cada invitado del cumpleaños de su hija, con el nombre de cada niño escrito a mano."},
+        {"text": "Raúl organizó una búsqueda del tesoro en el jardín de casa para el cumpleaños de su hijo, con pistas adaptadas a niños de seis años."},
+        {"text": "Patricia descubrió que limitar la lista de invitados a diez niños hacía el cumpleaños mucho más manejable que las fiestas de veinte que organizaba antes."},
+        {"text": "Fernando contrató a una monitora de manualidades para el cumpleaños de su hija, en vez de la animación habitual de payasos."},
+        {"text": "Silvia organizó un cumpleaños temático de piratas con disfraces sencillos hechos en casa, que resultó más barato que comprar todo hecho."},
+        {"text": "Gonzalo descubrió que hacer el cumpleaños por la mañana, en vez de por la tarde, evitaba que los niños más pequeños acabaran agotados y llorando."},
+        {"text": "Rocío organiza siempre un juego de pasarlo bien sin competir demasiado, después de que una vez un juego de premios acabara con varios niños disgustados."},
+        {"text": "Víctor preparó una piñata casera con papel maché para el cumpleaños de su hijo, un proyecto que hicieron juntos durante dos fines de semana."},
+        {"text": "Teresa descubrió que avisar con tiempo de las alergias alimentarias de los invitados le evitó sustos con la tarta y las chuches del cumpleaños."},
+        {"text": "Ignacio organizó el cumpleaños de su hija en casa de los abuelos, con más espacio en el jardín que en su propio piso del centro."}
+      ]
+    },
+    {
+      "name": "campamentos-de-verano",
+      "domain": "familia",
+      "facts": [
+        {"text": "Alba apuntó a su hijo a un campamento de una semana en la montaña, su primera vez durmiendo fuera de casa sin la familia."},
+        {"text": "Mateo descubrió que reservar el campamento de verano en febrero le aseguraba plaza en las fechas que mejor le venían con las vacaciones del trabajo."},
+        {"text": "Olga preparó con su hija la maleta del campamento siguiendo la lista oficial que mandó la organización, para no olvidar nada importante."},
+        {"text": "Jaime llamó al campamento el primer día para preguntar cómo se había adaptado su hijo, después de que llorara un poco al despedirse."},
+        {"text": "Celia eligió un campamento con actividades de naturaleza y sin pantallas para su hija, buscando que desconectara del todo durante esas dos semanas."},
+        {"text": "Andrés descubrió que su hijo volvió del campamento mucho más independiente, capaz de hacer su propia mochila sin que nadie se lo recordara."},
+        {"text": "Lucía apuntó a sus dos hijos al mismo campamento de inglés, donde combinan idioma con actividades deportivas durante las mañanas."},
+        {"text": "Marcos escribió una carta a su hija antes de que empezara el campamento, porque le explicaron que recibir correo allí les hace mucha ilusión."},
+        {"text": "Elena descubrió que su hijo hizo amigos en el campamento con los que sigue en contacto un año después, algo que no esperaba."},
+        {"text": "Javier eligió un campamento urbano de día para su hija más pequeña, que todavía no se sentía preparada para dormir fuera de casa."},
+        {"text": "Sofía preparó un botiquín básico etiquetado con el nombre de su hijo para el campamento, siguiendo las indicaciones de la organización."},
+        {"text": "Diego descubrió que su hijo, tímido en el colegio, se soltó mucho más en el ambiente distinto del campamento de verano."},
+        {"text": "Carmen apuntó a su hija a un campamento de vela en la costa, una actividad que descubrió gracias a la recomendación de otra familia del cole."}
+      ]
+    },
+    {
+      "name": "logistica-de-recogida-colegio",
+      "domain": "familia",
+      "facts": [
+        {"text": "Pablo organiza con otros tres padres del colegio un turno rotativo para recoger a los niños, cambiando de responsable cada semana."},
+        {"text": "Irene descubrió que llegar cinco minutos antes a la puerta del colegio le evitaba el atasco de coches de última hora a la salida."},
+        {"text": "Álvaro lleva una lista con los nombres de las personas autorizadas a recoger a su hija, actualizada cada vez que cambia alguna niñera o familiar."},
+        {"text": "Nuria aprendió a avisar con un mensaje al grupo de padres cuando llega tarde a recoger, para que alguien se quede con su hijo mientras llega."},
+        {"text": "Hugo organiza la recogida según el día de la semana, su pareja los lunes y miércoles, él los martes y jueves, y se alternan los viernes."},
+        {"text": "Marta descubrió que el colegio tiene una zona de espera para los niños cuyos padres se retrasan, pero prefiere no usarla salvo emergencia."},
+        {"text": "Daniel lleva siempre un paraguas extra en el coche para los días de lluvia en que recoge a los niños a pie desde el colegio."},
+        {"text": "Claudia organiza turnos de coche compartido con otra familia del barrio para la recogida, alternando semana a semana quién conduce."},
+        {"text": "Rubén aprendió a avisar al colegio con antelación cuando una persona distinta a la habitual va a recoger a su hijo ese día."},
+        {"text": "Beatriz descubrió que coordinar la recogida con la familia de los mejores amigos de su hija facilita mucho organizar quedadas improvisadas después de clase."},
+        {"text": "Óscar lleva un calendario compartido con su pareja donde marca quién recoge cada día, porque los olvidos por descoordinación generaban discusiones frecuentes."},
+        {"text": "Cristina organiza la recogida de sus dos hijos, en colegios distintos, calculando los minutos exactos de trayecto entre uno y otro centro."},
+        {"text": "Iván descubrió que su hijo prefería que lo recogiera siempre la misma persona, porque los cambios constantes le generaban cierta inseguridad al salir."}
+      ]
+    },
+    {
+      "name": "mudanza-de-habitacion-infantil",
+      "domain": "familia",
+      "facts": [
+        {"text": "Laura cambió la habitación de su hijo de cuna a cama a los tres años, coincidiendo con la llegada de su hermano pequeño."},
+        {"text": "Sergio pintó la habitación de su hija de un color que ella misma eligió, como forma de hacerla sentir parte del cambio de cuarto de bebé a cuarto de niña."},
+        {"text": "Paula reorganizó el armario de su hijo con cajones a su altura, para que empezara a elegir y guardar su propia ropa."},
+        {"text": "Adrián montó una cama nido para aprovechar el espacio cuando su hija empezó a recibir amigas a dormir en casa los fines de semana."},
+        {"text": "Noelia descubrió que mover los juguetes a estanterías bajas, a la altura de su hijo, redujo bastante el desorden que antes se acumulaba en el suelo."},
+        {"text": "Raúl cambió la decoración de dinosaurios de la habitación de su hijo por una temática distinta cuando el niño mismo pidió el cambio a los ocho años."},
+        {"text": "Patricia reorganizó la habitación compartida de sus dos hijas con una cortina divisoria, para que cada una tuviera su propio espacio cuando lo necesitaran."},
+        {"text": "Fernando montó un escritorio para los deberes en la habitación de su hijo cuando empezó primaria, separado del área de juego."},
+        {"text": "Silvia donó la cuna y la trona cuando su hija pequeña dejó de necesitarlas, y las entregó a una familia conocida que esperaba un bebé."},
+        {"text": "Gonzalo descubrió que dejar que su hijo participara en elegir la ropa de cama nueva le hizo ilusión real por el cambio de habitación."},
+        {"text": "Rocío reorganizó el armario de su hija separando ropa de verano e invierno en cajas etiquetadas, para no sacar todo cada cambio de temporada."},
+        {"text": "Víctor instaló una luz de noche regulable en la habitación de su hijo después de una etapa de miedo a la oscuridad."},
+        {"text": "Teresa cambió la habitación de sus hijos de planta cuando se mudaron, procurando que cada uno conservara algún mueble o póster de su cuarto anterior."}
+      ]
+    },
+    {
+      "name": "vacaciones-escolares",
+      "domain": "familia",
+      "facts": [
+        {"text": "Ignacio organiza las vacaciones de verano repartiendo las semanas entre campamento, casa de los abuelos y unos días de viaje en familia."},
+        {"text": "Alba descubrió que planificar julio y agosto con un mes de antelación le evitó la angustia de buscar plan de última hora para los niños."},
+        {"text": "Mateo lleva a sus hijos a pasar una semana con los abuelos en vacaciones de Semana Santa, una tradición que mantienen desde que nacieron."},
+        {"text": "Olga organiza actividades sencillas en casa durante las vacaciones de Navidad, porque descubrió que no todo tiene que ser un plan elaborado cada día."},
+        {"text": "Jaime descubrió que repartir las vacaciones de verano entre los dos progenitores, por semanas, facilitaba mucho la conciliación con el trabajo de ambos."},
+        {"text": "Celia lleva un calendario con las fechas exactas del calendario escolar pegado en la nevera desde principio de curso, para planificar con tiempo."},
+        {"text": "Andrés organizó un intercambio de cuidado de niños con otra familia del barrio durante una semana de vacaciones en que ambos trabajaban."},
+        {"text": "Lucía descubrió que sus hijos disfrutaban más de unas vacaciones tranquilas en casa de los abuelos que de un viaje organizado con muchas actividades."},
+        {"text": "Marcos aprovecha los puentes escolares para hacer escapadas cortas en familia, en vez de guardar todos los días libres para el verano."},
+        {"text": "Elena organiza un calendario de actividades de verano con su hija, mezclando días de piscina, visitas familiares y tiempo libre sin planes."},
+        {"text": "Javier descubrió que coordinar las vacaciones con otra familia amiga, con niños de edades parecidas, hacía los días mucho más llevaderos para todos."},
+        {"text": "Sofía lleva un cuaderno de vacaciones con su hijo donde repasan lectura y cálculo cada mañana, media hora, para no perder el ritmo del curso."},
+        {"text": "Diego organiza las vacaciones de Navidad evitando sobrecargar de compromisos familiares, dejando también días libres solo para descansar en casa."}
+      ]
+    },
+    {
+      "name": "relacion-con-los-abuelos",
+      "domain": "familia",
+      "facts": [
+        {"text": "Carmen lleva a sus hijos a comer con los abuelos cada domingo, una rutina que mantienen desde que nacieron sus dos hijos mayores."},
+        {"text": "Pablo descubrió que sus hijos aprenden recetas tradicionales de la abuela los sábados que pasan en su casa, algo que él mismo nunca aprendió de pequeño."},
+        {"text": "Irene organiza videollamadas semanales con los abuelos que viven lejos, para que los niños mantengan el contacto aunque no se vean en persona."},
+        {"text": "Álvaro descubrió que su hija cuenta cosas a su abuela que no comparte con él, y lo entiende como parte normal de esa relación especial."},
+        {"text": "Nuria lleva a sus hijos de vacaciones una semana cada verano a casa de los abuelos, sin los padres, para que ganen autonomía."},
+        {"text": "Hugo aprendió a confiar en los abuelos para las decisiones del día a día cuando cuidan a los niños, aunque al principio le costaba soltar el control."},
+        {"text": "Marta descubrió que su padre, el abuelo, tiene mucha más paciencia para los juegos de mesa largos de la que ella misma tiene entre semana."},
+        {"text": "Daniel organiza una comida familiar grande con los abuelos cada cumpleaños de sus hijos, además de la fiesta con amigos del colegio."},
+        {"text": "Claudia lleva a sus hijos a ayudar a los abuelos en el huerto los fines de semana, una actividad que se ha convertido en tradición familiar."},
+        {"text": "Rubén descubrió que sus hijos piden quedarse a dormir en casa de los abuelos cada vez con más frecuencia, y lo ve como una señal positiva."},
+        {"text": "Beatriz organiza turnos con sus hermanos para que los abuelos no se sobrecarguen cuidando a todos los nietos al mismo tiempo durante las vacaciones."},
+        {"text": "Óscar aprendió recetas familiares de su madre, la abuela de sus hijos, para seguir cocinándolas aunque ella ya no pueda estar siempre en la cocina."},
+        {"text": "Cristina lleva un álbum de fotos físico que los abuelos hojean con los niños cada visita, en vez de solo mostrarles fotos en el móvil."}
+      ]
+    },
+    {
+      "name": "material-escolar-y-libros",
+      "domain": "familia",
+      "facts": [
+        {"text": "Iván compra el material escolar de sus hijos en julio, antes de que empiecen a subir los precios por la vuelta al colegio en septiembre."},
+        {"text": "Laura forra los libros de texto de sus hijos con plástico transparente cada septiembre, una tarea que ahora hacen juntos como ritual de inicio de curso."},
+        {"text": "Sergio descubrió un mercadillo de intercambio de libros de texto usados entre familias del colegio, que le ahorra bastante cada curso."},
+        {"text": "Paula organiza el estuche de su hijo revisando que no falte ningún color de los que piden en la lista del colegio cada septiembre."},
+        {"text": "Adrián etiqueta con el nombre cada libro y cuaderno de sus hijos, después de que el año pasado se mezclaran con los de otro compañero de clase."},
+        {"text": "Noelia guarda los libros de texto en buen estado para pasarlos de un hijo al siguiente, cuando las edades y los cursos lo permiten."},
+        {"text": "Raúl descubrió que comprar las mochilas con refuerzo lumbar le ahorró quejas de espalda de su hijo a mitad de curso."},
+        {"text": "Patricia revisa la lista de material de cada asignatura con tiempo, porque algunos profesores piden materiales específicos que no se encuentran en cualquier tienda."},
+        {"text": "Fernando organiza una carpeta por asignatura para cada hijo desde principio de curso, un sistema que le copió a otra madre del colegio."},
+        {"text": "Silvia descubrió que su hija prefería unas libretas de un color concreto para cada asignatura, un pequeño detalle que le ayuda a organizarse mejor."},
+        {"text": "Gonzalo lleva el control de los libros de lectura obligatoria del curso en un calendario, para repartir la lectura entre trimestres sin agobios de última hora."},
+        {"text": "Rocío compra calculadoras y material de geometría con un curso de antelación cuando ve que van a durar varios años de uso."},
+        {"text": "Víctor descubrió que guardar los recibos del material escolar le ayudaba a comparar el gasto de un curso a otro con sus hijos."}
+      ]
+    },
+    {
+      "name": "actividades-de-verano-ninos",
+      "domain": "familia",
+      "facts": [
+        {"text": "Teresa apunta a sus hijos a un centro de ocio de verano en el propio colegio durante las primeras semanas de julio, mientras ella sigue trabajando."},
+        {"text": "Ignacio organiza turnos con otros padres del edificio para llevar a los niños a la piscina municipal algunas tardes de verano."},
+        {"text": "Alba descubrió que su hijo prefería actividades al aire libre a quedarse en casa con pantallas, así que organizó más salidas al parque durante el verano."},
+        {"text": "Mateo lleva a sus hijos a clases de tenis dos semanas en julio, antes de las vacaciones familiares de agosto, para que no pierdan la rutina deportiva."},
+        {"text": "Olga organiza un plan de verano con menos actividades programadas que durante el curso, dejando también tiempo para el aburrimiento y el juego libre."},
+        {"text": "Jaime descubrió que combinar mañanas de centro de ocio con tardes libres en casa funcionaba mejor para su hija que un verano completamente estructurado."},
+        {"text": "Celia apunta a sus hijos a clases de natación intensivas en junio, antes de que empiece el verano fuerte, para que ganen soltura en el agua."},
+        {"text": "Andrés organiza salidas en bicicleta los fines de semana de verano con sus hijos, aprovechando que no hay colegio y pueden dormir algo más tarde."},
+        {"text": "Lucía descubrió un campamento urbano de ciencias para su hijo curioso, que combina experimentos sencillos con juegos al aire libre cada mañana."},
+        {"text": "Marcos lleva a sus hijas a clases de teatro de verano, una actividad que ellas mismas pidieron después de ver una obra en el colegio."},
+        {"text": "Elena organiza el verano con la ayuda de los abuelos las semanas que ella trabaja, repartiendo el cuidado entre varias personas de confianza."},
+        {"text": "Javier descubrió que su hijo aprovechaba mejor el verano con una rutina mínima de horarios, aunque fueran vacaciones, que sin ningún horario en absoluto."},
+        {"text": "Sofía apunta a sus hijos a un campamento de inglés en julio, porque descubrió que practicar el idioma de forma lúdica les motiva mucho más que las clases del curso."}
+      ]
+    },
+    {
+      "name": "adolescencia-y-movil",
+      "domain": "familia",
+      "facts": [
+        {"text": "Diego negoció con su hijo adolescente un horario fijo de uso del móvil, sin pantallas después de las diez de la noche entre semana."},
+        {"text": "Carmen descubrió aplicaciones de control parental que le permiten ver el tiempo de uso de cada app sin necesidad de revisar los mensajes directamente."},
+        {"text": "Pablo habló con su hija sobre los riesgos de compartir fotos con desconocidos después de un caso que salió en las noticias del colegio."},
+        {"text": "Irene retrasó la edad para el primer móvil de su hijo hasta los catorce años, después de hablarlo con otras familias del instituto."},
+        {"text": "Álvaro descubrió que su hija pasaba horas en videollamadas con amigas por la noche, y acordaron juntos un límite de tiempo razonable entre semana."},
+        {"text": "Nuria habla abiertamente con su hijo sobre lo que ve en redes sociales, en vez de prohibir sin explicar el motivo de cada límite."},
+        {"text": "Hugo descubrió que quitar el móvil como castigo generaba más conflicto que acordar consecuencias claras desde el principio con su hijo adolescente."},
+        {"text": "Marta estableció una zona sin móviles durante las comidas familiares, una norma que al principio generó quejas pero que ya nadie discute."},
+        {"text": "Daniel habló con su hijo sobre el ciberacoso después de que un compañero de clase sufriera una situación complicada en redes sociales."},
+        {"text": "Claudia descubrió que su hija usaba el móvil para estudiar en grupo por videollamada, y aprendió a diferenciar ese uso del ocio puro."},
+        {"text": "Rubén acordó con su hijo revisar juntos, una vez al mes, las aplicaciones nuevas que instalaba, como forma de mantener la confianza mutua."},
+        {"text": "Beatriz descubrió que hablar de sus propios límites con el móvil, delante de sus hijos, les hacía más receptivos a aceptar los suyos."},
+        {"text": "Óscar estableció que el cargador del móvil se queda fuera de la habitación por la noche, una norma que mejoró notablemente el sueño de su hijo."}
+      ]
+    },
+    {
+      "name": "cambio-de-colegio",
+      "domain": "familia",
+      "facts": [
+        {"text": "Cristina cambió a su hijo de colegio a mitad de curso por una mudanza familiar, y se coordinó con el nuevo centro para que no perdiera temario importante."},
+        {"text": "Iván visitó tres colegios distintos antes de decidir el cambio para su hija, comparando el ambiente y hablando con otras familias de cada centro."},
+        {"text": "Laura descubrió que su hijo se adaptó mejor de lo esperado al cambio de colegio gracias a que ya conocía a dos compañeros del barrio nuevo."},
+        {"text": "Sergio pidió una reunión con el tutor del nuevo colegio antes de que su hija empezara, para explicar sus necesidades concretas de aprendizaje."},
+        {"text": "Paula organizó una quedada con los antiguos compañeros de clase de su hijo antes del verano, para que el cambio de colegio no significara perder esas amistades."},
+        {"text": "Adrián descubrió que el nuevo colegio de su hija seguía un sistema de evaluación distinto, y tuvo que ajustar las expectativas sobre las notas del primer trimestre."},
+        {"text": "Noelia habló con un psicólogo escolar sobre cómo preparar a su hijo para el cambio de colegio, después de notarlo algo nervioso con la idea."},
+        {"text": "Raúl cambió a sus dos hijos al mismo colegio nuevo, para que se apoyaran mutuamente durante los primeros meses de adaptación."},
+        {"text": "Patricia descubrió que mantener algunas rutinas iguales, como las extraescolares, ayudó a que el cambio de colegio de su hija fuera menos brusco."},
+        {"text": "Fernando visitó el nuevo colegio con su hijo antes del primer día, para que conociera las instalaciones y no llegara con todo nuevo de golpe."},
+        {"text": "Silvia pidió los informes del colegio anterior con tiempo, porque el nuevo centro los necesitaba para ubicar a su hija en el nivel correcto de inglés."},
+        {"text": "Gonzalo descubrió que su hijo tardó casi un trimestre entero en sentirse del todo cómodo en el colegio nuevo, algo más de lo que esperaban."},
+        {"text": "Rocío organizó una fiesta de despedida sencilla con los compañeros de clase antes de que su hija cambiara de colegio por la mudanza familiar."}
+      ]
+    },
+    {
+      "name": "revisiones-periodicas-del-coche",
+      "domain": "coche",
+      "facts": [
+        {"text": "Víctor lleva el coche a revisión cada 15.000 kilómetros siguiendo el manual del fabricante, aunque el concesionario le recomendaba hacerlo con más frecuencia."},
+        {"text": "Teresa descubrió una fuga pequeña de líquido refrigerante en una revisión rutinaria, antes de que le diera ningún problema serio en carretera."},
+        {"text": "Ignacio lleva un cuaderno con la fecha y los kilómetros de cada revisión de su coche, para no perder el hilo del mantenimiento con los años."},
+        {"text": "Alba cambia el filtro del habitáculo cada revisión, después de que un mecánico le explicara que un filtro sucio empeora mucho la calidad del aire dentro del coche."},
+        {"text": "Mateo descubrió que revisar las pastillas de freno cada seis meses le evitó un desgaste excesivo de los discos que habría salido mucho más caro de arreglar."},
+        {"text": "Olga lleva su coche siempre al mismo taller de confianza para las revisiones, porque descubrió que conocen el historial completo del vehículo."},
+        {"text": "Jaime revisa los niveles de aceite y líquido de frenos él mismo cada mes, entre revisión y revisión, como hábito que le enseñó su padre."},
+        {"text": "Celia descubrió una correa de distribución a punto de desgastarse en una revisión programada, justo antes de que fallara en mitad de un viaje largo."},
+        {"text": "Andrés anota en el móvil los kilómetros exactos en que toca la próxima revisión, para no depender solo de la pegatina del parabrisas."},
+        {"text": "Lucía descubrió que su coche necesitaba la revisión de las correas auxiliares antes de lo esperado, por el desgaste de los años de uso en ciudad."},
+        {"text": "Marcos lleva el coche a revisión antes de cada viaje largo de vacaciones, como medida extra aparte del mantenimiento programado habitual."},
+        {"text": "Elena descubrió una avería en los amortiguadores traseros durante una revisión rutinaria, que el mecánico le recomendó arreglar antes del verano."},
+        {"text": "Javier revisa el estado de las escobillas del limpiaparabrisas cada otoño, antes de que empiecen las lluvias fuertes de la temporada."}
+      ]
+    },
+    {
+      "name": "neumaticos-y-presion",
+      "domain": "coche",
+      "facts": [
+        {"text": "Sofía revisa la presión de los neumáticos de su coche el primer día de cada mes, con un medidor que guarda en la guantera."},
+        {"text": "Diego descubrió que llevar los neumáticos con poca presión le aumentaba el consumo de combustible de forma notable en los trayectos largos."},
+        {"text": "Carmen cambia los neumáticos de invierno y verano cada temporada desde que se mudó a una zona con nieve frecuente en los meses fríos."},
+        {"text": "Pablo descubrió una pérdida de presión lenta en un neumático por un pequeño clavo, que el taller le reparó sin necesidad de cambiarlo entero."},
+        {"text": "Irene revisa el dibujo de los neumáticos con una moneda cada par de meses, un truco casero que le enseñó un mecánico para calcular el desgaste."},
+        {"text": "Álvaro aprendió a rotar los neumáticos delanteros y traseros cada revisión, porque descubrió que se desgastan de forma distinta según la posición."},
+        {"text": "Nuria cambió los cuatro neumáticos a la vez después de que el taller le explicara que mezclar desgastes distintos afecta a la estabilidad del coche."},
+        {"text": "Hugo descubrió que conducir con los neumáticos desalineados le gastaba el dibujo de forma irregular, algo que notó en una revisión rutinaria."},
+        {"text": "Marta lleva siempre una rueda de repuesto revisada y con la presión correcta, después de quedarse una vez con la de repuesto también deshinchada."},
+        {"text": "Daniel compara precios de neumáticos en varios talleres antes de cambiarlos, porque descubrió diferencias de más de 100 euros por el mismo modelo."},
+        {"text": "Claudia descubrió que un pinchazo lento le había estropeado un neumático entero por conducir varios días sin darse cuenta de la pérdida de presión."},
+        {"text": "Rubén revisa la presión antes de cada viaje largo con la familia, porque descubrió que el peso extra del equipaje requiere algo más de presión de la habitual."},
+        {"text": "Beatriz aprendió a identificar un desgaste irregular en los neumáticos como señal de un problema de dirección que el taller confirmó después."}
+      ]
+    },
+    {
+      "name": "cambio-de-aceite",
+      "domain": "coche",
+      "facts": [
+        {"text": "Óscar cambia el aceite de su coche cada 10.000 kilómetros, siguiendo la recomendación del manual, aunque el aceite sintético aguantaría algo más."},
+        {"text": "Cristina descubrió que un cambio de aceite retrasado le generó un ruido extraño en el motor que desapareció en cuanto lo cambió por fin."},
+        {"text": "Iván lleva el control de cada cambio de aceite anotado junto con los kilómetros, para no perder la cuenta entre un cambio y el siguiente."},
+        {"text": "Laura aprendió la diferencia entre aceite mineral y sintético después de que el mecánico le explicara cuál convenía más para un coche con tantos kilómetros."},
+        {"text": "Sergio cambia también el filtro de aceite cada vez que cambia el aceite, porque descubrió que hacerlo por separado no tenía ningún sentido práctico."},
+        {"text": "Paula descubrió una pequeña fuga de aceite en el cárter durante un cambio rutinario, resuelta con una junta nueva sin mayor complicación."},
+        {"text": "Adrián revisa el nivel de aceite con la varilla cada dos semanas, entre cambios completos, un hábito que le enseñó su padre desde joven."},
+        {"text": "Noelia descubrió que su coche consumía más aceite de lo normal entre cambios, señal de un desgaste que el mecánico decidió vigilar de cerca."},
+        {"text": "Raúl cambia el aceite siempre antes del verano, porque las temperaturas altas y los viajes largos exigen que el motor esté en las mejores condiciones."},
+        {"text": "Patricia aprendió a comprobar el color del aceite usado al cambiarlo, porque un color muy oscuro le indicaba que había tardado demasiado en cambiarlo."},
+        {"text": "Fernando descubrió que el taller de confianza le avisaba por mensaje cuando se acercaba el kilometraje del próximo cambio de aceite."},
+        {"text": "Silvia cambia el aceite de la caja de cambios cada dos cambios de aceite de motor, siguiendo la pauta que le recomendó el mecánico."},
+        {"text": "Gonzalo aprendió que un cambio de aceite barato con un producto de mala calidad le puede costar mucho más caro a largo plazo en reparaciones del motor."}
+      ]
+    },
+    {
+      "name": "itv-y-papeles-del-coche",
+      "domain": "coche",
+      "facts": [
+        {"text": "Rocío pasa la ITV de su coche cada dos años, y aprende a revisar luces y niveles antes de la cita para evitar un rechazo evitable."},
+        {"text": "Víctor descubrió que una luz trasera fundida le hizo repetir la ITV, algo que podría haber revisado él mismo antes de ir a la estación."},
+        {"text": "Teresa guarda todos los papeles del coche, permiso de circulación y tarjeta de la ITV, en una carpeta que lleva siempre en la guantera."},
+        {"text": "Ignacio pidió cita para la ITV con dos semanas de antelación, después de descubrir que en su ciudad las citas se agotan rápido en ciertas fechas."},
+        {"text": "Alba descubrió un problema en los frenos justo antes de la ITV, que el taller le arregló a tiempo para pasarla sin ningún rechazo."},
+        {"text": "Mateo revisa que los neumáticos cumplan el desgaste mínimo legal antes de cada ITV, desde que una vez tuvo que repetirla por ese motivo."},
+        {"text": "Olga descubrió que el coche de su hijo, recién comprado de segunda mano, tenía la ITV caducada sin que el vendedor lo mencionara."},
+        {"text": "Jaime lleva el coche al taller la semana antes de la ITV para una revisión preventiva, y así evita sorpresas el día de la cita oficial."},
+        {"text": "Celia aprendió a comprobar el estado del extintor y el chaleco reflectante antes de cada ITV, dos elementos que a veces se olvidan por completo."},
+        {"text": "Andrés descubrió que modificar el coche con unas llantas distintas a las originales le complicó la ITV hasta que presentó la documentación correcta."},
+        {"text": "Lucía guarda copia digital de todos los papeles del coche en el móvil, por si olvida la carpeta física en algún desplazamiento."},
+        {"text": "Marcos descubrió una emisión de gases fuera de los límites permitidos en la ITV, resuelto después con una puesta a punto del motor."},
+        {"text": "Elena revisa la fecha de caducidad de la ITV con un recordatorio en el calendario, para no arriesgarse a conducir con la revisión caducada."}
+      ]
+    },
+    {
+      "name": "averias-y-reparaciones",
+      "domain": "coche",
+      "facts": [
+        {"text": "Javier se quedó tirado en la carretera por una batería descargada, y desde entonces lleva siempre cables de arranque en el maletero del coche."},
+        {"text": "Sofía descubrió un ruido extraño en la dirección que resultó ser una rótula desgastada, reparada antes de que diera ningún problema de seguridad."},
+        {"text": "Diego aprendió a identificar el olor a quemado como señal de alarma, después de una avería en el embrague que se le adelantó por ese detalle."},
+        {"text": "Carmen llevó el coche al taller por un testigo encendido en el salpicadero, que resultó ser un sensor sin importancia pero que prefirió revisar igual."},
+        {"text": "Pablo descubrió una avería en el alternador que le dejó sin batería a mitad de un viaje, resuelta gracias a un taller de carretera."},
+        {"text": "Irene aprendió a comprobar los fusibles antes de llamar al taller, después de que una luz que no funcionaba resultara ser solo un fusible fundido."},
+        {"text": "Álvaro descubrió una fuga de líquido de frenos por una manguera desgastada, un fallo que el mecánico le explicó que podía haber sido grave."},
+        {"text": "Nuria pidió una segunda opinión en otro taller antes de aceptar una reparación cara, y descubrió que el problema real era mucho más sencillo."},
+        {"text": "Hugo descubrió una avería en el aire acondicionado del coche justo al empezar el verano, resuelta con una recarga de gas y un cambio de filtro."},
+        {"text": "Marta aprendió a reconocer el chirrido de las pastillas de freno gastadas antes de que llegaran a dañar los discos enteros."},
+        {"text": "Daniel se quedó sin embrague en una cuesta, y desde entonces revisa el nivel del líquido de embrague cada vez que abre el capó."},
+        {"text": "Claudia descubrió una avería eléctrica intermitente que tardó tres visitas al taller en localizar, relacionada con un cable mal conectado."},
+        {"text": "Rubén aprendió a llevar siempre el número del seguro de asistencia en carretera guardado en el móvil, después de una avería nocturna en una zona sin cobertura."}
+      ]
+    },
+    {
+      "name": "coche-electrico-carga",
+      "domain": "coche",
+      "facts": [
+        {"text": "Beatriz compró un coche eléctrico hace un año y descubrió que organizar la carga por la noche, con tarifa más barata, le cambió la rutina de conducir."},
+        {"text": "Óscar instaló un punto de carga en el garaje de su casa, un trámite que tardó más de lo esperado por los permisos de la comunidad de vecinos."},
+        {"text": "Cristina aprendió a planificar los viajes largos buscando puntos de carga rápida en el trayecto, algo que al principio le generaba cierta inseguridad."},
+        {"text": "Iván descubrió que la autonomía de su coche eléctrico bajaba notablemente en los días más fríos del invierno, algo que no esperaba al comprarlo."},
+        {"text": "Laura calcula el consumo de energía del coche eléctrico igual que antes calculaba el de gasolina, pero descubrió que es mucho más barato por kilómetro."},
+        {"text": "Sergio aprendió a cargar el coche solo hasta el 80 % en el día a día, siguiendo la recomendación del fabricante para alargar la vida de la batería."},
+        {"text": "Paula descubrió que su coche eléctrico necesita mucho menos mantenimiento mecánico que el anterior, aunque sigue llevándolo a revisión igualmente cada año."},
+        {"text": "Adrián instaló una app para controlar la carga del coche desde el móvil, y programa que empiece siempre después de medianoche."},
+        {"text": "Noelia descubrió puntos de carga gratuitos en el parking de algunos centros comerciales, y organiza sus compras aprovechando esas horas de carga."},
+        {"text": "Raúl aprendió a frenar aprovechando la regeneración de energía del coche eléctrico, una técnica de conducción muy distinta a la que tenía con el motor de combustión."},
+        {"text": "Patricia descubrió que el silencio del coche eléctrico al principio le desconcertaba, hasta el punto de activar el sonido de aviso para peatones en ciudad."},
+        {"text": "Fernando calculó que, sumando el ahorro de energía frente a la gasolina, el coche eléctrico le compensaría el coste extra inicial en unos pocos años."},
+        {"text": "Silvia descubrió que algunos puntos de carga pública tardan mucho más que los rápidos de carretera, así que ahora planifica mejor según el tipo de trayecto."}
+      ]
+    },
+    {
+      "name": "seguro-del-coche",
+      "domain": "coche",
+      "facts": [
+        {"text": "Gonzalo comparó varias compañías de seguro del coche antes de renovar, y descubrió una diferencia de casi 200 euros al año por coberturas parecidas."},
+        {"text": "Rocío contrató un seguro a todo riesgo con franquicia baja después de un primer golpe leve que le hizo valorar más la tranquilidad que el ahorro."},
+        {"text": "Víctor descubrió que su seguro incluía asistencia en carretera las 24 horas, un detalle que no sabía hasta que tuvo una avería nocturna."},
+        {"text": "Teresa cambió de seguro cuando descubrió que llevaba años pagando una cobertura de lunas que casi nunca usaba frente a otras más necesarias."},
+        {"text": "Ignacio aprendió a leer bien las condiciones del seguro antes de firmar, después de un roce con otro coche en que la cobertura no era la que esperaba."},
+        {"text": "Alba descubrió que el precio del seguro bajó notablemente al cumplir varios años sin ningún parte, gracias al descuento por buena conducción."},
+        {"text": "Mateo contrató un seguro con conductor adicional cuando su hijo empezó a usar el coche familiar para ir a la universidad."},
+        {"text": "Olga comparó el seguro del coche nuevo con el del anterior, y descubrió que el modelo eléctrico tenía una cobertura distinta para la batería."},
+        {"text": "Jaime aprendió a avisar siempre a la compañía de seguros antes de cualquier reparación importante, para confirmar qué quedaba cubierto y qué no."},
+        {"text": "Celia descubrió una cláusula de seguro que cubría coche de sustitución mientras el suyo estaba en el taller por una reparación larga."},
+        {"text": "Andrés contrató un seguro específico para su segundo coche, mucho más barato al ser un vehículo que usa solo los fines de semana."},
+        {"text": "Lucía aprendió a comparar el seguro cada año en vez de renovar sin mirar, después de descubrir que la lealtad no le beneficiaba en el precio."},
+        {"text": "Marcos descubrió que declarar el garaje cerrado donde guarda el coche le bajó el precio del seguro, al reducir el riesgo de robo o daños."}
+      ]
+    },
+    {
+      "name": "limpieza-y-mantenimiento-estetico",
+      "domain": "coche",
+      "facts": [
+        {"text": "Elena lava el coche cada dos semanas en un túnel de lavado automático, y una vez al mes le da un repaso más a fondo por dentro."},
+        {"text": "Javier aprendió a usar cera específica para proteger la pintura del coche antes del verano, cuando el sol intenso la deteriora más rápido."},
+        {"text": "Sofía descubrió manchas de resina de los árboles en la pintura después de aparcar bajo un pino durante semanas, y tuvo que usar un producto específico para quitarlas."},
+        {"text": "Diego limpia los asientos de tela del coche con un aspirador potente cada mes, desde que descubrió ácaros acumulados que le provocaban alergia al conducir."},
+        {"text": "Carmen aprendió a proteger los faros con un tratamiento específico después de notar que se volvían opacos con el paso de los años."},
+        {"text": "Pablo lleva siempre toallitas y un cepillo pequeño en la guantera para limpiar las manchas de los asientos justo después de un viaje con los niños."},
+        {"text": "Irene descubrió que lavar los bajos del coche en invierno, después de carreteras con sal, evitaba que se oxidaran antes de tiempo."},
+        {"text": "Álvaro limpia los cristales por dentro con un producto específico que no deja marcas, después de probar varios que le dejaban el parabrisas sucio con el sol."},
+        {"text": "Nuria aprendió a sacudir las alfombrillas cada semana, porque descubrió que acumulaban mucha más arena y tierra de la que imaginaba."},
+        {"text": "Hugo lleva el coche a un detallado completo una vez al año, antes del verano, para que el interior quede como recién comprado."},
+        {"text": "Marta descubrió que un ambientador colocado en el salpicadero se decoloraba con el sol, así que ahora lo cambia de sitio cada temporada."},
+        {"text": "Daniel limpia el motor con cuidado cada primavera, evitando el agua directa sobre componentes eléctricos, siguiendo un tutorial que le recomendó un mecánico."},
+        {"text": "Claudia aprendió a aspirar el maletero cada vez que transporta algo sucio, desde que llevó plantas del vivero y dejó tierra esparcida por todas partes."}
+      ]
+    },
+    {
+      "name": "viajes-largos-en-coche",
+      "domain": "coche",
+      "facts": [
+        {"text": "Rubén revisa siempre el aceite, el agua y los neumáticos antes de un viaje largo en coche, aunque el coche esté recién revisado."},
+        {"text": "Beatriz organiza paradas cada dos horas en los viajes largos con los niños, para que estiren las piernas y no se pongan nerviosos en el asiento."},
+        {"text": "Óscar lleva una nevera portátil con agua y fruta en los viajes largos, para no depender solo de las paradas en área de servicio."},
+        {"text": "Cristina descubrió que planificar la ruta evitando las horas de más tráfico le ahorraba más de una hora en los viajes de vuelta de vacaciones."},
+        {"text": "Iván lleva juegos y audiolibros para los niños en los trayectos largos, desde que descubrió que las pantallas todo el viaje les dejaban irritables al llegar."},
+        {"text": "Laura revisa la previsión del tiempo en todo el trayecto antes de salir, porque una vez les pilló una tormenta fuerte que no habían previsto."},
+        {"text": "Sergio turna la conducción con su pareja cada dos horas en los viajes largos, para llegar menos cansados y reducir el riesgo de un despiste."},
+        {"text": "Paula lleva siempre un botiquín básico y agua extra en el maletero para los viajes largos, por si hay alguna parada imprevista en carretera."},
+        {"text": "Adrián descubrió que salir muy temprano, antes del amanecer, le permitía evitar casi todo el tráfico de salida de la ciudad en los puentes largos."},
+        {"text": "Noelia organiza las paradas de los viajes largos coincidiendo con las horas de comida de los niños, para no romper del todo su rutina de horarios."},
+        {"text": "Raúl lleva el cargador del móvil y una batería externa siempre en el coche, después de quedarse sin navegación a mitad de un viaje largo."},
+        {"text": "Patricia descubrió que descansar una noche a mitad de un trayecto muy largo, en vez de hacerlo todo de un tirón, hacía el viaje mucho más seguro."},
+        {"text": "Fernando revisa el estado de las luces antes de cualquier viaje nocturno largo, después de que una vez un faro fundido le complicara la conducción de noche."}
+      ]
+    },
+    {
+      "name": "aparcamiento-y-garaje",
+      "domain": "coche",
+      "facts": [
+        {"text": "Silvia alquiló una plaza de garaje fija cerca de casa después de pasar meses buscando aparcamiento en la calle cada noche al volver del trabajo."},
+        {"text": "Gonzalo descubrió que su coche se rayó varias veces aparcado en la calle, y decidió que le compensaba pagar un garaje aunque estuviera a dos calles de casa."},
+        {"text": "Rocío instaló una cámara trasera en el coche después de golpear un pilar al aparcar marcha atrás en el garaje comunitario."},
+        {"text": "Víctor aprendió a dejar siempre un hueco extra al aparcar en el garaje, desde que un vecino con un coche más ancho le rozó la puerta."},
+        {"text": "Teresa descubrió que su comunidad de vecinos limitó el uso de las plazas de garaje para visitas, después de varios conflictos entre propietarios."},
+        {"text": "Ignacio instaló luz con sensor de movimiento en su plaza de garaje, porque la iluminación general del parking era demasiado tenue por la noche."},
+        {"text": "Alba aprendió a plegar los espejos del coche al aparcar en su plaza de garaje, estrecha para el ancho real del vehículo."},
+        {"text": "Mateo descubrió que dejar el coche en un parking disuasorio en las afueras y seguir en transporte público le ahorraba tiempo en las horas de más tráfico del centro."},
+        {"text": "Olga instaló un cargador de batería de mantenimiento en el garaje para el coche que usa poco, después de que la batería se agotara dos inviernos seguidos."},
+        {"text": "Jaime aprendió a comprobar la altura máxima antes de entrar en parkings subterráneos desconocidos, después de un roce con una barrera demasiado baja."},
+        {"text": "Celia descubrió que aparcar en batería le costaba mucho más que en línea, así que practicó varias veces en una calle vacía hasta dominarlo."},
+        {"text": "Andrés instaló un punto de carga en su plaza de garaje para el coche eléctrico nuevo, coordinándolo con la comunidad de vecinos del edificio."},
+        {"text": "Lucía aprendió a usar los sensores de aparcamiento del coche nuevo, después de años acostumbrada a aparcar solo guiándose por los retrovisores."}
+      ]
+    },
+    {
+      "name": "taller-mecanico-de-confianza",
+      "domain": "coche",
+      "facts": [
+        {"text": "Marcos lleva su coche al mismo taller familiar desde hace diez años, porque descubrió que le explican cada reparación sin presionarle a hacer más de lo necesario."},
+        {"text": "Elena cambió de taller después de que uno le cobrara una reparación que, según un amigo mecánico, podía haberse resuelto con una pieza mucho más sencilla."},
+        {"text": "Javier pregunta siempre un presupuesto cerrado antes de autorizar cualquier reparación, desde que una vez el coste final le salió más alto de lo hablado."},
+        {"text": "Sofía descubrió un taller de barrio recomendado por varios vecinos, mucho más cercano y con precios más razonables que el concesionario oficial."},
+        {"text": "Diego lleva el coche al taller de confianza incluso para revisiones pequeñas, porque descubrió que conocen el historial completo y detectan antes cualquier problema."},
+        {"text": "Carmen aprendió a pedir que le devuelvan las piezas sustituidas, un hábito que le recomendó un mecánico para comprobar que el cambio era realmente necesario."},
+        {"text": "Pablo descubrió que el taller de confianza le avisaba con tiempo de qué reparaciones podían esperar y cuáles eran urgentes, sin presionarle a hacer todo de golpe."},
+        {"text": "Irene lleva el coche de toda la familia al mismo taller, porque descubrió que les hacen un descuento por ser varios vehículos de la misma casa."},
+        {"text": "Álvaro pidió referencias a varios compañeros de trabajo antes de elegir un taller nuevo al mudarse de ciudad, para no empezar de cero sin ninguna garantía."},
+        {"text": "Nuria descubrió que su taller de confianza le prestaba un coche pequeño mientras el suyo estaba en reparación por una avería larga."},
+        {"text": "Hugo aprendió a desconfiar de los talleres que insisten en cambiar piezas sin explicar bien el motivo, después de una mala experiencia con un taller de paso."},
+        {"text": "Marta lleva el coche siempre al mismo mecánico desde que le arregló una avería complicada que otro taller no había sabido identificar."},
+        {"text": "Daniel descubrió que su taller de confianza le avisa antes de que caduque la garantía de alguna pieza, para aprovecharla si hace falta repararla."}
+      ]
+    },
+    {
+      "name": "bateria-y-electricidad-coche",
+      "domain": "coche",
+      "facts": [
+        {"text": "Claudia se quedó sin batería una mañana de mucho frío, y descubrió que el frío intenso reduce bastante la capacidad de arranque de las baterías viejas."},
+        {"text": "Rubén cambia la batería del coche cada cuatro o cinco años de forma preventiva, después de que una vez se le agotara sin ningún aviso previo."},
+        {"text": "Beatriz descubrió un consumo eléctrico extraño con el coche apagado, que resultó ser una luz interior que se quedaba encendida sin que ella lo notara."},
+        {"text": "Óscar aprendió a comprobar los bornes de la batería y limpiarlos de óxido, un mantenimiento sencillo que antes dejaba siempre en manos del taller."},
+        {"text": "Cristina descubrió que dejar el coche parado varias semanas sin usarlo, en garaje, le había descargado la batería por completo."},
+        {"text": "Iván lleva cables de arranque en el maletero desde que tuvo que pedir ayuda a un desconocido en un parking por quedarse sin batería."},
+        {"text": "Laura descubrió un fusible fundido que afectaba a las luces de un lado del coche, resuelto en minutos una vez identificado el problema."},
+        {"text": "Sergio aprendió a reconocer el sonido débil del motor de arranque como primer aviso de que la batería estaba llegando al final de su vida útil."},
+        {"text": "Paula descubrió que instalar accesorios eléctricos no originales en el coche le generó un pequeño cortocircuito que tardaron en localizar."},
+        {"text": "Adrián compró un cargador de mantenimiento de batería para el coche que usa poco, después de quedarse tirado dos veces el mismo invierno."},
+        {"text": "Noelia aprendió a diferenciar una batería agotada de un alternador estropeado, después de que un mecánico le explicara cómo comprobarlo con un simple multímetro."},
+        {"text": "Raúl descubrió que su coche consumía la batería más rápido de lo normal por una avería en el alternador, no por la propia batería."},
+        {"text": "Patricia lleva revisada la batería antes de cada invierno, desde que descubrió que las temperaturas bajas son la causa más habitual de quedarse tirado sin arranque."}
+      ]
+    },
+    {
+      "name": "coche-de-segunda-mano",
+      "domain": "coche",
+      "facts": [
+        {"text": "Fernando llevó el coche de segunda mano a un mecánico de confianza antes de comprarlo, y descubrió un problema en la suspensión que le hizo bajar el precio final."},
+        {"text": "Silvia comparó el historial de mantenimiento de tres coches de segunda mano antes de decidirse por el que tenía las revisiones mejor documentadas."},
+        {"text": "Gonzalo descubrió que comprar un coche de segunda mano a un particular, con todos los papeles en orden, le salió mejor que en algunos concesionarios que visitó."},
+        {"text": "Rocío aprendió a comprobar el kilometraje real cotejando los documentos de revisiones anteriores, después de leer sobre coches con el contador manipulado."},
+        {"text": "Víctor pidió una prueba de carretera larga antes de comprar un coche de segunda mano, para notar ruidos que en un trayecto corto no se apreciaban."},
+        {"text": "Teresa descubrió que el coche de segunda mano que compró para su hijo necesitaba cambiar los cuatro neumáticos casi al mes de tenerlo."},
+        {"text": "Ignacio revisó el libro de mantenimiento completo del coche antes de comprarlo, comprobando que coincidían las fechas con el kilometraje declarado."},
+        {"text": "Alba descubrió pequeños detalles de pintura retocada en las puertas de un coche de segunda mano, señal de un golpe anterior no declarado por el vendedor."},
+        {"text": "Mateo compró su primer coche de segunda mano a través de un amigo mecánico, que le hizo de intermediario y revisó el motor antes de cerrar el trato."},
+        {"text": "Olga aprendió a negociar el precio de un coche de segunda mano basándose en los defectos encontrados durante la inspección previa."},
+        {"text": "Jaime descubrió que el coche de segunda mano que compró tenía todavía garantía del fabricante por unos meses, algo que no sabía al principio."},
+        {"text": "Celia revisó el estado de los cinturones de seguridad y los airbags antes de comprar un coche de segunda mano para su hija recién sacado el carné."},
+        {"text": "Andrés comparó precios de coches de segunda mano del mismo modelo en varias ciudades antes de decidirse a viajar para comprar el que mejor estado tenía."}
+      ]
+    }
+  ]
+}

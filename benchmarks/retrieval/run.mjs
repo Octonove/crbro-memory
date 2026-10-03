@@ -32,7 +32,16 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const DIST = join(HERE, '..', '..', 'dist');
 
 const fixture = JSON.parse(readFileSync(join(HERE, 'fixture.json'), 'utf8'));
-const qs = JSON.parse(readFileSync(join(HERE, 'queries.json'), 'utf8'));
+// CRBRO_BENCH_QUERIES=<json>: another question set over the same fixture
+// (dev.json to tune, test2.json to report; 2.7.2). The default is the frozen
+// 48 of 1.12.
+const qs = JSON.parse(readFileSync(process.env.CRBRO_BENCH_QUERIES || join(HERE, 'queries.json'), 'utf8'));
+// CRBRO_BENCH_HAYSTACK=<json>[,<json>…]: neurons learned into the same brain
+// BEFORE the fixture, so the 48 facts sit among thousands like in a real brain
+// (2.7.2). They are about other areas of life by construction; a hit on them
+// is a miss.
+const HAYSTACK = (process.env.CRBRO_BENCH_HAYSTACK || '').split(',').filter(Boolean)
+  .flatMap(f => JSON.parse(readFileSync(f, 'utf8')).neurons);
 
 const { Brain } = await import(pathToFileURL(join(DIST, 'engine/brain.js')).href);
 const { Cortex } = await import(pathToFileURL(join(DIST, 'engine/cortex.js')).href);
@@ -62,6 +71,12 @@ const KEYS = process.env.CRBRO_BENCH_KEYS
 const ALTS = process.env.CRBRO_BENCH_ALTS
   ? new Map(JSON.parse(readFileSync(process.env.CRBRO_BENCH_ALTS, 'utf8')).map(e => [e.id, e.alts])) : null;
 const buscar = (q, id, opts) => (ALTS && ALTS.get(id)) ? engine.searchMany([q, ...ALTS.get(id)], opts) : engine.search(q, opts);
+
+let pajar = 0;
+for (const n of HAYSTACK) {
+  for (const f of n.facts) { await cortex.learn(n.name, 'fact', f.text, { domain: n.domain }); pajar++; }
+}
+if (pajar) await engine.awaitEmbeddings?.();
 
 const textoPorEtiqueta = new Map();
 let indice = 0;
@@ -124,7 +139,7 @@ scoresReales.sort((a, b) => a - b);
 const p25 = scoresReales[Math.floor(scoresReales.length * 0.25)] || 0;
 let distConAlgo = 0, distConfiados = 0, distWeak = 0;
 for (const [di, d] of qs.distractors.entries()) {
-  const hits = await buscar(d, 'd' + di, { limit: 3 });
+  const hits = await buscar(typeof d === 'string' ? d : d.query, 'd' + di, { limit: 3 });
   if (hits.length > 0) {
     distConAlgo++;
     if (hits[0].relevance_score >= p25) distConfiados++;
@@ -167,7 +182,7 @@ if (process.argv.includes('--json')) {
   console.log(JSON.stringify(out, null, 2));
 } else {
   console.log('\n══ Benchmark de recuperación (consultas a ciegas) ══');
-  console.log(`  consultas: ${N} · distractores: ${D} · hechos en el cerebro: ${todos.length}`);
+  console.log(`  consultas: ${N} · distractores: ${D} · hechos en el cerebro: ${todos.length}${pajar ? ` · pajar: ${pajar} hechos` : ""}`);
   console.log(`  motor BM25    recall@1 ${out.motor['recall@1'].padStart(4)} · recall@3 ${out.motor['recall@3'].padStart(4)} · MRR ${out.motor.mrr}`);
   console.log(`  control       recall@1 ${out.control_subcadena['recall@1'].padStart(4)} · recall@3 ${out.control_subcadena['recall@3'].padStart(4)}   (subcadena ingenua)`);
   console.log(`  distractores  ${distConAlgo}/${D} devuelven algo · ${distConfiados}/${D} con score de nivel "acierto"`);
