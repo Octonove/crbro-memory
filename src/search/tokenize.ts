@@ -27,6 +27,13 @@ const STOPWORDS = new Set([
   'when', 'where', 'which', 'who', 'why', 'with',
 ]);
 
+// A longer list (question words, the forms of estar / haber / ser / tener /
+// poder, possessives, quantifiers — 80 more function words) was measured on
+// the tuning set for 2.7.2 and does not ship. With rarity weighting on it tied:
+// one question lost alone (67% -> 65% recall@1), one won inside the 1,482-fact
+// haystack (52% -> 54%). Rarity weighting already sinks the words it targeted
+// ("cuánto", "cada", "están"), and a stoplist deletes terms for good.
+
 /**
  * Fold accents so "participación" and "participacion" are the same term.
  * Keeps ñ as n — Spanish users type it both ways.

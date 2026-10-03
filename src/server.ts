@@ -751,7 +751,7 @@ export function createServer(shared?: Engines): McpServer {
         rationale: z.string().optional().describe('Why the decision was taken. Stored and indexed with it; ignored for other types.'),
         neuron_id: z.string().optional().describe('Exact neuron id from crbro_recall, e.g. "project_octochat". Skips name matching entirely, and then topic is not needed.'),
         supersedes: z.array(z.string()).optional().describe('Facts this one replaces: their ids or exact text. They leave recall but stay in the file. Unmatched targets are reported and stay live.'),
-        keywords: z.array(z.string()).optional().describe('Facts only. 2-5 words a future question may use that the text does not contain: synonyms, the other language, the generic name of the product named. Indexed with the fact, never shown. The same text again with new keywords merges them.'),
+        keywords: z.array(z.string()).optional().describe('Facts only, and expected on every fact: 2-5 words a future question may use that the text does not contain — synonyms, the other language, the generic name of the product named. Indexed with the fact, never shown; the largest measured lever on recall. Without them the fact is stored and the answer carries keywords_missing. The same text again with new keywords merges them.'),
         keywords_replace: z.boolean().optional().describe('When the exact fact text already exists, replace its stored keywords with `keywords` instead of merging (default false). Teammates in a shared space only ever receive the union.'),
       },
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
@@ -805,6 +805,9 @@ export function createServer(shared?: Engines): McpServer {
           return textResult(`No neuron matched "${topic}" and none was created.`);
         }
 
+        const keywordsMissing = args.type === 'fact' && result.action !== 'skipped' &&
+          !(args.keywords && args.keywords.some(k => typeof k === 'string' && k.trim().length > 0));
+
         return jsonResult({
           neuron_id: result.neuron.id,
           action: result.action,
@@ -836,6 +839,15 @@ export function createServer(shared?: Engines): McpServer {
               `${result.redacted.join(', ')}. The sentence around them was kept. ` +
               'Do not try to store the value again. Offer the user crbro_secret instead: ' +
               'it puts the credential in the OS keychain, and then you record only its name here.'
+            : undefined,
+          // Keywords are the largest measured lever on recall (benchmarks/README,
+          // 2.7.2: keyword engine 77% → 83% at rank 1). A fact saved without them is
+          // stored anyway; the answer asks for them, once, while the context is fresh.
+          keywords_missing: keywordsMissing ? true : undefined,
+          keywords_hint: keywordsMissing
+            ? 'Saved without keywords. Call crbro_learn again with the same content and 2-5 keywords a future ' +
+              'question may use that the text lacks (synonyms, the other language, the generic name of the product): ' +
+              'they merge into this fact instead of adding a new one.'
             : undefined,
           total_facts: result.neuron.facts.length,
           total_decisions: result.neuron.decisions.length,

@@ -81,6 +81,20 @@ const SEMANTIC_STRONG = 0.86;
 const RECENCY_WEIGHT_DEFAULT = 0.04;
 /** Age at which the lift is half of what a chunk written today gets. */
 const RECENCY_HALF_DAYS = 120;
+/**
+ * Rarity weighting of query terms (2.7.2), on by default. Chosen on the tuning
+ * set only (benchmarks/retrieval/dev.json): keyword engine recall@1 63% -> 67%
+ * alone and 44% -> 52% inside a 1,482-fact haystack; the semantic fusion did
+ * not move. CRBRO_IDF=0 turns it off.
+ */
+const IDF_DEFAULT = true;
+function idfWeighting(): boolean {
+  const v = (process.env.CRBRO_IDF || '').toLowerCase();
+  if (v === '0' || v === 'off' || v === 'false') return false;
+  if (v === '1' || v === 'on' || v === 'true') return true;
+  return IDF_DEFAULT;
+}
+
 function recencyWeight(): number {
   const raw = process.env.CRBRO_RECENCY;
   if (raw === undefined || raw === '') return RECENCY_WEIGHT_DEFAULT;
@@ -623,16 +637,36 @@ export class SearchEngine {
       return true;
     };
 
+    // Each term's hits are normalised against that term's own best, which makes
+    // every term worth up to 1 — a word in a third of the brain ("cuánto",
+    // "mes") as much as the one rare word that names the thing. Weighting each
+    // term by its rarity (BM25 idf over the chunks it matches, relative to the
+    // rarest term of the query) gives that information back (2.7.2).
+    const porTermino: Array<{ term: string; hits: any[] }> = [];
     for (const term of terms) {
       const hits = await this.searchTerm(term, options?.domain);
-      if (hits.length === 0) continue;
+      if (hits.length > 0) porTermino.push({ term, hits });
+    }
+    const pesoTermino = new Map<string, number>();
+    if (idfWeighting()) {
+      const n = Math.max(1, this.docCount);
+      const idf = (df: number) => Math.log(1 + (n - df + 0.5) / (df + 0.5));
+      for (const { term, hits } of porTermino) {
+        const df = hits.filter(h => (h.document as any).kind !== 'session').length;
+        pesoTermino.set(term, idf(df));
+      }
+      const max = Math.max(0, ...pesoTermino.values());
+      for (const [t, v] of pesoTermino) pesoTermino.set(t, max > 0 ? v / max : 1);
+    }
 
+    for (const { term, hits } of porTermino) {
       const best = hits[0].score || 1;
+      const w = pesoTermino.get(term) ?? 1;
 
       for (const hit of hits) {
         const doc = hit.document as any;
         const key = doc.id as string;
-        const normalised = best > 0 ? hit.score / best : 0;
+        const normalised = best > 0 ? (hit.score / best) * w : 0;
 
         // Session logs are searched, but never as neurons: they keep a list
         // of their own, so a long narrative cannot outrank the fact that

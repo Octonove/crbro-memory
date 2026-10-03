@@ -216,6 +216,35 @@ describe('tools/call', () => {
     expect(g.structuredContent.global_map.computed_at).toBeTruthy();
   });
 
+  it('a fact saved without keywords is stored and asks for them; with keywords, or not a fact, it does not', async () => {
+    const bare = body(await client.callTool({ name: 'crbro_learn', arguments: {
+      topic: 'Keywords nudge', type: 'fact', content: 'El servidor de staging se reinicia cada domingo a las 04:00.',
+    } }));
+    expect(bare.action).not.toBe('skipped');
+    expect(bare.keywords_missing).toBe(true);
+    expect(bare.keywords_hint).toMatch(/same content/);
+
+    // The same text again, now with keywords: merged, and no more nudge.
+    const merged = body(await client.callTool({ name: 'crbro_learn', arguments: {
+      topic: 'Keywords nudge', type: 'fact', content: 'El servidor de staging se reinicia cada domingo a las 04:00.',
+      keywords: ['reboot', 'mantenimiento semanal'],
+    } }));
+    expect(merged.keywords_missing).toBeUndefined();
+
+    const withKeys = body(await client.callTool({ name: 'crbro_learn', arguments: {
+      topic: 'Keywords nudge', type: 'fact', content: 'Las copias van a un bucket en Frankfurt.', keywords: ['backup', 'región'],
+    } }));
+    expect(withKeys.keywords_missing).toBeUndefined();
+    const blank = body(await client.callTool({ name: 'crbro_learn', arguments: {
+      topic: 'Keywords nudge', type: 'fact', content: 'El certificado se renueva solo.', keywords: ['  '],
+    } }));
+    expect(blank.keywords_missing).toBe(true);
+    const decision = body(await client.callTool({ name: 'crbro_learn', arguments: {
+      topic: 'Keywords nudge', type: 'decision', content: 'Staging no se toca en viernes.',
+    } }));
+    expect(decision.keywords_missing).toBeUndefined();
+  });
+
   it('crbro_connect action=disconnect on an absent synapse reports removed:false without error', async () => {
     const a = body(await client.callTool({ name: 'crbro_learn', arguments: {
       topic: 'Hosting', type: 'fact', content: 'El dominio principal apunta al VPS por Cloudflare.',
