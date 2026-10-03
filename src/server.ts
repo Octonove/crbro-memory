@@ -183,7 +183,7 @@ export function createServer(shared?: Engines): McpServer {
     instructions:
       'CRBRO is this user\'s persistent memory, kept on their own machine. Start every conversation with crbro_boot: it loads what earlier sessions left — protocols to follow, open items, hot topics. ' +
       'Before answering OR ACTING ON anything about the user, their projects, preferences, decisions or past work, call crbro_recall: the answer is usually stored, and making them repeat it is the failure this memory exists to prevent. ' +
-      'The current message outranks memory: when it already carries the answer, use it — a recall that finds nothing does not make the answer unknown, and a stored value older than what the user just said is the one to update, not to repeat. ' +
+      'Recall even when you think you know. Only when the current message itself states the answer does it outrank memory: then use it — a recall that finds nothing does not make it unknown, and a stored value older than what the user just said is the one to update, not to repeat. ' +
       'Acting includes touching one of their systems: before the first command that explores or changes a project of theirs, recall what is already known about it — a stored pattern or map usually holds the very procedure you were about to reconstruct by reading files, and reconstructing it is how you end up doing the steps in the wrong order. ' +
       'Questions about CRBRO itself (version, counts, whether semantic recall is on) are crbro_inspect view=status. Read one entry, not a whole neuron: view=neuron gives an index, entries=[ids] the text. ' +
       'Save with crbro_learn as you go, and close with crbro_consolidate before the conversation ends.',
