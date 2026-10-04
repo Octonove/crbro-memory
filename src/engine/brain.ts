@@ -184,6 +184,8 @@ export class Brain {
       total_sessions: 0,
       last_boot: null,
       last_consolidation: null,
+      // A new brain has nothing older than this: the legacy grace never applies.
+      staleness_since: now(),
     };
 
     await writeJSON(this.paths.manifest(), manifest);
@@ -276,6 +278,10 @@ export class Brain {
 
     // Update boot timestamp
     this.manifest.last_boot = now();
+    // The first boot of a CRBRO that knows shelf life stamps when it started
+    // counting (docs/design/staleness.md, "legacy grace"): one field in a file
+    // boot writes anyway; no neuron is touched.
+    if (!this.manifest.staleness_since) this.manifest.staleness_since = this.manifest.last_boot;
     await writeJSON(this.paths.manifest(), this.manifest);
 
     return {

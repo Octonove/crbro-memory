@@ -103,6 +103,20 @@ describe('tools/list', () => {
     expect(recall.outputSchema.properties.results.items.properties).toHaveProperty('origin');
   });
 
+  it('shelf life adds parameters to existing tools, never a tool', () => {
+    const def = (n: string) => tools.find(t => t.name === n)!;
+    expect(def('crbro_learn').inputSchema.properties.shelf_life.enum).toEqual(['volatile', 'normal', 'durable', 'permanent']);
+    expect(def('crbro_learn').inputSchema.required ?? []).not.toContain('shelf_life');
+    expect(def('crbro_revise').inputSchema.properties.status.enum).toContain('verified');
+    const out = def('crbro_recall').outputSchema.properties;
+    expect(out).toHaveProperty('possibly_stale');
+    expect(out).toHaveProperty('possibly_stale_count');
+    expect(out.results.items.properties.also_matched.items.properties).toHaveProperty('stale_days');
+    expect(def('crbro_recall').description).toContain('possibly_stale');
+    expect(def('crbro_revise').description).toContain('status verified');
+    expect(def('crbro_learn').description).toContain('shelf_life');
+  });
+
   it('keeps every description under 1,000 characters', () => {
     for (const t of tools) expect(t.description.length, t.name).toBeLessThan(1000);
   });

@@ -35,6 +35,7 @@ import { autoBackupIfDue, resolveBackupDir } from './engine/backup.js';
 import { startModOnBoot } from './engine/modinstall.js';
 import { writeTriggerIndex, loadAllNeurons } from './engine/triggers.js';
 import { neuronId, inferNeuronType, techKeywordIn } from './utils/ids.js';
+import { SHELF_LIVES, stalenessEnabled, shelfWindows, stalenessContext, factStaleness, entryStaleness } from './engine/shelf.js';
 
 /** A neuron this size with no summary is worth two lines from whoever is closing the session. */
 const SUMMARY_NUDGE_MIN_ENTRIES = 25;
@@ -95,6 +96,16 @@ const THREE_STAGES =
   'Something stopped being true, or was never true, and nothing replaces it → crbro_revise ' +
   '(kept in the file, gone from recall, reversible with status active). Something must not exist ' +
   'on disk at all — a credential, personal data, a whole neuron → crbro_forget (quarantine copy first).';
+
+/**
+ * What to do with a recall's possibly_stale block (shelf life), said once per
+ * answer in `hint`, never per row: the rows carry only their age.
+ */
+const STALE_HINT =
+  'possibly_stale: these matched but are past their shelf life since last verified. Before relying on one, check it ' +
+  'against its source (a file, the config, the user) when that is cheap: still true → crbro_revise neuron=<neuron_id> ' +
+  'status=verified facts=[entry_id] (entries=[entry_id] for a decision or pattern); changed → crbro_learn the new value ' +
+  'with supersedes=[entry_id]. If you cannot check, say how old it is.';
 
 /**
  * The version of CRBRO that is actually running. The manifest carries its own
@@ -185,6 +196,7 @@ export function createServer(shared?: Engines): McpServer {
       'CRBRO is this user\'s persistent memory, kept on their own machine. Start every conversation with crbro_boot: it loads what earlier sessions left — protocols to follow, open items, hot topics. ' +
       'Before answering OR ACTING ON anything about the user, their projects, preferences, decisions or past work, call crbro_recall: the answer is usually stored, and making them repeat it is the failure this memory exists to prevent. ' +
       'Recall even when you think you know. Only when the current message itself states the answer does it outrank memory: then use it — a recall that finds nothing does not make it unknown, and a stored value older than what the user just said is the one to update, not to repeat. ' +
+      'A recall\'s possibly_stale holds what may have changed since it was last checked: verify it against its source before relying on it, then crbro_revise status=verified or crbro_learn with supersedes. ' +
       'Acting includes touching one of their systems: before the first command that explores or changes a project of theirs, recall what is already known about it — a stored pattern or map usually holds the very procedure you were about to reconstruct by reading files, and reconstructing it is how you end up doing the steps in the wrong order. ' +
       'Questions about CRBRO itself (version, counts, whether semantic recall is on) are crbro_inspect view=status. Read one entry, not a whole neuron: view=neuron gives an index, entries=[ids] the text. ' +
       'Save with crbro_learn as you go, and close with crbro_consolidate before the conversation ends.',
@@ -404,7 +416,8 @@ export function createServer(shared?: Engines): McpServer {
           'deliberate deferral with its ceiling and revisit trigger. Credentials never go in the brain: ' +
           'crbro_secret, then record only the NAME. Recall results carry confidence — "weak" means the match ' +
           'covers little of the question, verify before relying on it — and when two facts disagree, prefer ' +
-          'the more recent. Lifecycle: supersedes replaces, crbro_revise retires, crbro_forget removes what ' +
+          'the more recent. possibly_stale in a recall = past its shelf life since last checked: verify before ' +
+          'relying on it (crbro_revise status=verified if it holds, crbro_learn supersedes if it changed). Lifecycle: supersedes replaces, crbro_revise retires, crbro_forget removes what ' +
           'must not exist on disk — each tool describes its own stage. ' +
           'Call crbro_consolidate before the conversation ends; it logs the session too.';
 
@@ -522,6 +535,13 @@ export function createServer(shared?: Engines): McpServer {
             last_consolidation: manifest.last_consolidation,
             semantic: semanticStatus(),
             hot_topics_recalculated: hot?.last_recalculated ?? null,
+            // Shelf life: whether recall splits off possibly_stale, the windows
+            // in days, and the day this brain started counting (legacy grace).
+            staleness: {
+              enabled: stalenessEnabled(),
+              windows: shelfWindows(),
+              since: manifest.staleness_since ? dia(manifest.staleness_since) : null,
+            },
           });
         }
 
@@ -555,27 +575,44 @@ export function createServer(shared?: Engines): McpServer {
           const offset = Math.max(args.offset ?? 0, 0);
           const connections = await synapses.getConnections(neuron.id, args.min_strength);
           const retired = (id: string) => neuron!.entry_status?.[id]?.status;
+          // Shelf life: the same three facts recall shows, so the index of a
+          // neuron and a recall never disagree about what is old.
+          const vida = stalenessContext((await brain.getManifest()).staleness_since);
+          const rancio = (s: { stale: boolean; age_days: number } | null) => (s?.stale ? { stale_days: s.age_days } : {});
 
           type Row = {
             id: string; kind: string; text: string; added: string;
             status?: string; confidence?: number; rationale?: string; keys?: string[]; revision_note?: string; revised?: string;
-            confirmations?: number;
+            confirmations?: number; verified?: string; shelf_life?: string; stale_days?: number;
           };
           const rows: Row[] = [];
           for (const f of neuron.facts || []) {
             rows.push({ id: f.id || factId(f.text), kind: 'fact', text: f.text, added: f.added || '',
               status: f.status, confidence: f.confidence, keys: f.keys, revision_note: f.revision_note, revised: f.revised,
               // Only when it says something: 1 is every fact's default (2.7).
-              ...((f.confirmations ?? 1) > 1 ? { confirmations: f.confirmations } : {}) });
+              ...((f.confirmations ?? 1) > 1 ? { confirmations: f.confirmations } : {}),
+              ...(f.verified ? { verified: f.verified } : {}),
+              ...(f.shelf_life ? { shelf_life: f.shelf_life } : {}),
+              ...(vida && neuron.type !== 'protocol' ? rancio(factStaleness(f, vida)) : {}) });
           }
+          const entrada = (kind: string, text: string, id: string) => {
+            const v = neuron!.entry_verified?.[id];
+            const retirada = !!neuron!.entry_status?.[id];
+            return {
+              ...(v ? { verified: v } : {}),
+              ...(vida && !retirada && neuron!.type !== 'protocol' ? rancio(entryStaleness(neuron!, kind, text, vida)) : {}),
+            };
+          };
           for (const d of neuron.decisions || []) {
             const id = d.id || entryId(d.text);
-            rows.push({ id, kind: 'decision', text: d.text, added: d.date || '', rationale: d.rationale, status: retired(id), revised: neuron!.entry_status?.[id]?.revised, revision_note: neuron!.entry_status?.[id]?.note });
+            rows.push({ id, kind: 'decision', text: d.text, added: d.date || '', rationale: d.rationale, status: retired(id), revised: neuron!.entry_status?.[id]?.revised, revision_note: neuron!.entry_status?.[id]?.note,
+              ...entrada('decision', d.text, entryId(d.text)) });
           }
           const sidecar = (kind: string, list?: string[]) => {
             for (const t of list || []) {
               const id = entryId(t);
-              rows.push({ id, kind, text: t, added: neuron!.entry_dates?.[id] || '', status: retired(id), revised: neuron!.entry_status?.[id]?.revised, revision_note: neuron!.entry_status?.[id]?.note });
+              rows.push({ id, kind, text: t, added: neuron!.entry_dates?.[id] || '', status: retired(id), revised: neuron!.entry_status?.[id]?.revised, revision_note: neuron!.entry_status?.[id]?.note,
+                ...entrada(kind, t, id) });
             }
           };
           sidecar('pattern', neuron.patterns);
@@ -657,6 +694,9 @@ export function createServer(shared?: Engines): McpServer {
               preview: r.text.length > PREVIEW ? `${r.text.slice(0, PREVIEW).trimEnd()}…` : r.text,
               chars: r.text.length,
               ...(r.confirmations ? { confirmations: r.confirmations } : {}),
+              ...(r.verified ? { verified: dia(r.verified) } : {}),
+              ...(r.shelf_life ? { shelf_life: r.shelf_life } : {}),
+              ...(r.stale_days !== undefined ? { stale_days: r.stale_days } : {}),
               ...(isRetired(r.status) ? { status: r.status, ...(r.revised ? { revised: dia(r.revised) } : {}), ...(r.revision_note ? { retired_note: r.revision_note } : {}) } : {}),
             })),
             entries_pagination: {
@@ -746,7 +786,7 @@ export function createServer(shared?: Engines): McpServer {
     'crbro_learn',
     {
       title: 'Learn something',
-      description: 'Write: store a fact, decision, pattern, preference, error or debt on a topic; the neuron is created if missing (or pass neuron_id). Stage 1 of the lifecycle: a new truth that REPLACES an old one → crbro_learn with supersedes (one call does both); to retire with no replacement use crbro_revise; to delete from disk use crbro_forget. crbro_recall first — it may already exist. The same fact text again is not duplicated: keywords merge (or keywords_replace), a changed confidence applies (updated_in_place) and another session repeating it raises confirmations, returned; text matching a retired fact or entry is refused with skipped_retired. Decisions always append; preferences never leave this machine. Credentials are replaced with a marker and listed in redacted — crbro_secret them, record only the name. Returns neuron_id, action, superseded count, near_duplicates (stored anyway; retire the old telling), supersedes_unmatched (still live) and totals.',
+      description: 'Write: store a fact, decision, pattern, preference, error or debt on a topic; the neuron is created if missing (or pass neuron_id). Stage 1 of the lifecycle: a new truth that REPLACES an old one → crbro_learn with supersedes (one call does both); to retire with no replacement use crbro_revise; to delete from disk use crbro_forget. crbro_recall first — it may already exist. The same fact text again is not duplicated: keywords merge, a changed confidence or shelf_life applies (updated_in_place), the line counts as re-verified and another session repeating it raises confirmations; text matching a retired entry is refused with skipped_retired. Decisions always append; preferences never leave this machine. Credentials are replaced with a marker and listed in redacted — crbro_secret them, record only the name. Returns neuron_id, action, the fact\'s shelf_life, near_duplicates (stored anyway; retire the old telling), supersedes_unmatched (still live) and totals.',
       inputSchema: {
         // Optional since 2.0.3, and the reason is measured: the description
         // told callers that neuron_id "skips name matching entirely", the
@@ -765,6 +805,7 @@ export function createServer(shared?: Engines): McpServer {
         supersedes: z.array(z.string()).optional().describe('Facts this one replaces: their ids or exact text. They leave recall but stay in the file. Unmatched targets are reported and stay live.'),
         keywords: z.array(z.string()).optional().describe('Facts only, and expected on every fact: 2-5 words a future question may use that the text does not contain — synonyms, the other language, the generic name of the product named. Indexed with the fact, never shown; the largest measured lever on recall. Without them the fact is stored and the answer carries keywords_missing. The same text again with new keywords merges them.'),
         keywords_replace: z.boolean().optional().describe('When the exact fact text already exists, replace its stored keywords with `keywords` instead of merging (default false). Teammates in a shared space only ever receive the union.'),
+        shelf_life: z.enum(SHELF_LIVES).optional().describe('Facts only: how fast this value goes stale. volatile = versions, prices, ports, hosts, paths, config, who holds a role; durable = rarely moves; permanent = history that cannot change; normal otherwise. Omitted: inferred from the text, and returned.'),
       },
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     },
@@ -796,6 +837,7 @@ export function createServer(shared?: Engines): McpServer {
           supersedes: args.supersedes,
           keys: args.keywords,
           keysReplace: args.keywords_replace,
+          shelfLife: args.type === 'fact' ? args.shelf_life : undefined,
         });
         // Indexing happens inside cortex.learn, through the indexer hook.
 
@@ -861,6 +903,14 @@ export function createServer(shared?: Engines): McpServer {
               'question may use that the text lacks (synonyms, the other language, the generic name of the product): ' +
               'they merge into this fact instead of adding a new one.'
             : undefined,
+          // Shelf life, facts only: the class that applies, and when it was not
+          // given, that it was inferred and by which rule, so a model that
+          // disagrees can say otherwise in the next call.
+          shelf_life: result.shelf?.shelf_life,
+          shelf_inferred: result.shelf?.inferred ? true : undefined,
+          shelf_reason: result.shelf?.inferred ? result.shelf.reason : undefined,
+          // The same line learned again: its shelf-life clock restarts now.
+          reconfirmed: result.reconfirmed || undefined,
           total_facts: result.neuron.facts.length,
           total_decisions: result.neuron.decisions.length,
           total_patterns: result.neuron.patterns.length,
@@ -886,13 +936,13 @@ export function createServer(shared?: Engines): McpServer {
     'crbro_recall',
     {
       title: 'Recall',
-      description: 'Read-only search of everything saved in earlier sessions — facts, decisions, patterns, preferences, errors, debts and maps. Call it BEFORE answering anything about the user, their projects, preferences, decisions or past work: the answer is usually stored, and making them repeat it is the failure this memory exists to prevent. Also before crbro_learn, to supersede rather than duplicate. One result per neuron: the best matching entry with entry_id (read it whole: crbro_inspect view=neuron entries=[id]), matched_kind, matched_added, a confidence label (weak = little of the question covered; verify) and also_matched previews. Retired entries never surface. Lines not the user\'s own carry origin, also_matched too: team:<space> (team if unshared) with self-declared by, or miner. Five results by default; matched_neurons counts every hit. If nothing matches, retry with 2-4 phrasings in queries or fewer, rarer words. has_map:true: read the system map with crbro_map before touching that system.',
+      description: 'Read-only search of everything saved in earlier sessions — facts, decisions, patterns, preferences, errors, debts and maps. Call it BEFORE answering anything about the user, their projects, preferences, decisions or past work: the answer is usually stored, and making them repeat it is the failure this memory exists to prevent. One result per neuron: the best matching entry with entry_id (read it whole: crbro_inspect view=neuron entries=[id]), matched_kind, matched_added, a confidence label (weak = little of the question covered; verify) and also_matched previews. Lines not the user\'s own carry origin, also_matched too: team:<space> (team if unshared) with self-declared by, or miner. Rows past their shelf life since last verified move to possibly_stale, with age_days: check before relying on them. If nothing matches, retry with 2-4 phrasings in queries or fewer, rarer words. has_map:true: read the system map with crbro_map before touching that system.',
       inputSchema: {
         query: z.string().describe('What to look for, e.g. "Firebase authentication setup". Fewer, distinctive terms beat full sentences.'),
         queries: z.array(z.string()).optional().describe('Alternative phrasings of the same question, searched together with query and fused by rank. Use synonyms, the other language and the concrete product name; 2-4 is plenty.'),
         domain: z.string().optional().describe('Only neurons in this domain (exact match, e.g. "proyectos-web"). Day logs have no domain: sessions_matched is listed regardless.'),
         limit: z.number().int().positive().optional().describe('Max neurons returned (default 5, ranked; ask for more only when the top five did not answer).'),
-        since: z.string().optional().describe('Only entries dated on or after this: a day ("2026-09-01") or a span back from today ("7d", "2w", "3m"). For "what changed lately" and to keep an old telling out. Undated entries cannot prove they are recent: they are left out and counted in undated_skipped.'),
+        since: z.string().optional().describe('Only entries recorded on or after this: a day ("2026-09-01") or a span back from today ("7d", "2w", "3m"). For "what changed lately" and to keep an old telling out. A later verification does not make an old entry new. Undated entries cannot prove they are recent: they are left out and counted in undated_skipped.'),
         kind: z.array(z.enum(RECALL_KINDS)).optional().describe('Only these entry kinds, e.g. ["error"] for past mistakes before repeating one, ["decision"] for what was agreed and why, ["debt"] for what was deferred. Day logs are left out when set.'),
       },
       outputSchema: {
@@ -908,9 +958,14 @@ export function createServer(shared?: Engines): McpServer {
           entry_id: z.string().optional(),
           origin: z.string().optional(), by: z.string().optional(),
           content_truncated: z.boolean().optional(), content_chars: z.number().optional(),
-          also_matched: z.array(z.object({ entry_id: z.string().optional(), kind: z.string(), added: z.string(), preview: z.string(), chars: z.number(), origin: z.string().optional(), by: z.string().optional() }).loose()).optional(),
+          also_matched: z.array(z.object({ entry_id: z.string().optional(), kind: z.string(), added: z.string(), preview: z.string(), chars: z.number(), origin: z.string().optional(), by: z.string().optional(), stale_days: z.number().optional() }).loose()).optional(),
         }).loose()),
-        returned: z.number().optional(),
+        possibly_stale: z.array(z.object({
+          neuron_id: z.string(), matching_content: z.string(),
+          age_days: z.number(), last_verified: z.string(), shelf_life: z.string(), shelf_inferred: z.boolean(),
+        }).loose()).optional().describe('Rows whose best entry is past its shelf life since last verified: same shape as results plus age_days, last_verified, shelf_life, shelf_inferred'),
+        possibly_stale_count: z.number().optional(),
+        returned: z.number().optional().describe('Rows that came back: results plus possibly_stale'),
         matched_neurons: z.number().optional().describe('Neurons with any hit before limit; total_results is what came back'),
         has_more: z.boolean().optional(),
         sessions_matched: z.array(z.object({}).loose()).optional(),
@@ -958,26 +1013,54 @@ export function createServer(shared?: Engines): McpServer {
             ...(r.also_matched ? { also_matched: r.also_matched.map(a => ({ ...a, added: dia(a.added) })) } : {}),
           };
         });
-        const sobran = matched_neurons - results.length;
+        // Shelf life: partition, not penalty. The ranking above already chose
+        // these rows exactly as before; a row whose WINNING entry is past its
+        // shelf life since last verified moves whole to possibly_stale, in
+        // rank order. No backfill (the cost stays bounded by limit, and "what
+        // does memory say about X" never silently becomes a weaker line about
+        // something else), and never re-headed with an also_matched line.
+        // The internal `staleness` field leaves every row here.
+        const actuales: any[] = [];
+        const rancios: any[] = [];
+        for (const row of rows as any[]) {
+          const { staleness, ...resto } = row;
+          if (staleness?.stale) {
+            rancios.push({
+              ...resto,
+              age_days: staleness.age_days,
+              last_verified: staleness.last_verified,
+              shelf_life: staleness.shelf_life,
+              shelf_inferred: staleness.shelf_inferred,
+              ...(staleness.age_from ? { age_counted_from: staleness.age_from } : {}),
+            });
+          } else {
+            actuales.push(resto);
+          }
+        }
+        const servidos = actuales.length + rancios.length;
+        const sobran = matched_neurons - servidos;
 
         const payload = {
           query: args.query,
-          // total_results is what came back (capped by limit); matched_neurons is
-          // how many neurons had a hit at all, so five never reads as "only five".
-          total_results: results.length,
-          returned: results.length,
+          // total_results is what came back as current (capped by limit);
+          // returned adds possibly_stale; matched_neurons is how many neurons
+          // had a hit at all, so five never reads as "only five".
+          total_results: actuales.length,
+          returned: servidos,
           matched_neurons,
           has_more: sobran > 0,
           // The filter as it was understood ("30d" becomes a day), so a narrowed
           // answer never reads as the whole brain.
           ...(filtrado ? { filters: { ...(since ? { since } : {}), ...(kinds ? { kind: kinds } : {}) } } : {}),
           ...(since ? { undated_skipped: sinFecha } : {}),
-          results: rows,
+          results: actuales,
+          ...(rancios.length ? { possibly_stale: rancios, possibly_stale_count: rancios.length } : {}),
           // The diary, searched since 2.2: day logs whose summary mentions the
           // question, in a list of their own so narrative never outranks a fact.
           // sessions_total: how many days had a hit; three shown never reads as three.
           ...(sessions.length ? { sessions_matched: sessions.map(s => ({ ...s, date: dia(s.date) })), sessions_total } : {}),
-          hint: (results.length === 0
+          hint: (rancios.length && !actuales.length ? 'Nothing current matched; the rows that did are in possibly_stale. ' : '') +
+            (servidos === 0
             ? (sessions.length
               // A day mentions it and no fact does: point at the day, not at rephrasing.
               ? `No stored fact matched; ${sessions_total} day log${sessions_total === 1 ? '' : 's'} mention it (sessions_matched): read one whole with crbro_inspect view=sessions session=<session_id>. If it is a fact worth keeping, save it with crbro_learn.`
@@ -988,9 +1071,10 @@ export function createServer(shared?: Engines): McpServer {
               + (sobran > 0 ? ` ${sobran} more neuron${sobran === 1 ? '' : 's'} matched: raise limit or narrow the query.` : '')
               + (cortados > 0 ? ' content_truncated → read the entry by entry_id.' : '')
               + (sessions.length ? ' sessions_matched: day logs that mention it; read one whole with crbro_inspect view=sessions session=<session_id>.' : ''))
-            + (filtrado && results.length > 0 ? ' Filtered: entries outside since/kind were not searched.' : '')
+            + (filtrado && servidos > 0 ? ' Filtered: entries outside since/kind were not searched.' : '')
             + (sinFecha > 0 ? ` ${sinFecha} matching entr${sinFecha === 1 ? 'y has' : 'ies have'} no date and were left out by since (crbro_maintenance backfill_dates dates the ones that state a day).` : '')
-            + (sessions_total > sessions.length ? ` ${sessions_total - sessions.length} more day${sessions_total - sessions.length === 1 ? '' : 's'} mention it: narrow the query.` : ''),
+            + (sessions_total > sessions.length ? ` ${sessions_total - sessions.length} more day${sessions_total - sessions.length === 1 ? '' : 's'} mention it: narrow the query.` : '')
+            + (rancios.length ? ` ${STALE_HINT}` : ''),
         };
         // Recall is the one read whose size the caller sets, with limit: ten
         // results already cost ~12,000 tokens on a dense brain because each
@@ -1014,9 +1098,9 @@ export function createServer(shared?: Engines): McpServer {
   const reviseSchema = z.object({
     neuron: z.string().describe('Neuron id or name holding what to revise, e.g. "project_octochat".'),
     facts: z.array(z.string()).optional().describe('Facts to move to `status`: their ids (from crbro_recall) or exact text (trimmed, case-insensitive). For superseded/retracted only active facts match; for active only retired ones do.'),
-    entries: z.array(z.string()).optional().describe('Exact texts of decisions, patterns, errors or debts to move to `status`. Retired entries stay in the file (entry_status) but leave recall like a superseded fact.'),
-    status: z.enum(['superseded', 'retracted', 'active']).optional().describe('superseded = a newer truth exists (default); retracted = it was never true; active = reactivate a retired fact or entry. Reactivation is local: on a shared neuron the next sync re-applies the retirement (the response carries shared_warning).'),
-    note: z.string().optional().describe('Why. Stored as revision_note on facts and entry_status.note on entries. The next reader will wonder.'),
+    entries: z.array(z.string()).optional().describe('Exact texts of decisions, patterns, errors or debts to move to `status`. Retired entries stay in the file (entry_status) but leave recall like a superseded fact. With status verified: decisions or patterns, by exact text or entry id.'),
+    status: z.enum(['superseded', 'retracted', 'active', 'verified']).optional().describe('superseded = a newer truth exists (default); retracted = it was never true; active = reactivate a retired fact or entry (local only on a shared neuron: the next sync re-applies the retirement; shared_warning says so). verified = you checked these active facts, or live decisions or patterns, against their source and they still hold: their last verification becomes now and they leave possibly_stale. A retired target is not verifiable: it comes back in unmatched and retired_targets.'),
+    note: z.string().optional().describe('Why. Stored as revision_note on facts and entry_status.note on entries. The next reader will wonder. Ignored with status verified.'),
     summary: z.string().optional().describe('Replace the neuron summary. Credentials are redacted and listed in redacted.'),
     domain: z.string().optional().describe('Replace the neuron domain unconditionally, e.g. "proyectos-web".'),
     tags: z.array(z.string()).optional().describe('Replace the WHOLE tag list (trimmed, deduplicated). On protocol neurons re-send the priority: and source: tags or they are gone.'),
@@ -1039,7 +1123,7 @@ export function createServer(shared?: Engines): McpServer {
     'crbro_revise',
     {
       title: 'Revise a neuron',
-      description: 'Write: change what a neuron says without deleting anything. Stage 2 of the lifecycle: something stopped being true, or was never true, and nothing replaces it → crbro_revise (kept in the file, gone from recall, reversible with status active). If a replacement exists, crbro_learn with supersedes does both; for what must not exist on disk use crbro_forget. facts retires facts by id or exact text; entries retires decisions, patterns, errors and debts by exact text; status active reactivates either (local only on a shared neuron: the next sync re-applies the retirement, shared_warning says so). summary, domain, tags and name edit metadata in the same call (tags replaces the whole list; the id never changes). move_to splits: the listed entries go to another neuron with their dates. Anything in unmatched is STILL LIVE — fix and re-run.',
+      description: 'Write: change what a neuron says without deleting anything. Stage 2 of the lifecycle: something stopped being true, or was never true, and nothing replaces it → crbro_revise (kept in the file, gone from recall, reversible with status active). If a replacement exists, crbro_learn with supersedes does both; for what must not exist on disk use crbro_forget. facts retires facts by id or exact text; entries retires decisions, patterns, errors and debts by exact text; status active reactivates either (local only on a shared neuron: the next sync re-applies the retirement, shared_warning says so); status verified records that a fact, decision or pattern was checked against its source and still holds. summary, domain, tags and name edit metadata in the same call (tags replaces the whole list; the id never changes). move_to splits: the listed entries go to another neuron with their dates. Anything in unmatched is STILL LIVE — fix and re-run.',
       inputSchema: reviseSchema,
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
@@ -1078,6 +1162,41 @@ export function createServer(shared?: Engines): McpServer {
               ? `${r.moved} entr${r.moved === 1 ? 'y' : 'ies'} moved from "${target.name}" to "${r.into}"${r.created ? ' (created)' : ''}, dates kept. A copy of the source as it was is in quarantine.` +
                 (r.unmatched.length > 0 ? ` WARNING: ${r.unmatched.length} target(s) matched nothing and stayed where they were.` : '')
               : 'Nothing matched, nothing moved. Pass entry ids from crbro_inspect view=neuron, or the exact text.',
+          });
+        }
+
+        // ── status verified: reconfirm, do not retire (shelf life) ──
+        if (status === 'verified') {
+          const v = (args.facts?.length || args.entries?.length)
+            ? await cortex.verify(target.id, { facts: args.facts, entries: args.entries })
+            : { verified: [] as string[], unmatched: [] as string[], retired: [] as Array<{ target: string; id: string; status: string }> };
+          let cambiados: string[] = [];
+          let tachados: string[] = [];
+          const metaV = { summary: args.summary, domain: args.domain, tags: args.tags, name: args.name };
+          if (Object.values(metaV).some(x => x !== undefined)) {
+            const r = await cortex.setMeta(target.id, metaV);
+            cambiados = r.changed;
+            tachados = r.redacted;
+          }
+          const n = v.verified.length;
+          const partes: string[] = [];
+          if (n > 0) partes.push(`${n} entr${n === 1 ? 'y' : 'ies'} verified: last checked now, shelf-life clock restarted`);
+          if (cambiados.length > 0) partes.push(`${cambiados.join(', ')} updated`);
+          return jsonResult({
+            neuron_id: target.id,
+            status,
+            verified: v.verified,
+            unmatched: v.unmatched.length > 0 ? v.unmatched : undefined,
+            retired_targets: v.retired.length > 0 ? v.retired : undefined,
+            changed: cambiados,
+            redacted: tachados.length > 0 ? tachados : undefined,
+            message: partes.length > 0
+              ? `${partes.join('; ')} in "${target.name}".` +
+                (v.unmatched.length > 0 ? ` WARNING: ${v.unmatched.length} target(s) matched no active fact or live decision/pattern and were not verified.` : '') +
+                (v.retired.length > 0 ? ' A retired line is not verifiable: if it holds again, reactivate it with status active first.' : '')
+              : (v.retired.length > 0
+                ? 'Nothing verified: the targets are retired. If one holds again, reactivate it with status active first, then verify.'
+                : 'Nothing verified. Pass the fact id (entry_id from crbro_recall) or exact text in facts; decisions and patterns go in entries. Preferences, errors and debts never go stale.'),
           });
         }
 

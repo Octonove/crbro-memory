@@ -174,7 +174,11 @@ function neuronOps(neuron: Neuron, id: Identity): Op[] {
     const fid = f.id || entryId(f.text);
     ops.push({ v: OPS_VERSION, op: 'fact', nid: neuron.id, by: id.author,
       at: f.added || at, fid, text: f.text, conf: f.confidence ?? 1, src: f.source,
-      ...(f.keys?.length ? { keys: f.keys } : {}) });
+      ...(f.keys?.length ? { keys: f.keys } : {}),
+      ...(f.shelf_life ? { shelf: f.shelf_life } : {}) });
+    if (f.verified) {
+      ops.push({ v: OPS_VERSION, op: 'verify', nid: neuron.id, by: id.author, at: f.verified, eid: fid, ekind: 'fact' });
+    }
     if (f.status === 'superseded' || f.status === 'retracted') {
       ops.push({ v: OPS_VERSION, op: 'status', nid: neuron.id, by: id.author,
         at: f.revised || at, fid, to: f.status, why: f.revision_note });
@@ -200,6 +204,9 @@ function neuronOps(neuron: Neuron, id: Identity): Op[] {
   }
   for (const d of neuron.debts || []) {
     if (d) ops.push({ v: OPS_VERSION, op: 'debt', nid: neuron.id, by: id.author, at: fecha(d), text: d });
+  }
+  for (const [k, when] of Object.entries(neuron.entry_verified || {})) {
+    if (k && when) ops.push({ v: OPS_VERSION, op: 'verify', nid: neuron.id, by: id.author, at: when, eid: k, ekind: 'entry' });
   }
   if (neuron.map && neuron.map.text) {
     ops.push({ v: OPS_VERSION, op: 'map', nid: neuron.id, by: id.author,
@@ -517,6 +524,7 @@ export async function syncSpaceNow(
     const cambio = report.facts_added + report.facts_retracted + report.facts_superseded +
       report.decisions_added + report.patterns_added + report.tags_added +
       report.errors_added + report.debts_added + report.entries_removed +
+      report.verifications_updated + report.shelf_updated +
       (report.map_updated ? 1 : 0);
     if (cambio > 0 || !local) {
       await cortex.replaceFromSync(neuron);
@@ -566,7 +574,11 @@ export function attachSync(brain: Brain, cortex: Cortex): void {
       if (change.kind === 'fact') {
         return [{ ...comun, op: 'fact', fid: change.fid, text: change.text,
                   conf: change.conf, src: change.src,
-                  ...(change.keys?.length ? { keys: change.keys } : {}) } as Op];
+                  ...(change.keys?.length ? { keys: change.keys } : {}),
+                  ...(change.shelf ? { shelf: change.shelf } : {}) } as Op];
+      }
+      if (change.kind === 'verify') {
+        return [{ ...comun, op: 'verify', eid: change.eid, ekind: change.ekind } as Op];
       }
       if (change.kind === 'status') {
         return [{ ...comun, op: 'status', fid: change.fid, to: change.to, why: change.why } as Op];

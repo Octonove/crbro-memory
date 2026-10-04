@@ -14,8 +14,9 @@
 
 import { now } from '../utils/fs.js';
 import type { Neuron, Fact, Decision, FactStatus } from '../types/index.js';
-import type { Op, FactOp, StatusOp, DecisionOp, MapOp, PurgeOp } from './ops.js';
+import type { Op, FactOp, StatusOp, DecisionOp, MapOp, PurgeOp, VerifyOp } from './ops.js';
 import { normalizeText, entryId } from './ops.js';
+import { mostVolatile, latestOf, isShelfLife } from '../engine/shelf.js';
 
 /** Fields that disagreed and were left alone, so a human can look. */
 export interface Divergence {
@@ -37,6 +38,10 @@ export interface MergeReport {
   entries_removed: number;
   map_updated: boolean;
   tags_added: number;
+  /** Facts and entries whose last verification moved forward (shelf life). Feeds the change-gate. */
+  verifications_updated: number;
+  /** Facts whose explicit shelf_life became more volatile through a teammate's op. */
+  shelf_updated: number;
   authors: string[];
   divergence: Divergence[];
 }
@@ -76,6 +81,8 @@ export function applyOps(
     entries_removed: 0,
     map_updated: false,
     tags_added: 0,
+    verifications_updated: 0,
+    shelf_updated: 0,
     authors: [],
     divergence: [],
   };
@@ -88,7 +95,7 @@ export function applyOps(
   // reported rather than resolved. Overwriting someone's local name because a
   // teammate spelled it differently is not a merge, it is a stomp.
   const neuron: Neuron = base
-    ? { ...base, facts: [...base.facts], decisions: [...base.decisions], patterns: [...base.patterns], preferences: [...base.preferences], tags: [...base.tags], connections: [...base.connections], errors: [...(base.errors || [])], debts: [...(base.debts || [])], entry_dates: { ...(base.entry_dates || {}) }, entry_status: { ...(base.entry_status || {}) }, ...(base.entry_source ? { entry_source: { ...base.entry_source } } : {}), map: base.map ? { ...base.map } : undefined }
+    ? { ...base, facts: [...base.facts], decisions: [...base.decisions], patterns: [...base.patterns], preferences: [...base.preferences], tags: [...base.tags], connections: [...base.connections], errors: [...(base.errors || [])], debts: [...(base.debts || [])], entry_dates: { ...(base.entry_dates || {}) }, entry_status: { ...(base.entry_status || {}) }, ...(base.entry_source ? { entry_source: { ...base.entry_source } } : {}), ...(base.entry_verified ? { entry_verified: { ...base.entry_verified } } : {}), map: base.map ? { ...base.map } : undefined }
     : {
         id,
         name: neuronOp && neuronOp.op === 'neuron' ? neuronOp.name : id,
@@ -164,6 +171,7 @@ export function applyOps(
   }
 
   const statusOps: StatusOp[] = [];
+  const verifyOps: VerifyOp[] = [];
 
   for (const op of ops) {
     if (op.op === 'fact') {
@@ -181,6 +189,10 @@ export function applyOps(
         existing.added = earliest(existing.added, fo.at);
         existing.confidence = Math.max(existing.confidence ?? 1, fo.conf ?? 1);
         if (fo.keys?.length) existing.keys = [...new Set([...(existing.keys || []), ...fo.keys])].slice(0, 8);
+        if (isShelfLife(fo.shelf)) {
+          const vida = mostVolatile(existing.shelf_life, fo.shelf);
+          if (vida && vida !== existing.shelf_life) { existing.shelf_life = vida; report.shelf_updated++; }
+        }
         continue;
       }
       const fact: Fact = {
@@ -192,12 +204,15 @@ export function applyOps(
         status: 'active',
       };
       if (fo.keys?.length) fact.keys = fo.keys.slice(0, 8);
+      if (isShelfLife(fo.shelf)) fact.shelf_life = fo.shelf;
       neuron.facts.push(fact);
       byFid.set(fo.fid, fact);
       byText.set(normalizeText(fo.text), fact);
       report.facts_added++;
     } else if (op.op === 'status') {
       statusOps.push(op as StatusOp);
+    } else if (op.op === 'verify') {
+      verifyOps.push(op as VerifyOp);
     }
   }
 
@@ -214,6 +229,19 @@ export function applyOps(
     if (so.why) target.revision_note = so.why;
     if (target.status === 'retracted') report.facts_retracted++;
     else report.facts_superseded++;
+  }
+
+  // Checks of facts (shelf life), after every fact exists, like status: the
+  // latest `at` wins over every log and the local stamp. max() is the same
+  // whatever order the logs are read in, so the convergence promise holds.
+  // A malformed `at` is worth nothing (latestOf ignores what it cannot parse).
+  for (const vo of verifyOps) {
+    if (vo.ekind !== 'fact' || typeof vo.eid !== 'string') continue;
+    const target = byFid.get(vo.eid);
+    if (!target) continue;
+    const at = typeof vo.at === 'string' ? vo.at : undefined;
+    const nuevo = latestOf(target.verified, at);
+    if (nuevo && nuevo !== target.verified) { target.verified = nuevo; report.verifications_updated++; }
   }
 
   // ─── Decisions: union by (id, author) ────────────────────────
@@ -307,6 +335,16 @@ export function applyOps(
     const antes = neuron.patterns.length;
     neuron.patterns = neuron.patterns.filter(p => !purgados.pattern.has(entryId(p)));
     report.entries_removed += antes - neuron.patterns.length;
+  }
+
+  // ─── Checks of decisions and patterns: the latest wins ───────
+  // Keyed by entryId like the other sidecars; pruned below to live entries.
+  for (const vo of verifyOps) {
+    if (vo.ekind !== 'entry' || typeof vo.eid !== 'string' || !vo.eid) continue;
+    const at = typeof vo.at === 'string' ? vo.at : undefined;
+    const previo = neuron.entry_verified?.[vo.eid];
+    const nuevo = latestOf(previo, at);
+    if (nuevo && nuevo !== previo) { (neuron.entry_verified ||= {})[vo.eid] = nuevo; report.verifications_updated++; }
   }
 
   // ─── The map: last writer wins, deterministically ────────────
@@ -409,6 +447,22 @@ export function applyOps(
     }
     if (Object.keys(ordenado).length) neuron.entry_source = ordenado;
     else delete neuron.entry_source;
+  }
+
+  // Verifications (shelf life): the same pruning and fixed order. Absent stays
+  // absent, so a neuron nobody verified is byte-identical to what 2.8 produced.
+  if (neuron.entry_verified) {
+    const vivos = new Set([
+      ...neuron.decisions.map(d => d.text),
+      ...neuron.patterns, ...neuron.preferences,
+      ...(neuron.errors || []), ...(neuron.debts || []),
+    ].map(entryId));
+    const ordenado: Record<string, string> = {};
+    for (const k of Object.keys(neuron.entry_verified).sort()) {
+      if (vivos.has(k)) ordenado[k] = neuron.entry_verified[k];
+    }
+    if (Object.keys(ordenado).length) neuron.entry_verified = ordenado;
+    else delete neuron.entry_verified;
   }
 
   report.authors = [...new Set(ops.map(o => o.by).filter(Boolean))].sort();
