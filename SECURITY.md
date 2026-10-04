@@ -15,6 +15,7 @@ like friction, and nobody trusts one for more than it does.
 | | What the miner extracted from files on disk | Neurons, marked `source: miner` |
 | | Claude Code session logs, read by `crbro usage`, `crbro postmortem` and the lifecycle hook | `~/.claude/projects/` |
 | | Compaction checkpoints written by the lifecycle hook (requests, task list, folder, remote) | `<brain>/checkpoints/`, seven days |
+| **Code CRBRO runs in Claude Code without a command** | The open-items mod, installed and updated by `crbro_boot` | `~/.claude/crbro-mods/`, one entry in `env.CLAUDE_CODE_PLUGIN_DIRS` of `~/.claude/settings.json` |
 | **Communication out** | Team-space sync | A git remote you configure |
 | | The optional semantic model | Downloaded once from Hugging Face by `semantic install` |
 
@@ -157,6 +158,41 @@ cannot explain is worth looking at before the next session.
 
 It compares against the package on disk, so it cannot catch a change made to
 both. It runs when you run it, not on its own.
+
+### The mod CRBRO installs on its own — `crbro_boot`, `install-mod --verify`
+
+Since 2.8, `crbro_boot` copies the open-items mod (`mods/crbro-pending`, TSX
+that Claude Code runs in every new session) into
+`~/.claude/crbro-mods/crbro-pending` and adds that folder to
+`env.CLAUDE_CODE_PLUGIN_DIRS` of `~/.claude/settings.json`, wherever
+`~/.claude` exists, without being asked. The author chose that so the band
+reaches everyone who has CRBRO; this section is what it costs and how to
+check it.
+
+- **What runs is what the package ships.** On every new server process, the
+  installed copy is compared file by file (SHA-256) with the package that
+  process runs, and a different build of a newer or equal version replaces it.
+  Updating CRBRO therefore updates code Claude Code executes, with no step in
+  between. A file edited by hand in the installed copy is overwritten at the
+  next start; to work on the mod, list your own checkout in the variable and
+  the automatic install stays out.
+- **Check it.** `npx crbro-memory install-mod --verify` hashes the installed
+  copy against the package you run, names any other copy Claude Code would
+  load, writes nothing and exits 1 on a difference. The same limits as hook
+  verification apply: it compares with the package on disk.
+- **It says what it did.** The boot that installs or updates it carries
+  `mod_notice` for the assistant to pass on, with the paths and the way out.
+- **The way out is final.** `npx crbro-memory uninstall-mod` removes the
+  entry and the folder and writes `optedOut` in
+  `~/.claude/crbro-mods/state.json`; no CRBRO, from any client, installs it
+  again until `install-mod` is run. Taking the folder out of the list by hand
+  counts the same. `CRBRO_MOD=0` in an MCP client's env keeps that client
+  out (a daemon started without it does not serve it), but not the others.
+- **What it will not do.** It does not write a `settings.json` that does not
+  parse, does not overwrite a change saved to that file while it was working
+  (the file is hashed again right before the rename), and does not write the
+  variable there when only the environment sets it. It downloads nothing:
+  the files come from the installed npm package.
 
 ### Reading session logs — `crbro usage`, `crbro postmortem`, the lifecycle hook
 

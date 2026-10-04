@@ -10,22 +10,29 @@ Open items in sight, for whoever installs CRBRO, not only for its author.
   installs the mod on its own, once per server process (once per daemon),
   when `~/.claude` exists: the same install as `install-mod` with the
   language on auto. The boot that does it carries `mod_notice`, a sentence the
-  assistant passes on once — what was installed, that it shows up in *new*
-  Claude Code sessions, and how to remove it. After an update of CRBRO, a boot
-  that finds the installed files different from the package (SHA-256)
-  refreshes them without touching `settings.json`, and says so once; an older
-  CRBRO on the same machine never takes back a newer one's files. The way
-  out is easy and final: `uninstall-mod` leaves a mark in
-  `~/.claude/crbro-mods/state.json` and the mod is never put back on its own
-  (`install-mod` lifts it); taking the folder out of
-  `CLAUDE_CODE_PLUGIN_DIRS` by hand counts as a no too; `CRBRO_MOD=0` turns
-  the automatic part off. It never fails or holds up the boot (1.5 s at most,
-  every error caught), leaves a `settings.json` that does not parse untouched
-  and does not retry the same failure until that file or the package
-  changes, or a day goes by, installs nothing beside another `crbro-pending`
-  already in the list, and two sessions starting at once take turns through
-  an exclusive lock file, checked after writing: every key kept, the path
-  listed once.
+  assistant passes on — what was installed, that it shows up in *new* Claude
+  Code sessions, and how to remove it — handed to up to three server
+  processes, once each, within a week, since the first may be a background
+  run nobody reads. After an update of CRBRO, a boot that finds the installed
+  files different from the package (SHA-256, line endings aside) refreshes
+  them without touching `settings.json`, and says so; an older CRBRO on the
+  same machine never takes back a newer one's files, and two builds of one
+  version do not rewrite each other. The way out is easy and final:
+  `uninstall-mod` leaves a mark in `~/.claude/crbro-mods/state.json` and the
+  mod is never put back on its own, by any client (`install-mod` lifts it);
+  taking the folder out of `CLAUDE_CODE_PLUGIN_DIRS` by hand counts as a no
+  too, and is said once with the way back; `CRBRO_MOD=0` turns the automatic
+  part off for the client whose env sets it, and a daemon started without it
+  never serves that client. It never fails the boot (files copied without
+  blocking, 1.5 s at most, every error caught), leaves a `settings.json` that
+  does not parse untouched and does not retry the same failure until that
+  file or the package changes, or a day goes by, installs nothing beside
+  another `crbro-pending` already in the list or when only the environment
+  sets `CLAUDE_CODE_PLUGIN_DIRS` (writing it to `settings.json` would hide
+  those plugins; said once), and two sessions starting at once take turns
+  through an exclusive lock file. `settings.json` is written only if it is
+  still what was read, with its line endings, and checked after writing:
+  every key kept, the path listed once. SECURITY.md has a section on it.
 - **The open items above the prompt.** `npx crbro-memory install-mod` adds
   `crbro-pending`, a Claude Code mod: the newest open item of the brain drawn
   whole above the prompt — a short `Label:` apart, `(1) … (2) …` steps one per
