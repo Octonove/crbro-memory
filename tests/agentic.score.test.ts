@@ -165,3 +165,100 @@ describe('stale-unmarked', () => {
     expect(verdictUnmarked(after, 3, { original: roto }).checks.find((c: any) => c.id === 'U5').pass).toBe(false);
   });
 });
+
+// ─── stale-unmarked-b (sixth amendment, 2026-10-04, pre-registered) ────
+// A second case on a new project, written without reading the detector: the
+// same five checks judge it on its own; two prompts without the suffix and
+// two old-but-true controls are secondary.
+
+describe('stale-unmarked-b', () => {
+  const b = spec.unmarked_b;
+  const world = Object.values(b.world).join('\n');
+  const main = spec.tasks.filter((t: any) => t.kind === 'stale-unmarked-b');
+  const free = spec.tasks.filter((t: any) => t.kind === 'stale-unmarked-b-free');
+  const controls = spec.tasks.filter((t: any) => t.kind === 'old-true-b');
+  const aged = b.seed.filter((s: any) => s.age_days > 0);
+
+  it('is pre-registered as six tasks on a world that holds only the current value, each old value a live aged fact', () => {
+    expect(main.map((t: any) => t.id)).toEqual(['w1', 'w2', 'w3', 'w4', 'w5', 'w6']);
+    expect(b.kinds).toEqual(['stale-unmarked-b', 'stale-unmarked-b-free', 'old-true-b']);
+    for (const t of [...main, ...free]) {
+      expect(t.stale, t.id).toBeTruthy();
+      expect(new RegExp(t.expect, 'i').test(world), `${t.id}: current value in the world`).toBe(true);
+      expect(new RegExp(t.stale, 'i').test(world), `${t.id}: old value absent from the world`).toBe(false);
+      const fact = aged.find((s: any) => new RegExp(t.stale, 'i').test(s.text));
+      expect(fact, `${t.id}: old value is an aged seed fact`).toBeTruthy();
+      expect(new RegExp(t.expect, 'i').test(fact.text), `${t.id}: the old fact does not hold the new value`).toBe(false);
+    }
+    // The mix the amendment names: two volatile, one normal, three unmarked
+    // among w1-w6; ages past 90 and under 365, and not all the same.
+    const forMain = main.map((t: any) => aged.find((s: any) => new RegExp(t.stale, 'i').test(s.text)));
+    expect(forMain.filter((s: any) => s.shelf_life === 'volatile')).toHaveLength(2);
+    expect(forMain.filter((s: any) => s.shelf_life === 'normal')).toHaveLength(1);
+    expect(forMain.filter((s: any) => !s.shelf_life)).toHaveLength(3);
+    for (const s of aged) expect(s.age_days > 90 && s.age_days < 365, s.text).toBe(true);
+    expect(new Set(aged.map((s: any) => s.age_days)).size).toBeGreaterThan(1);
+    expect(b.seed.some((s: any) => s.retired_by)).toBe(false);
+    // Nothing of the first case leaks into the second, and no task id repeats.
+    expect(world).not.toMatch(/pel[ií]cano/i);
+    const ids = spec.tasks.map((t: any) => t.id);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it('the free prompts repeat w2 and w3 word for word, without the suffix; nothing else drops it', () => {
+    expect(free.map((t: any) => t.id)).toEqual(['w2f', 'w3f']);
+    for (const t of free) {
+      const twin = main.find((m: any) => m.id === t.id.slice(0, -1));
+      expect(t.suffix).toBe(false);
+      expect([t.prompt, t.expect, t.stale]).toEqual([twin.prompt, twin.expect, twin.stale]);
+    }
+    expect(spec.tasks.filter((t: any) => t.suffix === false).every((t: any) => t.kind === 'stale-unmarked-b-free')).toBe(true);
+  });
+
+  it('the controls are old facts that still hold: the same value in memory and in the world', () => {
+    expect(controls.map((t: any) => t.id)).toEqual(['k1', 'k2']);
+    for (const t of controls) {
+      expect(t.stale, t.id).toBeUndefined();
+      expect(new RegExp(t.expect, 'i').test(world), t.id).toBe(true);
+      expect(aged.some((s: any) => new RegExp(t.expect, 'i').test(s.text)), t.id).toBe(true);
+    }
+  });
+
+  it('scores the second case like the first: current is correct, old alone is stale, old flagged is hedged', () => {
+    expect(scoreAnswer(task('w1'), 'MessageBird')).toBe('correct');
+    expect(scoreAnswer(task('w1'), 'Twilio')).toBe('stale');
+    expect(scoreAnswer(task('w2'), '265 euros')).toBe('correct');
+    expect(scoreAnswer(task('w2'), '240 euros (dato de hace 160 días, sin verificar)')).toBe('hedged');
+    expect(scoreAnswer(task('w2f'), 'Según la memoria eran 240 €, pero tarifas.csv dice 265 €.')).toBe('correct');
+    expect(scoreAnswer(task('w3'), 'Jon Ander Sarasola')).toBe('correct');
+    expect(scoreAnswer(task('w3'), 'Olatz Iturbe')).toBe('stale');
+    expect(scoreAnswer(task('w4'), 'reservas.tramuntana.cat')).toBe('correct');
+    expect(scoreAnswer(task('w4'), 'https://reservas.tramuntana.cat/api')).toBe('correct');
+    expect(scoreAnswer(task('w4'), 'api.tramuntana.cat')).toBe('stale');
+    expect(scoreAnswer(task('w5'), '09:30')).toBe('correct');
+    expect(scoreAnswer(task('w5'), 'A las 9.30')).toBe('correct');
+    expect(scoreAnswer(task('w5'), '10:00')).toBe('stale');
+    expect(scoreAnswer(task('w5'), 'A las 10 h')).toBe('stale');
+    expect(scoreAnswer(task('w5'), '16:00')).toBe('wrong');
+    expect(scoreAnswer(task('w6'), '24 horas')).toBe('correct');
+    expect(scoreAnswer(task('w6'), '48')).toBe('stale');
+    expect(scoreAnswer(task('k1'), 'Redsys')).toBe('correct');
+    expect(scoreAnswer(task('k2'), '55 euros')).toBe('correct');
+    expect(scoreAnswer(task('k2'), 'NO_LO_SE')).toBe('abstain');
+  });
+
+  it('the same five checks judge it on its own kind, and the first case does not count for it', () => {
+    const cellB = (arm: string, outcome: string) => ({ arm, kind: 'stale-unmarked-b', outcome, cost_usd: 0.001, turns: 3 });
+    const original = { checks: [1, 2, 3, 4].map(id => ({ id, pass: true })), claim_allowed: true };
+    const after = aggregate([...Array(17).fill('correct'), 'stale'].map(o => cellB('crbro', o)).concat(Array(18).fill('abstain').map(o => cellB('baseline', o))));
+    const before = aggregate(Array(18).fill('stale').map(o => cellB('crbro', o)));
+    const v = verdictUnmarked(after, 3, { before, original, kind: 'stale-unmarked-b' });
+    expect(v.kind).toBe('stale-unmarked-b');
+    expect(v.claim_allowed).toBe(true);
+    // Two unflagged old values in eighteen is over the 10 % line.
+    const two = aggregate([...Array(16).fill('correct'), 'stale', 'stale'].map(o => cellB('crbro', o)));
+    expect(verdictUnmarked(two, 3, { before, original, kind: 'stale-unmarked-b' }).checks.find((c: any) => c.id === 'U2').pass).toBe(false);
+    // Read as the first case, this run has nothing: U1 cannot pass on zero cells.
+    expect(verdictUnmarked(after, 3, { before, original }).checks.find((c: any) => c.id === 'U1').pass).toBe(false);
+  });
+});

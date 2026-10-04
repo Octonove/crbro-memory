@@ -406,3 +406,182 @@ No se ha gastado la enmienda permitida: el fallo es del producto, no del
 arnés, y una segunda `after` con otro texto del servidor sobre estas mismas
 tareas dejaría de ser ciega. Lo que se pruebe a partir de aquí irá en una
 enmienda nueva, fechada antes de medirla.
+
+### Sexta enmienda (2026-10-04): un segundo caso `stale-unmarked`, antes de medirlo
+
+La quinta no se cumplió. Decisión del mantenedor: **una iteración más** sobre
+el producto, y después se publica la 2.9.0 con lo que salga, contado tal cual.
+Las tareas u1–u4 **no se reutilizan para juzgarla**: ya se han visto sus
+respuestas y el texto del servidor se ajustó mirándolas, así que no serían a
+ciegas. Siguen en `tasks.json`, sin tocar, y se pueden seguir corriendo, pero
+no deciden nada de esta enmienda. Se escribe un caso nuevo, con otro proyecto
+y otro dominio.
+
+**Quién escribe las tareas y qué sabía.** Las redactó un agente distinto del
+que cambia el producto, con el encargo de escribirlas como alguien que no
+conoce el detector: no leyó `src/engine/shelf.ts` ni la §3 de
+[staleness.md](../../docs/design/staleness.md) (las reglas por contenido). Sí
+leyó, y se dice porque puede sesgar: la descripción de `crbro_learn` (la misma
+que ve cualquier agente, con su lista «volatile = versions, prices, ports,
+hosts, paths, config, who holds a role»), la quinta enmienda entera (ventanas
+de 90 y 365 días) y la §13 de staleness.md, que incluye una lista de reglas
+del detector ampliadas (un puerto hasta 20 caracteres después de la palabra,
+`config` con «máximo», «umbral» y parecidos cerca de un número). Ninguna tarea
+de abajo se eligió ni se descartó por esas reglas; tampoco se comprobó qué
+hace el detector con ellas.
+
+**El proyecto.** «Tramuntana», la app de reservas de una escuela de vela
+(dominio `apps`, nada de facturación ni de web). Hechos escritos como los
+guardaría un agente real: unos dicen de dónde salió el dato y otros no; unos
+llevan el `shelf_life` que pondría un agente que sigue la descripción de
+`crbro_learn` y otros no llevan ninguno. Edades distintas, todas entre 90 y
+365 días (como en la quinta: más que la ventana `volatile`, menos que la
+`normal`).
+
+**Las tareas que juzgan (`stale-unmarked-b`, w1–w6, con el mismo sufijo de
+siempre):**
+
+| id | en la memoria (vivo) | edad | dice de dónde salió | marca | en el mundo |
+|---|---|--:|---|---|---|
+| w1 | SMS de confirmación por Twilio | 230 | sí (`config/notificaciones.yml`) | ninguna | `config/notificaciones.yml`: `messagebird` |
+| w2 | curso de iniciación: 240 € | 160 | no | `volatile` | `tarifas.csv`: 265 |
+| w3 | cambios fuera de plazo los autoriza Olatz Iturbe | 270 | no | ninguna | `docs/recepcion.md`: Jon Ander Sarasola |
+| w4 | API de producción en `api.tramuntana.cat` | 300 | sí (lo dijo Antonio) | `volatile` | `.env.production`: `reservas.tramuntana.cat` |
+| w5 | salidas de la mañana a las 10:00 | 130 | no | ninguna | `horarios.json`: `09:30` |
+| w6 | cancelación gratis hasta 48 h antes | 200 | sí (condiciones de la web) | `normal` | `CONDICIONES.md`: 24 horas |
+
+w6 lleva `normal` porque es lo que la descripción de `crbro_learn` pide para
+una política de cancelación («normal otherwise»). Con 200 días queda dentro de
+la ventana `normal` que fija la quinta enmienda, así que un aviso por edad
+según esa clase no la cubre. Se deja así porque es como la marcaría un agente,
+y se dice antes de medir.
+
+**Secundarias (se publican, no deciden nada):**
+
+- `stale-unmarked-b-free` (w2f, w3f): las preguntas de w2 y w3, palabra por
+  palabra, **sin el sufijo** «Responde en una sola línea, solo con el dato y
+  nada más…». Una marcada y otra sin marcar. Miden si el sufijo pesa en que el
+  agente no abra el fichero (una de las causas probables que dejó la quinta).
+  Con 6 celdas por brazo y build, es descriptivo: no permite ni impide ninguna
+  frase.
+- `old-true-b` (k1, k2): hechos viejos que **siguen siendo ciertos** (Redsys,
+  250 días, sin marca; bautismo de mar 55 €, 180 días, `volatile`), con el mismo
+  valor en la memoria y en el mundo. Cumplen lo que la nota de la quinta dejó
+  para «la próxima enmienda»: miden lo que cuesta el aviso cuando el dato
+  aguanta (abstenciones, turnos, coste). Se puntúan `correct` / `abstain` /
+  `wrong`.
+
+De lo que esa nota pedía, la «consulta mixta con una fila vieja ajena» **no**
+tiene tarea propia: los nueve hechos de Tramuntana viven en una sola neurona
+(como Pelícano), así que cada pregunta trae otras líneas viejas del mismo
+proyecto en `also_matched`, pero no una fila vieja de otro proyecto. Se dice.
+
+**Cerebro.** El de las doce tareas más los nueve hechos de Tramuntana (seis
+viejos de w1–w6, dos viejos de k1–k2 y uno de hoy), en **su propia copia**:
+ni Pelícano entra en ella ni Tramuntana en la de Pelícano. Mismo
+envejecimiento en crudo que la quinta (`added` y `verified` = hace N días,
+`shelf_life` donde se indica), mismo reindexado y misma comprobación previa:
+si recall no sirve cada hecho viejo con su fecha vieja, no se ejecuta.
+
+**El mundo.** Ocho ficheros (dos en subcarpetas, `config/` y `docs/`) en el
+directorio de cada celda de estas tareas, en los dos brazos, con el valor
+actual y sin el viejo; un `README.md` dice dónde está cada cosa, sin valores.
+Mismas herramientas (`Read`, `Glob`, `Grep` en los dos brazos; las tres de
+lectura de CRBRO en `crbro`), mismo canario de lectura, misma auditoría de
+fugas (una sola aborta sin escribir resultados), `--max-turns 12`. El prompt
+no menciona ni la memoria ni los ficheros.
+
+**Puntuación.** La de la quinta, sin cambios de regla: `hedged` (el valor
+viejo sin el actual, con aviso) vale para todos los tipos `stale-unmarked*`,
+y nunca para las `stale` originales. Los tests
+([agentic.score.test.ts](../../tests/agentic.score.test.ts)) comprueban que el
+mundo tiene el valor actual y no el viejo, que cada valor viejo es un hecho
+envejecido vivo, el reparto de marcas (2 `volatile`, 1 `normal`, 3 sin
+marca), que w2f/w3f son w2/w3 sin sufijo, que k1/k2 tienen el mismo valor en
+la memoria y en el mundo, y ejemplos de puntuación de cada tarea.
+
+**Umbrales (los mismos U1–U5, aplicados a `stale-unmarked-b`, 18 celdas por
+brazo).** La frase de la quinta («cuando lo que recuerda puede haber cambiado,
+CRBRO lo avisa y el agente lo comprueba antes de contestar») solo se puede
+escribir si, con `n = 3` y en haiku y en sonnet, la tanda `after` cumple:
+
+- **U1.** `crbro` acierta ≥ 75 % de w1–w6: **≥ 14 de 18**.
+- **U2.** `crbro` da el valor viejo sin aviso en ≤ 10 %: **como mucho 1 de 18**.
+- **U3.** `crbro` acierta al menos tantas como `baseline`.
+- **U4.** `crbro` da menos valores viejos sin aviso que con la build `before`,
+  mismo modelo y misma `n`. Si `before` no da ninguno, U4 falla.
+- **U5.** En la misma tanda `after` pasan los cuatro umbrales originales.
+
+`null` sigue sin permitir la frase. Si se cumple en un modelo y no en el otro,
+no se escribe, y se publica la tabla de los dos.
+
+**Cambios del arnés, en este commit y antes de cualquier ejecución:**
+
+- `tasks.json`: las diez tareas nuevas y el bloque `unmarked_b` (semilla,
+  mundo, tipos), con `frozen: 2026-10-04`. Las 16 tareas anteriores, su
+  cerebro y el bloque `unmarked` no cambian ni un byte.
+- `run.mjs`: cada caso (`unmarked`, `unmarked_b`) tiene su semilla, su copia
+  de cerebro y su mundo; los ficheros del mundo pueden ir en subcarpetas; una
+  tarea con `"suffix": false` se pregunta sin sufijo; la tanda calcula
+  `verdict_unmarked_b` (U1–U5 sobre `stale-unmarked-b`) junto a los que ya
+  calculaba. `--only` ya aceptaba varios tipos: no hace falta otra opción.
+- `score.mjs`: `hedged` para todo tipo que empiece por `stale-unmarked`;
+  `verdictUnmarked` acepta el tipo que juzga (por defecto `stale-unmarked`,
+  así que la quinta se calcula igual).
+- Validado en seco (`--dry`) con la build 2.8.0 y con la de la rama, con y sin
+  `--only`; los 19 tests del puntuador pasan.
+
+**Orden, estricto y nunca en paralelo:**
+
+1. Este commit: tareas, umbrales, arnés.
+2. `before`: la build 2.8.0 (`cab8283`, ya construida en
+   `../crbro-staleness-before/build-2.8.0`, `dirty: false`) con el arnés de
+   este commit, solo los tres tipos nuevos, haiku y sonnet, `n = 3`. Se
+   commitean los resultados.
+3. El cambio de producto, commiteado, sin mirar las respuestas de `before`
+   para ajustar texto sobre estas tareas (si se miran, se dice).
+4. `after`: la build de ese commit (`dirty: false`), las doce originales más
+   los tres tipos nuevos (sin u1–u4), haiku y sonnet, `n = 3`, con
+   `--compare` al `before` del mismo modelo. Es **una** tanda por modelo y es
+   la que se publica. `git diff <este commit>..<commit after> --
+   benchmarks/agentic` tiene que salir vacío salvo `results/`.
+
+Sin tope de ajuste esta vez: no hay segunda `after`. Si una tanda aborta por
+el arnés (canario, fuga, error de la API repetido), se repite entera con la
+misma build y se dice; el producto no cambia entre medio. Todas las celdas con
+`CRBRO_MOD=0` en el entorno del ejecutor, como en las tandas de la quinta.
+`--compare` solo comprueba el modelo: el `before` se revisa a mano (`label:
+before-b`, `crbro.commit` `cab8283…`, `dirty: false`, `n = 3`, mismo modelo,
+Claude Code 2.1.270) y se deja escrito con los resultados.
+
+**Lo que se publica, pase lo que pase:** las tablas de `before` y `after` de
+los dos modelos para w1–w6, las secundarias por separado (w2f/w3f frente a
+w2/w3; k1/k2 con abstenciones, turnos y coste), cuántas celdas `crbro`
+abrieron un fichero, y el coste y los turnos por celda.
+
+**Comandos** (desde la raíz del repositorio; la fecha del nombre es la del
+día en que corre cada tanda):
+
+    # 2. before, build 2.8.0
+    CRBRO_MOD=0 node benchmarks/agentic/run.mjs --dist ../crbro-staleness-before/build-2.8.0/dist \
+      --only stale-unmarked-b,stale-unmarked-b-free,old-true-b --model haiku --reps 3 --label before-b
+    CRBRO_MOD=0 node benchmarks/agentic/run.mjs --dist ../crbro-staleness-before/build-2.8.0/dist \
+      --only stale-unmarked-b,stale-unmarked-b-free,old-true-b --model sonnet --reps 3 --label before-b
+    # 4. after, con el cambio de producto commiteado
+    npm run build
+    CRBRO_MOD=0 node benchmarks/agentic/run.mjs \
+      --only memory,stale,control-prompt,control-absent,stale-unmarked-b,stale-unmarked-b-free,old-true-b \
+      --model haiku --reps 3 --label after-b --compare benchmarks/results/agentic-<fecha>-haiku-before-b.json
+    CRBRO_MOD=0 node benchmarks/agentic/run.mjs \
+      --only memory,stale,control-prompt,control-absent,stale-unmarked-b,stale-unmarked-b-free,old-true-b \
+      --model sonnet --reps 3 --label after-b --compare benchmarks/results/agentic-<fecha>-sonnet-before-b.json
+
+**Límites que se dirán con cualquier resultado:** seis tareas de un solo
+autor y un solo proyecto; las edades se eligieron sabiendo las ventanas de 90
+y 365 días; el autor vio la lista de reglas ampliadas de la §13 (arriba); w6
+lleva una marca que, con las ventanas de la quinta, deja fuera un aviso por
+edad; y la consulta mixta con una
+fila ajena sigue sin tarea.
+
+**Estado:** diseñado y validado en seco, sin ninguna ejecución con modelo.
+Este commit es el pre-registro de la sexta enmienda.
