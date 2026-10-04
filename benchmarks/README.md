@@ -35,6 +35,56 @@ ciega; y son preguntas cortas de una sola sesión. Se reproduce con
 cuota). Coste de la tanda con CRBRO: ~0,37 USD en haiku y ~0,82 USD en sonnet
 según el propio Claude Code.
 
+### `stale-unmarked`: un dato que cambió y nadie retiró (04-10-2026)
+
+Quinta enmienda del [pre-registro](agentic/PREREGISTRO.md): cuatro valores de
+un proyecto ficticio (versión de PostgreSQL, precio, puerto, responsable) que
+cambiaron en el mundo —el valor actual está en un fichero del directorio de
+trabajo, en los dos brazos— y siguen vivos en la memoria con 200 días. `before`
+es la 2.8.0 publicada (`cab8283`); `after`, la rama `feat/staleness` con la
+caducidad implementada (`ad7675f`). Claude Code 2.1.270, n=3, mismo arnés
+(`1a023a7`) en todas las tandas. `after` se midió dos veces: solo las cuatro
+tareas nuevas y la tanda completa de 16.
+
+| `crbro` en `stale-unmarked` (12 celdas) | haiku before | haiku after (solo u) | haiku after (completa) | sonnet before | sonnet after (solo u) | sonnet after (completa) |
+|---|--:|--:|--:|--:|--:|--:|
+| acierta (valor actual) | 0 | 0 | 0 | 0 | 0 | 0 |
+| valor viejo **sin aviso** | 11 | 9 | 10 | 12 | 11 | 12 |
+| valor viejo con aviso (`hedged`) | 0 | 0 | 0 | 0 | 1 | 0 |
+| se abstiene | 1 | 3 | 2 | 0 | 0 | 0 |
+| celdas que abrieron un fichero | 1 | 0 | 0 | 0 | 0 | 0 |
+| `baseline` acierta (la vara de U3) | 3 | 1 | 4 | 6 | 6 | 4 |
+| coste medio por celda `crbro` (USD) | 0,0121 | 0,0149 | 0,0151 | 0,0263 | 0,0270 | 0,0274 |
+| turnos medios por celda `crbro` | 3,1 | 3,0 | 3,0 | 3,6 | 3,1 | 3,1 |
+
+**Resultado: no se cumple.** U1 (≥ 75 % de aciertos), U2 (≤ 10 % de valores
+viejos sin aviso) y U3 (al menos tantos aciertos como `baseline`) fallan en
+las cuatro tandas `after`. U4 (menos valores viejos sin aviso que `before`)
+pasa en haiku (9 y 10 frente a 11) y en la tanda corta de sonnet (11 frente a
+12), y falla en la completa de sonnet (12 frente a 12); con 12 celdas, esas
+diferencias de una o dos son ruido, no un efecto. U5 pasa: en las dos tandas
+completas los cuatro umbrales originales siguen en 4/4 (`memory` 12/12,
+`stale` 12/12 sin ningún valor retirado, los dos controles 6/6), igual que en
+la cuarta tanda. La frase pre-registrada **no se escribe**.
+
+Lo que se ve en las celdas: la función hace su parte —sin modelo, recall
+sobre el mismo cerebro devuelve las cuatro filas en `possibly_stale`, con
+`age_days: 200`, y el `hint` pide comprobarlas contra la fuente— pero ningún
+agente con CRBRO abrió un fichero en las 48 celdas `after`: todos llamaron a
+`crbro_boot` y `crbro_recall` y contestaron con el valor viejo, se abstuvieron
+o, una vez (sonnet), lo dieron avisando de que podía estar desactualizado.
+`baseline`, sin memoria, sí lee el fichero en 1 a 6 de cada 12 celdas según la
+tanda. Ninguna celda `after` intentó `crbro_revise` ni `crbro_learn` (la única
+escritura denegada fue un `crbro_consolidate` de sonnet en cada tanda), así
+que el coste extra no viene de escrituras denegadas: en haiku sube de 0,0121 a
+~0,015 USD por celda con los mismos turnos; en sonnet el coste es parecido y
+los turnos bajan de 3,6 a 3,1. Canarios y canarios de lectura limpios en las
+seis tandas, sin fugas ni errores de API.
+
+Límites (fechados antes de medir en el pre-registro): U5 no puede ver falsos
+avisos (los hechos originales son de hoy); u3 y u4 coinciden con los ejemplos
+del detector. Los JSON están en `results/agentic-2026-10-04-*-{before,after-unmarked,after}.json`.
+
 ## Reproducir
 
 ```bash
