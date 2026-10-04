@@ -1,0 +1,21 @@
+{
+  "name": "crbro-pending",
+  "version": "1.0.0",
+  "description": "CRBRO's open items above the prompt, and /pending (alias /pendientes) to see them all as cards",
+  "types": "./types/index.d.ts",
+  "author": {
+    "name": "Octonove",
+    "url": "https://github.com/Octonove"
+  },
+  "homepage": "https://github.com/Octonove/crbro-memory",
+  "license": "MIT",
+  "userConfig": {
+    "language": {
+      "type": "string",
+      "title": "CRBRO open items: language",
+      "description": "auto follows CRBRO_LANG, then LC_ALL / LC_MESSAGES / LANG, then the system locale (Spanish when it says es, English otherwise)",
+      "default": "auto",
+      "options": ["auto", "en", "es"]
+    }
+  }
+}
