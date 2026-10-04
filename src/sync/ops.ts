@@ -48,8 +48,10 @@ export interface FactOp extends OpBase {
    * The fact's shelf_life, only when someone set it explicitly (shelf life).
    * Merge: the most volatile explicit value wins (volatile < normal < durable
    * < permanent): a needless warning costs one check, a missing one a wrong
-   * answer. So lengthening a shared fact's shelf life stays local. A client
-   * that does not know the field ignores it.
+   * answer. So lengthening a shared fact's shelf life does not hold: the
+   * older, more volatile op is still in the append-only log and the next sync
+   * restores it, on the machine that lengthened it too (learn says so in
+   * shared_warning). A client that does not know the field ignores it.
    */
   shelf?: 'volatile' | 'normal' | 'durable' | 'permanent';
 }

@@ -21,9 +21,15 @@ change is a parameter or a field on an existing one.
   status=verified` (a fourth value of the existing enum; `facts` by id or exact
   text, `entries` for decisions and patterns by text or entry id) when the
   agent checked a line against its source and it still holds, and a session
-  learning the exact same fact again (`reconfirmed: true`). The miner never
-  reconfirms, a retired line is not verifiable (it comes back in `unmatched`
-  and `retired_targets`), and reading — recall, inspect — never touches it.
+  learning the exact same fact again with nothing else in the call
+  (`reconfirmed: true`). A re-learn that also brings keywords, a confidence or
+  a class is an edit, not a check — the server itself asks for that re-learn
+  to add keywords — and leaves `verified` alone. One `verify` op per line per
+  session, however often it is repeated. The miner never reconfirms, a retired
+  line is not verifiable (it comes back in `unmatched` and `retired_targets`),
+  reading — recall, inspect — never touches it, and a check dated more than a
+  day ahead of this machine's clock counts as no check (it would otherwise win
+  every "latest" merge and keep the line fresh until that day).
 - **A shelf life by kind of data.** `volatile` 90 days (versions, prices,
   ports, hosts, paths and URLs, configuration values, people in roles),
   `normal` 365, `durable` 730 (decisions and patterns), `permanent` never
@@ -44,7 +50,11 @@ change is a parameter or a field on an existing one.
   whose winning entry is past its shelf life since last verified moves, whole
   and in rank order, to `possibly_stale`, with `age_days`, `last_verified`,
   `shelf_life` and `shelf_inferred` (and `age_counted_from` when the legacy
-  grace applies). No backfill and no re-heading with an `also_matched` line;
+  grace applies). When anything moved, every row carries its `rank`, and if
+  the top-ranked row is the one that moved the hint opens with "The best match
+  (rank 1) moved to possibly_stale", so the first row of `results` is not
+  taken for the answer to the question when it may be about something else.
+  No backfill and no re-heading with an `also_matched` line;
   an old `also_matched` preview keeps its place and carries `stale_days`. The
   next step is said once, in `hint` (check it against its source; still true
   → `crbro_revise status=verified`, changed → `crbro_learn` with
@@ -59,9 +69,16 @@ change is a parameter or a field on an existing one.
 - **No flood on upgrade.** The first boot of this version stamps
   `manifest.staleness_since` (one field in a file boot already writes; no
   neuron is touched). A fact never verified, with no explicit class, not
-  volatile and older than the stamp starts counting from it; decisions and
-  patterns likewise. Volatile facts get no grace: a port saved months ago is
-  exactly the case. A line with no parseable date is never flagged.
+  volatile and older than the stamp starts counting near it; decisions and
+  patterns likewise. Not from the stamp itself, which would only delay the
+  flood: every old line would cross its window on the same day. Each line's
+  clock starts up to half a window before the stamp, by a fixed share drawn
+  from a hash of its text and never before its real date, so nothing is due on
+  the stamp day and an old brain's lines come due spread over the second half
+  of the first window. A manifest write from a process whose cache predates
+  the stamp keeps it, and boot restores one an older CRBRO dropped, so the
+  stamp does not drift. Volatile facts get no grace: a port saved months ago
+  is exactly the case. A line with no parseable date is never flagged.
   `CRBRO_STALENESS=0` turns everything off and recall answers as in 2.8.
 - **Everywhere else the same three facts.** `crbro_inspect view=neuron` shows
   `verified`, an explicit `shelf_life` and `stale_days` per entry (index and
@@ -72,8 +89,12 @@ change is a parameter or a field on an existing one.
   one sentence each on what `possibly_stale` means.
 - **Team spaces.** A check travels as a new `verify` op (latest `at` wins,
   order-independent); an explicit `shelf_life` travels as `shelf` on the fact
-  op (the most volatile explicit value wins, so lengthening a shared fact's
-  shelf life stays local). `OPS_VERSION` stays 1: a 2.8 client skips the new
+  op (the most volatile explicit value wins, so a shared fact's class can be
+  shortened but not lengthened: the next sync restores the more volatile value
+  from the log, and `crbro_learn` warns in `shared_warning`). A check on a fact
+  stored before ids existed lands on the teammate even when its text has a
+  double space or is not NFC (both text hashes are accepted). `OPS_VERSION`
+  stays 1: a 2.8 client skips the new
   kind and ignores the new field — the check does not reach it, nothing is
   corrupted. `move_to`, `merge_into` and restore carry the stamps; `forget`
   prunes them.
@@ -81,8 +102,11 @@ change is a parameter or a field on an existing one.
   recalls as it is, and nothing is written to a neuron until a learn or a
   revise touches it. No index change, no `INDEX_VERSION` bump: shelf life and
   verification are read from the neuron file recall already loads for every
-  row. Tool descriptions stay under 1,000 characters (recall 964, learn 968,
-  revise 946).
+  row. Tool descriptions stay under 1,000 characters (recall 964, learn 973,
+  revise 946). With the optional daemon, `CRBRO_STALENESS` and
+  `CRBRO_SHELF_DAYS` are part of the configuration fingerprint (only when they
+  differ from the defaults, so existing fingerprints do not move): a client
+  that switched the feature off is never served by a daemon that has it on.
 - **The agentic benchmark.** A new pre-registered case, `stale-unmarked`
   (fifth amendment of `benchmarks/agentic/PREREGISTRO.md`): four values that
   changed in the world and that nobody retired, two marked volatile and two

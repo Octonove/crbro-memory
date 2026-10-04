@@ -6,6 +6,14 @@ import { promises as fs } from 'node:fs';
 import { readJSON, writeJSON, fileExists, listJSONFiles, now } from '../utils/fs.js';
 import type { Manifest, BootResult, ActiveContext, HotTopics, Neuron, ProtocolDirective } from '../types/index.js';
 
+/** The earlier of two ISO stamps (absent or unparseable loses). */
+function earliestStamp(a: string | undefined, b: string | undefined): string | undefined {
+  const ta = a ? Date.parse(a) : NaN, tb = b ? Date.parse(b) : NaN;
+  if (!Number.isFinite(ta)) return Number.isFinite(tb) ? b : undefined;
+  if (!Number.isFinite(tb)) return a;
+  return tb < ta ? b : a;
+}
+
 /**
  * Where the brain lives. `CRBRO_PATH` is honoured when it is a usable
  * absolute path; anything else falls back to `~/.crbro`, and says so.
@@ -237,10 +245,15 @@ export class Brain {
     }
 
     // Load manifest
+    const enCache = this.manifest?.staleness_since;
     this.manifest = await readJSON<Manifest>(this.paths.manifest());
     if (!this.manifest) {
       throw new Error('CRBRO: Manifest exists but could not be read.');
     }
+    // A stamp this process already knew survives a writer that dropped it
+    // (an older CRBRO saving its counters): the earliest one stands.
+    const sello = earliestStamp(this.manifest.staleness_since, enCache);
+    if (sello) this.manifest.staleness_since = sello;
 
     // Load hot topics
     const hotTopics = await readJSON<HotTopics>(this.paths.hotTopics());
@@ -320,6 +333,13 @@ export class Brain {
    */
   async updateManifest(updates: Partial<Manifest>): Promise<void> {
     const manifest = await this.getManifest();
+    // The cache may predate the first boot of this version (another process
+    // stamped the disk since), and writing it whole would erase the shelf-life
+    // stamp, which the next boot would then set again, later: the legacy
+    // grace would move. Keep the earliest stamp of disk and cache.
+    const enDisco = await readJSON<Manifest>(this.paths.manifest()).catch(() => null);
+    const sello = earliestStamp(enDisco?.staleness_since, manifest.staleness_since);
+    if (sello) manifest.staleness_since = sello;
     Object.assign(manifest, updates);
     await writeJSON(this.paths.manifest(), manifest);
     this.manifest = manifest;

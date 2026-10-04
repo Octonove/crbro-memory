@@ -7,7 +7,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   detectShelf, shelfOfFact, shelfOfKind, shelfWindows, stalenessEnabled, stalenessContext,
-  factStaleness, entryStaleness, mostVolatile, latestOf, DEFAULT_SHELF_DAYS,
+  factStaleness, entryStaleness, mostVolatile, latestOf, plausibleCheck, spreadOf, DEFAULT_SHELF_DAYS,
 } from '../src/engine/shelf.js';
 import { entryId } from '../src/sync/ops.js';
 import type { Fact, Neuron } from '../src/types/index.js';
@@ -154,15 +154,59 @@ describe('age: verified ?? added, with the legacy grace', () => {
     expect(marked).toMatchObject({ stale: true, shelf_life: 'volatile', shelf_inferred: false });
   });
 
-  it('legacy grace: an old unmarked normal fact counts from staleness_since, and says so', () => {
-    const s = factStaleness(fact('Nos reunimos los lunes.', { added: ago(800) }), ctx(SINCE))!;
+  it('legacy grace: an old unmarked normal fact counts from near staleness_since, and says from when', () => {
+    const text = 'Nos reunimos los lunes.';
+    // Its clock starts before the stamp by its fixed share of half a window.
+    const back = (365 / 2) * spreadOf(entryId(text));
+    const s = factStaleness(fact(text, { added: ago(800) }), ctx(SINCE))!;
     expect(s.stale).toBe(false);
-    expect(s.age_days).toBe(30);
-    expect(s.age_from).toBe(SINCE.slice(0, 10));
+    expect(s.age_days).toBe(Math.floor(30 + back));
+    expect(s.age_from).toBe(ago(30 + back).slice(0, 10));
     expect(s.last_verified).toBe(ago(800).slice(0, 10));
-    // A year and a bit after the stamp it does turn stale.
-    const later = factStaleness(fact('Nos reunimos los lunes.', { added: ago(800) }), ctx(ago(400)))!;
-    expect(later).toMatchObject({ stale: true, age_days: 400 });
+    // Long enough after the stamp it does turn stale.
+    const later = factStaleness(fact(text, { added: ago(800) }), ctx(ago(400)))!;
+    expect(later).toMatchObject({ stale: true, age_days: Math.floor(400 + back) });
+    // Never before its real date: a line recorded 5 days before the stamp moves back 5 days at most.
+    const joven = factStaleness(fact(text, { added: ago(35) }), ctx(SINCE))!;
+    expect(joven.age_days).toBeLessThanOrEqual(35);
+  });
+
+  it('legacy grace is staggered: an old brain does not go stale all on one day', () => {
+    // Sixty old lines, all recorded the same day, two years before the stamp.
+    const lines = Array.from({ length: 60 }, (_, i) => `Old note number ${i} about the weekly meeting.`);
+    // On the stamp day nothing is past its window: at most half of it has elapsed.
+    for (const t of lines) {
+      const s = factStaleness(fact(t, { added: ago(730) }), ctx(ago(0)))!;
+      expect(s.stale).toBe(false);
+      expect(s.age_days).toBeLessThanOrEqual(182);
+    }
+    // The day after the stamp on which each one comes due.
+    const vence = (t: string) => {
+      for (let d = 0; d <= 400; d++) if (factStaleness(fact(t, { added: ago(730 + d) }), ctx(ago(d)))!.stale) return d;
+      return -1;
+    };
+    const dias = lines.map(vence);
+    expect(Math.min(...dias)).toBeGreaterThanOrEqual(183);
+    expect(Math.max(...dias)).toBeLessThanOrEqual(366);
+    const porDia = new Map<number, number>();
+    for (const d of dias) porDia.set(d, (porDia.get(d) || 0) + 1);
+    expect(porDia.size).toBeGreaterThan(30);                       // spread over many days…
+    expect(Math.max(...porDia.values())).toBeLessThanOrEqual(5);   // …never one avalanche
+  });
+
+  it('a check dated in the future counts as no check, and never wins a merge', () => {
+    // The clock runs from the recorded date, not from a day that has not come.
+    const s = factStaleness(fact('Escucha en el puerto 9090.', { added: ago(200), verified: ago(-400) }), ctx(SINCE))!;
+    expect(s).toMatchObject({ stale: true, age_days: 200 });
+    expect(s.last_verified).toBe(ago(200).slice(0, 10));
+    // Within the day of slack it still counts (time zones, drift).
+    expect(factStaleness(fact('Escucha en el puerto 9090.', { added: ago(200), verified: ago(-0.5) }), ctx(SINCE))!.stale).toBe(false);
+    // latestOf: the future loses to a real check, and to nothing at all.
+    expect(latestOf(ago(-400), ago(1), NOW)).toBe(ago(1));
+    expect(latestOf(ago(1), ago(-400), NOW)).toBe(ago(1));
+    expect(latestOf(ago(-400), undefined, NOW)).toBeUndefined();
+    expect(plausibleCheck(ago(-400), NOW)).toBeUndefined();
+    expect(plausibleCheck(ago(3), NOW)).toBe(ago(3));
   });
 
   it('no grace for an explicit class, nor once the fact was verified', () => {
@@ -201,10 +245,14 @@ describe('age: verified ?? added, with the legacy grace', () => {
       entry_dates: { [entryId(pattern)]: ago(1000), [entryId(pref)]: ago(5000) },
     } as unknown as Neuron;
     // Grace applies to durable kinds: stamped 30 days ago, nothing is stale yet.
-    expect(entryStaleness(n, 'decision', 'Use Postgres. — joins', ctx(SINCE))!).toMatchObject({ stale: false, shelf_life: 'durable', age_from: SINCE.slice(0, 10) });
+    const backD = (730 / 2) * spreadOf(entryId('Use Postgres.'));
+    expect(entryStaleness(n, 'decision', 'Use Postgres. — joins', ctx(SINCE))!).toMatchObject({
+      stale: false, shelf_life: 'durable', age_days: Math.floor(30 + backD), age_from: ago(30 + backD).slice(0, 10),
+    });
     // Stamped long ago: both past 730 days.
     expect(entryStaleness(n, 'decision', 'Use Postgres.', ctx(ago(760)))!.stale).toBe(true);
-    expect(entryStaleness(n, 'pattern', pattern, ctx(ago(760)))!).toMatchObject({ stale: true, age_days: 760 });
+    const backP = Math.min(240, (730 / 2) * spreadOf(entryId(pattern)));
+    expect(entryStaleness(n, 'pattern', pattern, ctx(ago(760)))!).toMatchObject({ stale: true, age_days: Math.floor(760 + backP) });
     // entry_verified restarts the clock.
     n.entry_verified = { [entryId(pattern)]: ago(3) };
     expect(entryStaleness(n, 'pattern', pattern, ctx(ago(760)))!).toMatchObject({ stale: false, age_days: 3 });

@@ -786,7 +786,7 @@ export function createServer(shared?: Engines): McpServer {
     'crbro_learn',
     {
       title: 'Learn something',
-      description: 'Write: store a fact, decision, pattern, preference, error or debt on a topic; the neuron is created if missing (or pass neuron_id). Stage 1 of the lifecycle: a new truth that REPLACES an old one → crbro_learn with supersedes (one call does both); to retire with no replacement use crbro_revise; to delete from disk use crbro_forget. crbro_recall first — it may already exist. The same fact text again is not duplicated: keywords merge, a changed confidence or shelf_life applies (updated_in_place), the line counts as re-verified and another session repeating it raises confirmations; text matching a retired entry is refused with skipped_retired. Decisions always append; preferences never leave this machine. Credentials are replaced with a marker and listed in redacted — crbro_secret them, record only the name. Returns neuron_id, action, the fact\'s shelf_life, near_duplicates (stored anyway; retire the old telling), supersedes_unmatched (still live) and totals.',
+      description: 'Write: store a fact, decision, pattern, preference, error or debt on a topic; the neuron is created if missing (or pass neuron_id). Stage 1 of the lifecycle: a new truth that REPLACES an old one → crbro_learn with supersedes (one call does both); to retire with no replacement use crbro_revise; to delete from disk use crbro_forget. crbro_recall first — it may already exist. The same fact text again is not duplicated: keywords merge, a changed confidence or shelf_life applies (updated_in_place), a bare repeat counts as re-verified and another session repeating it raises confirmations; text matching a retired entry is refused with skipped_retired. Decisions always append; preferences never leave this machine. Credentials are replaced with a marker and listed in redacted — crbro_secret them, record only the name. Returns neuron_id, action, the fact\'s shelf_life, near_duplicates (stored anyway; retire the old telling), supersedes_unmatched (still live) and totals.',
       inputSchema: {
         // Optional since 2.0.3, and the reason is measured: the description
         // told callers that neuron_id "skips name matching entirely", the
@@ -859,6 +859,14 @@ export function createServer(shared?: Engines): McpServer {
           return textResult(`No neuron matched "${topic}" and none was created.`);
         }
 
+        // Lengthening an explicit shelf life does not hold on a shared neuron:
+        // the team merge keeps the most volatile value, and the older op is
+        // still in the append-only log, so the next sync brings it back.
+        const sharedIn = result.shelf_lengthened ? (await sharedMap(brain))[result.neuron.id] : undefined;
+        const shelfSharedWarning = sharedIn
+          ? `"${result.neuron.id}" is shared in space "${sharedIn}": a longer shelf_life is local only — the next sync restores the more volatile value from the shared log.`
+          : undefined;
+
         const keywordsMissing = args.type === 'fact' && result.action !== 'skipped' &&
           !(args.keywords && args.keywords.some(k => typeof k === 'string' && k.trim().length > 0));
 
@@ -909,8 +917,9 @@ export function createServer(shared?: Engines): McpServer {
           shelf_life: result.shelf?.shelf_life,
           shelf_inferred: result.shelf?.inferred ? true : undefined,
           shelf_reason: result.shelf?.inferred ? result.shelf.reason : undefined,
-          // The same line learned again: its shelf-life clock restarts now.
+          // The same line learned again, and nothing else: its shelf-life clock restarts now.
           reconfirmed: result.reconfirmed || undefined,
+          shared_warning: shelfSharedWarning,
           total_facts: result.neuron.facts.length,
           total_decisions: result.neuron.decisions.length,
           total_patterns: result.neuron.patterns.length,
@@ -956,6 +965,7 @@ export function createServer(shared?: Engines): McpServer {
           matched_terms: z.number().optional(), query_terms: z.number().optional(),
           confidence: z.enum(['strong', 'weak']).optional(),
           entry_id: z.string().optional(),
+          rank: z.number().optional().describe('Position in the ranking, set when some row moved to possibly_stale'),
           origin: z.string().optional(), by: z.string().optional(),
           content_truncated: z.boolean().optional(), content_chars: z.number().optional(),
           also_matched: z.array(z.object({ entry_id: z.string().optional(), kind: z.string(), added: z.string(), preview: z.string(), chars: z.number(), origin: z.string().optional(), by: z.string().optional(), stale_days: z.number().optional() }).loose()).optional(),
@@ -1022,9 +1032,15 @@ export function createServer(shared?: Engines): McpServer {
         // The internal `staleness` field leaves every row here.
         const actuales: any[] = [];
         const rancios: any[] = [];
-        for (const row of rows as any[]) {
+        // When anything moves, every row keeps its rank: results[0] is then
+        // not necessarily the best match, and the agent has to be able to see it.
+        const algunoRancio = (rows as any[]).some(r => r.staleness?.stale);
+        let mejorMovido = false;
+        for (const [i, row] of (rows as any[]).entries()) {
           const { staleness, ...resto } = row;
+          if (algunoRancio) resto.rank = i + 1;
           if (staleness?.stale) {
+            if (i === 0) mejorMovido = true;
             rancios.push({
               ...resto,
               age_days: staleness.age_days,
@@ -1059,7 +1075,8 @@ export function createServer(shared?: Engines): McpServer {
           // question, in a list of their own so narrative never outranks a fact.
           // sessions_total: how many days had a hit; three shown never reads as three.
           ...(sessions.length ? { sessions_matched: sessions.map(s => ({ ...s, date: dia(s.date) })), sessions_total } : {}),
-          hint: (rancios.length && !actuales.length ? 'Nothing current matched; the rows that did are in possibly_stale. ' : '') +
+          hint: (rancios.length && !actuales.length ? 'Nothing current matched; the rows that did are in possibly_stale. '
+            : mejorMovido ? 'The best match (rank 1) moved to possibly_stale; results holds lower-ranked rows that may be about something else. ' : '') +
             (servidos === 0
             ? (sessions.length
               // A day mentions it and no fact does: point at the day, not at rephrasing.
