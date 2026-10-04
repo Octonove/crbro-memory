@@ -1,7 +1,8 @@
 # Design: shelf life, last verification and `possibly_stale`
 
 Status: **implemented on branch `feat/staleness`** (written against 2.8.0;
-section 13 lists where the implementation differs from the text below). The
+section 13 lists where the implementation differs from the text below, and
+section 14 the second iteration of how recall presents the warning). The
 benchmark case that will judge it (`stale-unmarked`) is pre-registered in
 [benchmarks/agentic/PREREGISTRO.md](../../benchmarks/agentic/PREREGISTRO.md)
 in the same commit as this document, before any implementation or run.
@@ -521,3 +522,120 @@ Limits of the agentic benchmark, to be said with any result:
   but still-true controls (a volatile fact 200 days old whose value matches
   the file), a mixed query with an unrelated old row, and unmarked tasks
   written by someone else.
+
+## 14. Iteration 2: how the warning reaches the agent
+
+Status: implemented on `feat/staleness`, **not measured yet**. It is judged by
+the Sixth amendment of the pre-registration (a second `stale-unmarked` case,
+its tasks and thresholds committed before this change, its `before` run on
+2.8.0 committed before this change too). One iteration, then 2.9.0 ships with
+whatever that run says.
+
+### Why
+
+The Fifth amendment's `after` runs showed the detection working and the
+behaviour unchanged: recall moved all four rows to `possibly_stale`, and in 48
+`after` cells no agent with CRBRO opened a file. Three candidate causes, none
+measured on its own:
+
+1. **The order to check came last.** It sat at the end of `hint`, after the
+   generic advice every recall carries ("weak: verify. Newer wins on
+   conflict…"), in a field that comes after the rows.
+2. **The old value looked like an answer.** A `possibly_stale` row carried the
+   stored line as `matching_content`, the same key a current answer uses, next
+   to `confidence: strong`. The only difference was a block name and an age.
+3. **The prompt asks for the bare value** ("solo con el dato y nada más").
+   "If you cannot check, say how old it is" competes with that, and checking
+   was never framed as the way to answer the question.
+
+### What changes
+
+Presentation only. Detection, windows, grace, ranking and the partition are
+untouched; a recall with nothing stale is byte-for-byte what it was.
+
+- **`stale_warning` opens the answer.** When anything moved to
+  `possibly_stale`, the first key of the payload (before `query` and
+  `results`) is one or two sentences: how many rows, whether the best match is
+  one of them, the youngest age, "Do not answer with it as current. Check it
+  first (its next_step says where); if you cannot, say it may be out of date,
+  even in a short answer."
+- **A stale row is a last-known value, not content.** Each `possibly_stale`
+  row now leads with `warning` ("last known value, unverified for N days
+  (since DAY): may have changed"), then `next_step`, then the stored line as
+  **`last_known`**, which replaces `matching_content` in that block. Then the
+  rest of the row as before (`neuron_id`, `name`, `entry_id`, `rank`, …,
+  `age_days`, `last_verified`, `shelf_life`, `shelf_inferred`). The rename
+  breaks no released client: `possibly_stale` has never shipped. `results`
+  rows keep `matching_content`.
+- **`next_step` names what to open, when the line names it.**
+  `src/engine/source.ts` (`namedSources`, pure) finds the files, paths, dotfiles
+  and URLs a line cites (`config/app.yml`, `.env.production`, `precios.json`,
+  `/etc/…`, `C:\…`, `https://…`), and rejects ratios and units (`km/h`, `24/7`,
+  `€/mes`, `and/or`), product names (`Node.js`) and bare hosts (a host is the
+  value, not where it came from). With a source: "Before answering, open X
+  (named in this entry) and answer with what it says now." Without one:
+  "Before answering, look for the current value where it lives: the project's
+  files or config if you can read them, or the user." Both end with "If you
+  cannot check, say this value is from DAY and may be out of date; do not
+  state it as current." CRBRO still never reads the disk to check (§11).
+- **The hint gives the order first.** The stale part now follows the
+  "Nothing current matched" / "The best match (rank 1) moved" lead directly,
+  before the generic advice, and says: do not answer with one as current;
+  check it first; then revise or learn; if you cannot check, say it may be out
+  of date (replacing "say how old it is").
+- **The same sentence everywhere the agent reads.** The server instructions
+  ("A row in a recall's possibly_stale is a last-known value that may have
+  changed: before answering with it, check it where it lives … never state it
+  as current"), boot's `memory_discipline`, and recall's description
+  ("possibly_stale as last_known with a next_step: check before answering with
+  one, or say it may be out of date").
+- **Saving says where a value came from.** `crbro_learn`'s description ("A
+  value that can change names its source (file, key, URL, person).") and its
+  `content` parameter ask that a changeable value carry its source, so a later
+  `next_step` has something to point at. To stay under 1,000 characters the
+  learn description lost "(one call does both)" after `supersedes` (the
+  lifecycle text in boot still says it), "and totals", and two clauses were
+  tightened. Measured on the built server: recall 993, learn 983, revise 946.
+- `outputSchema`: `stale_warning` (optional string); the `possibly_stale` item
+  requires `warning`, `next_step`, `last_known`, `neuron_id`, `age_days`,
+  `last_verified`, `shelf_life`, `shelf_inferred` (loose, as before).
+
+### Considered and not done
+
+- **A separate text block before the JSON.** Tools with an `outputSchema`
+  return the serialized `structuredContent` as their text content; a second
+  block would be a shape no other tool has. Key order does the same job in
+  one block, and the same order holds in `structuredContent`.
+- **Hiding the old value.** When checking is impossible, the agent needs it to
+  say "last known X, may be out of date"; hiding it would turn the case into
+  an abstention and lose what the memory does know.
+- **Dropping `confidence: strong` from stale rows.** It is the match quality,
+  not a claim that the value holds; it stays, after the warning.
+
+### What the author of this change knew
+
+Said here because the next `after` run is not blind in the sense the Fifth
+amendment's dated note used:
+
+- The brief for this iteration contained the Sixth amendment's summary of its
+  tasks — subjects, old and current values, ages, which stored lines name a
+  source and which file holds each current value — and the per-task outcomes
+  of the `before` runs on 2.8.0. While locating the Pelícano tasks in
+  `tasks.json`, a search also printed the prompts and expected values of the
+  new tasks. The new case's seed block and world files were not opened.
+- Two parts of this change touch that knowledge directly. `namedSources` was
+  one of the ideas in the brief, but the author knew one judged task stores a
+  line that names its file. "Even in a short answer" answers a cause the
+  author knew is in every prompt (the suffix). Neither was tuned against a
+  model answer: no model was run on this build before the commit.
+- The unit tests use subjects and values that are not in any benchmark task.
+
+### Limits
+
+- Not measured. The Sixth amendment's `after` run is the measurement, and it
+  is published as it comes out, with no second run.
+- `next_step` can only name what the line names. A line saved without its
+  source gets the general step; the learn text asks for sources, which helps
+  lines saved from now on, not the ones already stored.
+- The causes above are not separated: if the run improves, it does not say
+  which of the changes did it.

@@ -36,6 +36,7 @@ import { startModOnBoot } from './engine/modinstall.js';
 import { writeTriggerIndex, loadAllNeurons } from './engine/triggers.js';
 import { neuronId, inferNeuronType, techKeywordIn } from './utils/ids.js';
 import { SHELF_LIVES, stalenessEnabled, shelfWindows, stalenessContext, factStaleness, entryStaleness } from './engine/shelf.js';
+import { namedSources } from './engine/source.js';
 
 /** A neuron this size with no summary is worth two lines from whoever is closing the session. */
 const SUMMARY_NUDGE_MIN_ENTRIES = 25;
@@ -99,13 +100,35 @@ const THREE_STAGES =
 
 /**
  * What to do with a recall's possibly_stale block (shelf life), said once per
- * answer in `hint`, never per row: the rows carry only their age.
+ * answer at the START of `hint` (iteration 2, staleness.md §14): the order to
+ * check comes first, the follow-up writes after it. Each row carries its own
+ * next_step (where to look); this says what to do with the result.
  */
 const STALE_HINT =
-  'possibly_stale: these matched but are past their shelf life since last verified. Before relying on one, check it ' +
-  'against its source (a file, the config, the user) when that is cheap: still true → crbro_revise neuron=<neuron_id> ' +
-  'status=verified facts=[entry_id] (entries=[entry_id] for a decision or pattern); changed → crbro_learn the new value ' +
-  'with supersedes=[entry_id]. If you cannot check, say how old it is.';
+  'possibly_stale holds last-known values that may have changed: do not answer with one as current. Check it first ' +
+  '(its next_step says where), then: still true → crbro_revise neuron=<neuron_id> status=verified facts=[entry_id] ' +
+  '(entries=[entry_id] for a decision or pattern); changed → crbro_learn the new value with supersedes=[entry_id]. ' +
+  'If you cannot check, say it may be out of date.';
+
+/**
+ * The per-row framing of a possibly_stale row (iteration 2). The stored line
+ * comes back as `last_known`, not as `matching_content`, behind a warning and
+ * a concrete next step: open what the line itself names, when it names a
+ * file, path or URL; otherwise look where that kind of value lives, and if
+ * that is not possible, say the value may be out of date.
+ */
+function staleFraming(text: string, s: { age_days: number; last_verified: string; age_from?: string }): { warning: string; next_step: string } {
+  const since = s.last_verified;
+  const warning = s.age_from
+    ? `last known value, not verified since ${since}: past its shelf life, may have changed`
+    : `last known value, unverified for ${s.age_days} days (since ${since}): may have changed`;
+  const named = namedSources(text);
+  const fallback = `If you cannot check, say this value is from ${since} and may be out of date; do not state it as current.`;
+  const next_step = named.length
+    ? `Before answering, open ${named.join(' / ')} (named in this entry) and answer with what it says now. ${fallback}`
+    : `Before answering, look for the current value where it lives: the project's files or config if you can read them, or the user. ${fallback}`;
+  return { warning, next_step };
+}
 
 /**
  * The version of CRBRO that is actually running. The manifest carries its own
@@ -196,7 +219,7 @@ export function createServer(shared?: Engines): McpServer {
       'CRBRO is this user\'s persistent memory, kept on their own machine. Start every conversation with crbro_boot: it loads what earlier sessions left — protocols to follow, open items, hot topics. ' +
       'Before answering OR ACTING ON anything about the user, their projects, preferences, decisions or past work, call crbro_recall: the answer is usually stored, and making them repeat it is the failure this memory exists to prevent. ' +
       'Recall even when you think you know. Only when the current message itself states the answer does it outrank memory: then use it — a recall that finds nothing does not make it unknown, and a stored value older than what the user just said is the one to update, not to repeat. ' +
-      'A recall\'s possibly_stale holds what may have changed since it was last checked: verify it against its source before relying on it, then crbro_revise status=verified or crbro_learn with supersedes. ' +
+      'A row in a recall\'s possibly_stale is a last-known value that may have changed: before answering with it, check it where it lives (the file it names, the project\'s files or config, or the user) and answer from that; if you cannot check, say it may be out of date — never state it as current. Then crbro_revise status=verified or crbro_learn with supersedes. ' +
       'Acting includes touching one of their systems: before the first command that explores or changes a project of theirs, recall what is already known about it — a stored pattern or map usually holds the very procedure you were about to reconstruct by reading files, and reconstructing it is how you end up doing the steps in the wrong order. ' +
       'Questions about CRBRO itself (version, counts, whether semantic recall is on) are crbro_inspect view=status. Read one entry, not a whole neuron: view=neuron gives an index, entries=[ids] the text. ' +
       'Save with crbro_learn as you go, and close with crbro_consolidate before the conversation ends.',
@@ -416,8 +439,10 @@ export function createServer(shared?: Engines): McpServer {
           'deliberate deferral with its ceiling and revisit trigger. Credentials never go in the brain: ' +
           'crbro_secret, then record only the NAME. Recall results carry confidence — "weak" means the match ' +
           'covers little of the question, verify before relying on it — and when two facts disagree, prefer ' +
-          'the more recent. possibly_stale in a recall = past its shelf life since last checked: verify before ' +
-          'relying on it (crbro_revise status=verified if it holds, crbro_learn supersedes if it changed). Lifecycle: supersedes replaces, crbro_revise retires, crbro_forget removes what ' +
+          'the more recent. possibly_stale in a recall = a last-known value that may have changed: check its ' +
+          'source before answering with it, or say it may be out of date (then crbro_revise status=verified if it ' +
+          'holds, crbro_learn supersedes if it changed). A value that can change (version, price, port, host, ' +
+          'setting, who holds a role) should say where it came from — the file, key, URL or person. Lifecycle: supersedes replaces, crbro_revise retires, crbro_forget removes what ' +
           'must not exist on disk — each tool describes its own stage. ' +
           'Call crbro_consolidate before the conversation ends; it logs the session too.';
 
@@ -786,7 +811,7 @@ export function createServer(shared?: Engines): McpServer {
     'crbro_learn',
     {
       title: 'Learn something',
-      description: 'Write: store a fact, decision, pattern, preference, error or debt on a topic; the neuron is created if missing (or pass neuron_id). Stage 1 of the lifecycle: a new truth that REPLACES an old one → crbro_learn with supersedes (one call does both); to retire with no replacement use crbro_revise; to delete from disk use crbro_forget. crbro_recall first — it may already exist. The same fact text again is not duplicated: keywords merge, a changed confidence or shelf_life applies (updated_in_place), a bare repeat counts as re-verified and another session repeating it raises confirmations; text matching a retired entry is refused with skipped_retired. Decisions always append; preferences never leave this machine. Credentials are replaced with a marker and listed in redacted — crbro_secret them, record only the name. Returns neuron_id, action, the fact\'s shelf_life, near_duplicates (stored anyway; retire the old telling), supersedes_unmatched (still live) and totals.',
+      description: 'Write: store a fact, decision, pattern, preference, error or debt on a topic; the neuron is created if missing (or pass neuron_id). A value that can change names its source (file, key, URL, person). Stage 1 of the lifecycle: a new truth that REPLACES an old one → crbro_learn with supersedes; retire with no replacement → crbro_revise; delete from disk → crbro_forget. crbro_recall first — it may already exist. The same fact text again is not duplicated: keywords merge, a changed confidence or shelf_life applies (updated_in_place), a bare repeat counts as re-verified and another session repeating it raises confirmations; text matching a retired entry is refused with skipped_retired. Decisions always append; preferences never leave this machine. Credentials become a marker listed in redacted: crbro_secret them, keep only the name. Returns neuron_id, action, the fact\'s shelf_life, near_duplicates (stored anyway; retire the old telling) and supersedes_unmatched (still live).',
       inputSchema: {
         // Optional since 2.0.3, and the reason is measured: the description
         // told callers that neuron_id "skips name matching entirely", the
@@ -797,7 +822,7 @@ export function createServer(shared?: Engines): McpServer {
         // message that says what to pass.
         topic: z.string().optional().describe('Topic name, e.g. "OctoChat", "Firebase", "SEO Strategy". Required UNLESS you pass neuron_id, in which case the topic is taken from that neuron.'),
         type: z.enum(['fact', 'decision', 'pattern', 'preference', 'error', 'debt']).describe('error = a mistake plus its correction, in one entry. debt = a deliberate deferral: what was NOT done on purpose, its ceiling, and the revisit condition, e.g. "DEFERRED: protecting the PDFs. CEILING: anyone can download them without signing up. REVISIT WHEN: the signup flow works."'),
-        content: z.string().describe('The knowledge itself. Dense and self-contained: it is recalled without this conversation as context.'),
+        content: z.string().describe('The knowledge itself. Dense and self-contained: it is recalled without this conversation as context. For a value that can change (a version, price, port, host, setting, who holds a role), say where it came from — the file, config key, URL or person — so a later check knows where to look.'),
         confidence: z.number().min(0).max(1).optional().describe('0.0-1.0, default 1.0. Facts only. On an exact-duplicate active fact the stored confidence is updated to this value (updated_in_place:true).'),
         domain: z.string().optional().describe('Domain, e.g. "proyectos-web". Applied when the neuron is created; on an existing neuron it only replaces the default "general" (crbro_revise domain replaces it unconditionally).'),
         rationale: z.string().optional().describe('Why the decision was taken. Stored and indexed with it; ignored for other types.'),
@@ -945,7 +970,7 @@ export function createServer(shared?: Engines): McpServer {
     'crbro_recall',
     {
       title: 'Recall',
-      description: 'Read-only search of everything saved in earlier sessions — facts, decisions, patterns, preferences, errors, debts and maps. Call it BEFORE answering anything about the user, their projects, preferences, decisions or past work: the answer is usually stored, and making them repeat it is the failure this memory exists to prevent. One result per neuron: the best matching entry with entry_id (read it whole: crbro_inspect view=neuron entries=[id]), matched_kind, matched_added, a confidence label (weak = little of the question covered; verify) and also_matched previews. Lines not the user\'s own carry origin, also_matched too: team:<space> (team if unshared) with self-declared by, or miner. Rows past their shelf life since last verified move to possibly_stale, with age_days: check before relying on them. If nothing matches, retry with 2-4 phrasings in queries or fewer, rarer words. has_map:true: read the system map with crbro_map before touching that system.',
+      description: 'Read-only search of everything saved in earlier sessions — facts, decisions, patterns, preferences, errors, debts and maps. Call it BEFORE answering anything about the user, their projects, preferences, decisions or past work: the answer is usually stored, and making them repeat it is the failure this memory exists to prevent. One result per neuron: the best matching entry with entry_id (read it whole: crbro_inspect view=neuron entries=[id]), matched_kind, matched_added, a confidence label (weak = little of the question covered; verify) and also_matched previews. Lines not the user\'s own carry origin, also_matched too: team:<space> (team if unshared) with self-declared by, or miner. Rows past their shelf life move to possibly_stale as last_known with a next_step: check before answering with one, or say it may be out of date. If nothing matches, retry with 2-4 phrasings in queries or fewer, rarer words. has_map:true: read the system map with crbro_map before touching that system.',
       inputSchema: {
         query: z.string().describe('What to look for, e.g. "Firebase authentication setup". Fewer, distinctive terms beat full sentences.'),
         queries: z.array(z.string()).optional().describe('Alternative phrasings of the same question, searched together with query and fused by rank. Use synonyms, the other language and the concrete product name; 2-4 is plenty.'),
@@ -970,10 +995,11 @@ export function createServer(shared?: Engines): McpServer {
           content_truncated: z.boolean().optional(), content_chars: z.number().optional(),
           also_matched: z.array(z.object({ entry_id: z.string().optional(), kind: z.string(), added: z.string(), preview: z.string(), chars: z.number(), origin: z.string().optional(), by: z.string().optional(), stale_days: z.number().optional() }).loose()).optional(),
         }).loose()),
+        stale_warning: z.string().optional().describe('Set, first, when some row moved to possibly_stale: do not answer with those as current'),
         possibly_stale: z.array(z.object({
-          neuron_id: z.string(), matching_content: z.string(),
+          warning: z.string(), next_step: z.string(), last_known: z.string(), neuron_id: z.string(),
           age_days: z.number(), last_verified: z.string(), shelf_life: z.string(), shelf_inferred: z.boolean(),
-        }).loose()).optional().describe('Rows whose best entry is past its shelf life since last verified: same shape as results plus age_days, last_verified, shelf_life, shelf_inferred'),
+        }).loose()).optional().describe('Rows whose best entry is past its shelf life since last verified: warning, next_step (what to check before answering), the entry as last_known instead of matching_content, then the rest of a results row plus age_days, last_verified, shelf_life, shelf_inferred'),
         possibly_stale_count: z.number().optional(),
         returned: z.number().optional().describe('Rows that came back: results plus possibly_stale'),
         matched_neurons: z.number().optional().describe('Neurons with any hit before limit; total_results is what came back'),
@@ -1041,8 +1067,16 @@ export function createServer(shared?: Engines): McpServer {
           if (algunoRancio) resto.rank = i + 1;
           if (staleness?.stale) {
             if (i === 0) mejorMovido = true;
+            // Iteration 2: the old line is not served as ordinary content. Its
+            // warning and next step come first, then the line as last_known.
+            const { matching_content, neuron_id, name, entry_id, rank, ...demas } = resto;
             rancios.push({
-              ...resto,
+              ...staleFraming(matching_content, staleness),
+              last_known: matching_content,
+              neuron_id, name,
+              ...(entry_id !== undefined ? { entry_id } : {}),
+              ...(rank !== undefined ? { rank } : {}),
+              ...demas,
               age_days: staleness.age_days,
               last_verified: staleness.last_verified,
               shelf_life: staleness.shelf_life,
@@ -1056,7 +1090,18 @@ export function createServer(shared?: Engines): McpServer {
         const servidos = actuales.length + rancios.length;
         const sobran = matched_neurons - servidos;
 
+        // Iteration 2: when anything moved, the answer OPENS with a short
+        // warning, before query and results, so it is read before the rows.
+        const menorEdad = rancios.length ? Math.min(...rancios.map(r => r.age_days as number)) : 0;
+        const uno = rancios.length === 1;
+        const avisoRancio = rancios.length
+          ? (uno
+            ? `1 matching row is in possibly_stale${mejorMovido ? ', the best match' : ''}: a last-known value, unchecked for ${menorEdad} days, that may have changed. Do not answer with it as current. Check it first (its next_step says where)`
+            : `${rancios.length} matching rows are in possibly_stale${mejorMovido ? ', the best match among them' : ''}: last-known values, unchecked for ${menorEdad}+ days, that may have changed. Do not answer with one as current. Check it first (each row's next_step says where)`) +
+            '; if you cannot, say it may be out of date, even in a short answer.'
+          : '';
         const payload = {
+          ...(avisoRancio ? { stale_warning: avisoRancio } : {}),
           query: args.query,
           // total_results is what came back as current (capped by limit);
           // returned adds possibly_stale; matched_neurons is how many neurons
@@ -1077,6 +1122,7 @@ export function createServer(shared?: Engines): McpServer {
           ...(sessions.length ? { sessions_matched: sessions.map(s => ({ ...s, date: dia(s.date) })), sessions_total } : {}),
           hint: (rancios.length && !actuales.length ? 'Nothing current matched; the rows that did are in possibly_stale. '
             : mejorMovido ? 'The best match (rank 1) moved to possibly_stale; results holds lower-ranked rows that may be about something else. ' : '') +
+            (rancios.length ? `${STALE_HINT} ` : '') +
             (servidos === 0
             ? (sessions.length
               // A day mentions it and no fact does: point at the day, not at rephrasing.
@@ -1090,8 +1136,7 @@ export function createServer(shared?: Engines): McpServer {
               + (sessions.length ? ' sessions_matched: day logs that mention it; read one whole with crbro_inspect view=sessions session=<session_id>.' : ''))
             + (filtrado && servidos > 0 ? ' Filtered: entries outside since/kind were not searched.' : '')
             + (sinFecha > 0 ? ` ${sinFecha} matching entr${sinFecha === 1 ? 'y has' : 'ies have'} no date and were left out by since (crbro_maintenance backfill_dates dates the ones that state a day).` : '')
-            + (sessions_total > sessions.length ? ` ${sessions_total - sessions.length} more day${sessions_total - sessions.length === 1 ? '' : 's'} mention it: narrow the query.` : '')
-            + (rancios.length ? ` ${STALE_HINT}` : ''),
+            + (sessions_total > sessions.length ? ` ${sessions_total - sessions.length} more day${sessions_total - sessions.length === 1 ? '' : 's'} mention it: narrow the query.` : ''),
         };
         // Recall is the one read whose size the caller sets, with limit: ten
         // results already cost ~12,000 tokens on a dense brain because each

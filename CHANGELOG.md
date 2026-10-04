@@ -102,8 +102,8 @@ change is a parameter or a field on an existing one.
   recalls as it is, and nothing is written to a neuron until a learn or a
   revise touches it. No index change, no `INDEX_VERSION` bump: shelf life and
   verification are read from the neuron file recall already loads for every
-  row. Tool descriptions stay under 1,000 characters (recall 964, learn 973,
-  revise 946). With the optional daemon, `CRBRO_STALENESS` and
+  row. Tool descriptions stay under 1,000 characters (recall 993, learn 983,
+  revise 946, with the second iteration below). With the optional daemon, `CRBRO_STALENESS` and
   `CRBRO_SHELF_DAYS` are part of the configuration fingerprint (only when they
   differ from the defaults, so existing fingerprints do not move): a client
   that switched the feature off is never served by a daemon that has it on.
@@ -134,6 +134,30 @@ change is a parameter or a field on an existing one.
   commit (in separate clones of 2.8.0 and of the frozen harness), the
   `CRBRO_MOD=0` deviation and the review changes. Results:
   `benchmarks/results/agentic-2026-10-04-*.json`.
+- **Second iteration: the warning comes first, and says what to open.**
+  Presentation only (detection, windows, ranking and the partition are
+  unchanged; an answer with nothing stale is the same as before). When
+  anything moved to `possibly_stale`, the answer now opens with
+  `stale_warning`, before `query` and `results`: do not answer with it as
+  current, check it first, and if you cannot, say it may be out of date, even
+  in a short answer. Each `possibly_stale` row leads with `warning` ("last
+  known value, unverified for N days (since DAY): may have changed") and
+  `next_step`, and carries the stored line as `last_known` instead of
+  `matching_content` (the block has never been released, so no client
+  breaks; `results` rows are unchanged). `next_step` names the file, path or
+  URL the line itself cites, found by a small pure detector
+  (`src/engine/source.ts`, which leaves out units like `km/h`, product names
+  like `Node.js` and bare hosts); otherwise it says to look where the value
+  lives — the project's files or config, or the user — and, if that is not
+  possible, to say the value is from that day and may be out of date. The
+  hint puts this first, before the generic advice. The server instructions,
+  boot's `memory_discipline` and recall's description say the same, and
+  `crbro_learn` (description and `content`) asks that a value that can change
+  name where it came from. Design and what its author knew of the benchmark
+  tasks when writing it: `docs/design/staleness.md` §14. **Not measured
+  yet:** it is judged by the sixth amendment of the pre-registration, a
+  second `stale-unmarked` case committed with its thresholds and its 2.8.0
+  `before` run before this change.
 
 ## [2.8.0] — 2026-10-04
 
