@@ -585,3 +585,150 @@ fila ajena sigue sin tarea.
 
 **Estado:** diseñado y validado en seco, sin ninguna ejecución con modelo.
 Este commit es el pre-registro de la sexta enmienda.
+
+#### Nota fechada (2026-10-04), antes de la tanda `after-b`
+
+Escrita y commiteada **antes** de medir, en `a2bffef` (15:46, fuera de esta
+carpeta: §14 de [staleness.md](../../docs/design/staleness.md), «Limits» y
+«What the author of this change knew»), y copiada aquí después, con los
+resultados, para que `git diff 4453942..a2bffef -- benchmarks/agentic` siga
+vacío como pide el paso 4. No cambia ninguna tarea, puntuación ni umbral, ni
+nada del producto: `a2bffef` es `5343047` más documentación.
+
+1. **Lo que el cambio puede alcanzar.** Una comprobación sin modelo (el
+   cerebro del caso sembrado como lo siembra `run.mjs`, esta build,
+   `crbro_recall` con el prompt de cada tarea) dio que solo **w2** (160 días,
+   `volatile`) y **w4** (300, `volatile`) llegan a `possibly_stale` con
+   `stale_warning`; entre las secundarias, también k2 (180, `volatile`).
+   **w1** (230), **w3** (270) y **w5** (130) no llevan marca y se infieren
+   `normal`; **w6** (200) va marcada `normal`. Las cuatro quedan por debajo
+   de los 365 días y recall las sirve en `results` como vigentes, sin aviso.
+   El cambio no puede tocar 12 de las 18 celdas `crbro` que juzgan por
+   modelo, y U1 (≥ 14/18) y U2 (≤ 1/18) solo pueden cumplirse si el agente
+   abre el fichero por su cuenta, cosa que en `before-b` no hizo ninguna
+   celda `crbro` (0 de 24 por modelo). La enmienda suponía («todas entre 90 y
+   365 días… más que la ventana `volatile`») que las líneas sin marca se
+   inferirían `volatile`, como u3 y u4; estas no, y solo avisó de w6.
+   `namedSources` no actúa en ninguna fila que juzga: la única línea que
+   nombra su fichero (w1) nunca se marca, y w2 y w4 reciben el `next_step`
+   general. No se toca la detección: hacerlo ahora sería ajustar sobre tareas
+   ya vistas. La tanda va como estaba pre-registrada y, además, se da por
+   tarea, separando marcadas (w2, w4) y no marcadas (w1, w3, w5, w6): es una
+   descripción, no un umbral nuevo.
+2. **Una frase de la §14 que no era exacta.** «Los tests usan sujetos y
+   valores que no están en ninguna tarea» tenía tres ecos: un ejemplo
+   negativo de `tests/staleness.framing.test.ts` («Lo dijo Antonio en la
+   reunión del lunes») se parece a cómo la línea de w4 dice de dónde salió;
+   `tarifas.json`, en el mismo fichero, a `tarifas.csv` de w2; y los
+   ejemplos de `src/engine/source.ts` y de la §14 nombran `.env.production`,
+   el fichero de w4. Están en comentarios, tests y documentación: ninguno
+   llega en el texto que el servidor manda al agente. Se corrigió la frase.
+
+#### Tandas `after-b` (2026-10-04): no se cumple
+
+Build `a2bffef` (`dirty: false`; el producto es el de `5343047`),
+`CRBRO_MOD=0`, Claude Code 2.1.270, n=3, una tanda por modelo con las doce
+originales y los tres tipos nuevos (22 tareas, 132 celdas), sin u1–u4.
+Primero haiku (terminó a las 15:52), después sonnet (15:59), nunca a la vez.
+Canarios y canarios de lectura limpios en los dos brazos de los dos modelos,
+0 fugas, 0 errores de API, 0 reintentos. No hubo que repetir nada.
+`--compare` comprobado a mano: los dos `before-b` son `label: before-b`,
+`crbro.commit` `cab8283…`, `dirty: false`, `n = 3`, el mismo modelo y Claude
+Code 2.1.270. `git diff 4453942..a2bffef -- benchmarks/agentic` sale vacío.
+Resultados: `results/agentic-2026-10-04-{haiku,sonnet}-after-b.json`.
+
+**Lo que juzga: `stale-unmarked-b` (w1–w6, 18 celdas por brazo).**
+
+| `crbro` | haiku before-b | haiku after-b | sonnet before-b | sonnet after-b |
+|---|--:|--:|--:|--:|
+| acierta (valor actual) | 0 | 1 | 0 | 0 |
+| valor viejo **sin aviso** | 14 | 9 | 18 | 12 |
+| valor viejo con aviso (`hedged`) | 0 | 0 | 0 | 6 |
+| se abstiene | 4 | 8 | 0 | 0 |
+| celdas que abrieron un fichero (w y wf, de 24) | 0 | 1 | 0 | 0 |
+| `baseline` acierta (la vara de U3) | 4 | 6 | 10 | 9 |
+| coste medio por celda `crbro` (USD) | 0,0114 | 0,0129 | 0,0268 | 0,0272 |
+| turnos medios por celda `crbro` | 2,6 | 2,8 | 3,4 | 3,2 |
+
+Por tarea, `crbro` (C acierto, S viejo sin aviso, H con aviso, A abstención):
+
+| tarea | ¿llega a `possibly_stale`? | haiku before-b | haiku after-b | sonnet before-b | sonnet after-b |
+|---|---|---|---|---|---|
+| w1 | no (230 d, `normal` inferida) | SSS | SSS | SSS | SSS |
+| w2 | sí (160 d, `volatile`) | SAS | AAA | SSS | HHH |
+| w3 | no (270 d, `normal` inferida) | SSS | SSS | SSS | SSS |
+| w4 | sí (300 d, `volatile`) | SSS | AAC | SSS | HHH |
+| w5 | no (130 d, `normal` inferida) | AAA | AAA | SSS | SSS |
+| w6 | no (200 d, marcada `normal`) | SSS | SSS | SSS | SSS |
+
+Marcadas (w2, w4, 6 celdas): haiku pasa de 5 viejos sin aviso a 0 (5
+abstenciones y el único acierto, que es la única celda `crbro` que abrió un
+fichero); sonnet, de 6 a 0 (las 6 avisan). No marcadas (w1, w3, w5, w6, 12
+celdas): lo mismo antes y después, haiku 9 viejos sin aviso y 3
+abstenciones, sonnet 12 viejos sin aviso. Toda la bajada de U2 sale de las
+dos filas que recall marca.
+
+| umbral | haiku | sonnet |
+|---|---|---|
+| U1 ≥ 75 % (≥ 14/18) | 5,6 % (1) ✗ | 0 % ✗ |
+| U2 ≤ 10 % (≤ 1/18) | 50 % (9) ✗ | 66,7 % (12) ✗ |
+| U3 crbro ≥ baseline | 1 vs 6 ✗ | 0 vs 9 ✗ |
+| U4 menos que before-b | 9 < 14 ✓ | 12 < 18 ✓ |
+| U5 originales | 4/4 ✓ | 4/4 ✓ |
+
+`claim_allowed: false` en los dos modelos. La frase **no se escribe**. U4 en
+verde dice que el aviso cambia la respuesta cuando llega (en las filas
+marcadas); no dice que el agente compruebe: con CRBRO se abrió un fichero en
+1 de 48 celdas w/wf, y `baseline`, con los mismos ficheros y sin memoria,
+sigue acertando más (6 y 9 de 18).
+
+**U5, en la misma tanda.** `crbro`: `memory` 12/12, `stale` 12/12 con 0
+valores retirados, `control-prompt` 6/6 y `control-absent` 6/6, en los dos
+modelos. `baseline`: 0/24 en `memory` + `stale`; con sonnet inventa 1
+respuesta en `memory`.
+
+**Secundarias (descriptivas, no deciden nada).**
+
+- `stale-unmarked-b-free` (w2f y w3f, sin sufijo), `crbro`: en los dos
+  modelos, antes SSS y SSS, después w2f HHH y w3f SSS. Con sufijo, w2 da AAA
+  (haiku) y HHH (sonnet): sin sufijo, en haiku, la fila marcada sale como
+  valor viejo con aviso en vez de abstención; la no marcada sale igual con y
+  sin sufijo. Ninguna celda w2f/w3f abrió un fichero. `baseline`: 1/6 (haiku)
+  y 0/6 (sonnet); las demás son respuestas libres, puntuadas `wrong` porque
+  sin sufijo no hay `NO_LO_SE`.
+- `old-true-b` (k1, k2), `crbro`: haiku 3/6 antes y después (k1 CCC; k2 AAA,
+  abstención en 1 turno sin llamar a nada, como antes), 2,0 turnos, 0,0084 →
+  0,0090 USD por celda. Sonnet 6/6 antes y después, 3,0 turnos, 0,0231 →
+  0,0254 USD; después, las tres respuestas de k2 (55 €, marcado y todavía
+  cierto) añaden «podría estar desactualizado»: se puntúan `correct`, y son
+  el coste del aviso cuando el dato aguanta. `baseline`: haiku 1 → 2, sonnet
+  3 → 2 de 6.
+- Escrituras: ninguna celda llamó a `crbro_revise` ni a `crbro_learn`.
+  Sonnet intentó `crbro_consolidate` (denegado) en 9 celdas `before-b` y en 7
+  `after-b`; haiku, en ninguna.
+- Coste medio por celda `crbro` en las 30 celdas de los tipos nuevos: haiku
+  0,0111 → 0,0121 USD (2,6 → 2,7 turnos), sonnet 0,0262 → 0,0274 (3,3 → 3,2).
+  Gasto total de las tandas `after-b`, según el arnés: haiku 1,10 USD, sonnet
+  2,09 USD.
+
+**Las dos iteraciones, juntas** (`crbro`; valor actual · valor viejo sin
+aviso; n=3):
+
+| | caso | haiku before → after | sonnet before → after |
+|---|---|---|---|
+| 1.ª (quinta enmienda) | Pelícano, u1–u4, 12 celdas | 0 → 0 · 11 → 9 y 10 | 0 → 0 · 12 → 11 y 12 |
+| 2.ª (sexta enmienda) | Tramuntana, w1–w6, 18 celdas | 0 → 1 · 14 → 9 | 0 → 0 · 18 → 12 |
+
+**Lectura, sin más alcance que estas celdas.** La segunda iteración cambia lo
+que el agente dice cuando recall marca la fila: deja de dar el valor viejo
+como vigente, y avisa (sonnet) o se abstiene (haiku). No consigue que lo
+compruebe. Y en este caso la detección marcó dos de las seis filas que
+cambiaron: las cuatro sin marca o marcadas `normal`, con menos de 365 días,
+se sirven como vigentes, y ahí no cambió nada. Con las dos iteraciones se
+publica la 2.9.0, contado tal cual. No hay segunda tanda `after-b`.
+
+**Límites** (además de los de la enmienda): seis tareas de un solo autor y
+un solo proyecto; las causas de la §14 siguen sin separarse; la nota de
+arriba se escribió sabiendo que el cambio no alcanzaba 12 de 18 celdas, sin
+tocar nada por ello; y quien escribió el cambio de producto conocía las
+tareas y los resultados `before-b` (§14).

@@ -154,10 +154,42 @@ change is a parameter or a field on an existing one.
   boot's `memory_discipline` and recall's description say the same, and
   `crbro_learn` (description and `content`) asks that a value that can change
   name where it came from. Design and what its author knew of the benchmark
-  tasks when writing it: `docs/design/staleness.md` §14. **Not measured
-  yet:** it is judged by the sixth amendment of the pre-registration, a
-  second `stale-unmarked` case committed with its thresholds and its 2.8.0
-  `before` run before this change.
+  tasks when writing it: `docs/design/staleness.md` §14.
+- **Second iteration, measured: not met.** Sixth amendment of
+  `benchmarks/agentic/PREREGISTRO.md`: a second `stale-unmarked` case
+  (`stale-unmarked-b`, six fictitious values that changed, 130-300 days old,
+  two marked volatile, one marked normal, three unmarked), its tasks,
+  thresholds and 2.8.0 `before` run committed before the product change,
+  then one `after` run per model on the branch, 2026-10-04, Claude Code
+  2.1.270, n=3. With CRBRO the agent answers **1 of 18** correctly (haiku,
+  0 before) and **0 of 18** (sonnet, 0 before). Old value given without a
+  warning: haiku 14 → 9, sonnet 18 → 12; with a warning: sonnet 0 → 6;
+  abstentions: haiku 4 → 8. Without memory the agent reads the file and
+  gets 6 and 9 of 18. U1, U2 and U3 fail in both models; U4 passes in both;
+  U5 passes (the 12 original tasks: 24/24, 0 retired values, controls 6/6).
+  The claim "CRBRO warns and the agent checks" is **not** made. Why, from
+  the cells and from a model-free check dated before the run: recall flagged
+  only two of the six rows (the two marked volatile); the other four,
+  unmarked or marked normal and under 365 days, are served as current, and
+  their answers did not change. On the two flagged rows the old value given
+  as current went from 5 to 0 (haiku, which now abstains) and from 6 to 0
+  (sonnet, which now gives it with a warning). An agent with CRBRO opened a
+  file in 1 of 48 cells. Secondary, deciding nothing: without the answer-
+  format suffix the flagged question is answered with a warning (both
+  models) and the unflagged one with the old value; on old values that are
+  still true sonnet stays 6/6 but warns on the volatile one, and haiku
+  abstains on it as it did on 2.8.0. Cost per CRBRO cell on the judged tasks:
+  haiku $0.0114 → $0.0129, sonnet $0.0268 → $0.0272. Before measuring, a
+  review correction (a disclosure sentence in §14) and the dated note on
+  what the change could reach were committed outside the harness; the
+  pre-registration copies that note with the results. Canaries clean, no
+  leaks, no API errors, no reruns. Results:
+  `benchmarks/results/agentic-2026-10-04-*-before-b.json` and
+  `…-after-b.json`.
+- **Both iterations at a glance** (with CRBRO; correct · old value without a
+  warning): first case, 12 cells — haiku 0 → 0 · 11 → 9 and 10, sonnet
+  0 → 0 · 12 → 11 and 12; second case, 18 cells — haiku 0 → 1 · 14 → 9,
+  sonnet 0 → 0 · 18 → 12.
 
 ## [2.8.0] — 2026-10-04
 

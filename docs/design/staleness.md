@@ -6,6 +6,8 @@ section 14 the second iteration of how recall presents the warning). The
 benchmark case that will judge it (`stale-unmarked`) is pre-registered in
 [benchmarks/agentic/PREREGISTRO.md](../../benchmarks/agentic/PREREGISTRO.md)
 in the same commit as this document, before any implementation or run.
+Measured twice (Fifth and Sixth amendments, 2026-10-04): neither met its
+pre-registered thresholds; the second iteration's result is in §14.
 
 Origin: feedback from r/mcp, reviewed and approved by the maintainer:
 
@@ -525,11 +527,12 @@ Limits of the agentic benchmark, to be said with any result:
 
 ## 14. Iteration 2: how the warning reaches the agent
 
-Status: implemented on `feat/staleness`, **not measured yet**. It is judged by
-the Sixth amendment of the pre-registration (a second `stale-unmarked` case,
-its tasks and thresholds committed before this change, its `before` run on
-2.8.0 committed before this change too). One iteration, then 2.9.0 ships with
-whatever that run says.
+Status: implemented on `feat/staleness` and **measured: not met** (see
+"Result" at the end of this section). It was judged by the Sixth amendment of
+the pre-registration (a second `stale-unmarked` case, its tasks and
+thresholds committed before this change, its `before` run on 2.8.0 committed
+before this change too). One iteration, then 2.9.0 ships with whatever that
+run says.
 
 ### Why
 
@@ -640,8 +643,8 @@ amendment's dated note used:
 
 ### Limits
 
-- Not measured. The Sixth amendment's `after` run is the measurement, and it
-  is published as it comes out, with no second run.
+- The Sixth amendment's `after` run is the measurement, published as it came
+  out, with no second run (result below).
 - `next_step` can only name what the line names. A line saved without its
   source gets the general step; the learn text asks for sources, which helps
   lines saved from now on, not the ones already stored.
@@ -669,3 +672,29 @@ amendment's dated note used:
   pre-registered, and its results are also given per task, split into flagged
   (w2, w4) and unflagged (w1, w3, w5, w6) — a description, not a new
   threshold.
+
+### Result (2026-10-04)
+
+Build `a2bffef` (this change plus the dated note above, `dirty: false`),
+one `after-b` run per model, Claude Code 2.1.270, n=3, canaries clean, no
+leaks, no API errors. On the judged tasks (w1–w6, 18 `crbro` cells per
+model), against the 2.8.0 `before-b`:
+
+| `crbro` | haiku before → after | sonnet before → after |
+|---|---|---|
+| correct | 0 → 1 | 0 → 0 |
+| old value, no warning | 14 → 9 | 18 → 12 |
+| old value, with a warning | 0 → 0 | 0 → 6 |
+| abstains | 4 → 8 | 0 → 0 |
+| `baseline` correct | 4 → 6 | 10 → 9 |
+
+U1, U2 and U3 fail in both models; U4 and U5 pass. The claim is not made.
+As the note above predicted, every change is on the two flagged rows: there
+the old value given as current went 5 → 0 (haiku: abstains; the one correct
+answer is the one cell that opened a file) and 6 → 0 (sonnet: answers with a
+warning). The four unflagged rows gave the same answers before and after.
+So the presentation changes what the agent *says* about a flagged value; it
+does not make it *check*, and the detector missed four of six values that
+changed. On the old-but-true controls, sonnet stays 6/6 and now adds "may be
+out of date" to the volatile one; haiku abstains on it, as on 2.8.0. Full
+tables, per task, in the pre-registration.
