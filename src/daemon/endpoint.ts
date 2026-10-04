@@ -15,10 +15,11 @@
 // and collecting what clients send.
 
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
-import { promises as fs, statSync, readFileSync } from 'node:fs';
+import { promises as fs, statSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { stalenessEnabled, shelfWindows, DEFAULT_SHELF_DAYS } from '../engine/shelf.js';
+import { readPackageVersion } from '../version.js';
 
 export const DAEMON_PROTOCOL = 1;
 const DAEMON_DIR = '.daemon';
@@ -35,17 +36,10 @@ export interface DaemonState {
   brain: string;
 }
 
+/** The package version, read from disk on each call (the same lookup as view=status), '0.0.0' when unreadable. */
 export function packageVersion(): string {
-  try {
-    const here = __dirname;   // CommonJS output: dist/daemon, or src/daemon under the test runner
-    for (const up of ['..', path.join('..', '..')]) {
-      try {
-        const pkg = JSON.parse(readFileSync(path.join(here, up, 'package.json'), 'utf8'));
-        if (pkg?.name === 'crbro-memory' && pkg.version) return String(pkg.version);
-      } catch { /* try the next level */ }
-    }
-  } catch { /* fall through */ }
-  return '0.0.0';
+  const v = readPackageVersion();
+  return v === 'unknown' ? '0.0.0' : v;
 }
 
 /**

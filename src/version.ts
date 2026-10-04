@@ -14,14 +14,30 @@
 import { readFileSync } from 'fs';
 import { join } from 'path';
 
-/** The package.json that ships with this code (dist/ or src/ under the test runner → the package root). */
-export const PACKAGE_JSON = join(__dirname, '..', 'package.json');
+/**
+ * The package.json that ships with this code: one level up from dist/ (or
+ * src/ under the test runner), two from a nested build, and only one whose
+ * name is crbro-memory. The daemon's build id reads the same file
+ * (daemon/endpoint.ts), so the two can never disagree on the version.
+ */
+export function findPackageJson(here: string = __dirname): string {
+  for (const up of ['..', join('..', '..')]) {
+    const file = join(here, up, 'package.json');
+    try {
+      if (JSON.parse(readFileSync(file, 'utf8'))?.name === 'crbro-memory') return file;
+    } catch { /* try the next level */ }
+  }
+  return join(here, '..', 'package.json');
+}
 
-/** The version in a package.json, or 'unknown' when it cannot be read. */
+export const PACKAGE_JSON = findPackageJson();
+
+/** The version in a crbro-memory package.json, or 'unknown' when it cannot be read or is another package's. */
 export function readPackageVersion(file: string = PACKAGE_JSON): string {
   try {
-    const v = JSON.parse(readFileSync(file, 'utf8'))?.version;
-    return typeof v === 'string' && v ? v : 'unknown';
+    const pkg = JSON.parse(readFileSync(file, 'utf8'));
+    const v = pkg?.version;
+    return pkg?.name === 'crbro-memory' && typeof v === 'string' && v ? v : 'unknown';
   } catch {
     return 'unknown';
   }
