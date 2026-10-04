@@ -9,7 +9,7 @@
 
 **CRBRO** is a local MCP (Model Context Protocol) server that gives your AI assistant **persistent long-term memory** across sessions. It uses a biological neural architecture — cortex, synapses, hippocampus — to store, connect, and retrieve knowledge automatically.
 
-![CRBRO demo](https://raw.githubusercontent.com/Octonove/crbro-memory/master/docs/demo.gif)
+![CRBRO tour: memory across sessions, corrections that replace old facts, secrets kept out, the guard before a shell command, the compaction checkpoint and the open-items band](https://raw.githubusercontent.com/Octonove/crbro-memory/master/docs/crbro-tour.gif)
 
 Free and open source (MIT). All 15 tools included — no license, no account, no tiers.
 
@@ -223,6 +223,8 @@ A compaction keeps a summary and loses the detail that tells you where you were.
 The `install-boot` entry for Claude Code prints the same notice, so it is replaced (and put back by `uninstall-hooks --compact`). A CRBRO hook you wrote yourself is never replaced: the new hooks are added next to it with `--no-boot` / `--no-reminder`, so nothing is read twice. Only Claude Code has `PreCompact`; Codex and the rest are not touched. Like the other hooks, it never blocks: it reads no network, starts no `git` process, ends on its own if stdin never closes, and always exits 0.
 
 ### 9. (Claude Code, on by default) Open items in sight
+
+![The open-items band above the Claude Code prompt and the /pending pane: an item read whole, filtered, sent to the prompt and closed through CRBRO](https://raw.githubusercontent.com/Octonove/crbro-memory/master/docs/pending-band.gif)
 
 Nothing to run: if Claude Code is on the machine (`~/.claude` exists), the first `crbro_boot` installs this mod exactly as `install-mod` below would, with the language on auto, and the boot answer carries a `mod_notice` the assistant passes on to you — what was installed, that it appears in *new* Claude Code sessions, and how to remove it. The notice goes to the first boot of up to three server processes (one each) within a week, because the first one may be a background run nobody reads. After an update of CRBRO, a boot that finds the installed files different from the package (SHA-256, line endings aside) refreshes them, without touching `settings.json`, and says so too; an older CRBRO on the same machine never takes back the files of a newer one, and two builds of the same version (a checkout beside the npm copy) do not rewrite each other. It runs once per server process (once per daemon) and never fails the boot. The files are copied without blocking and the boot waits for the install 1.5 s at most; the few settings reads and writes left are synchronous and take milliseconds. Two sessions starting at once take turns through a lock file, and `settings.json` is written only if it is still what was read: a change Claude Code saves at the same moment is merged, not lost.
 
