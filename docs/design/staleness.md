@@ -1,8 +1,9 @@
 # Design: shelf life, last verification and `possibly_stale`
 
-Status: **design, not implemented.** Branch `feat/staleness`, written against
-2.8.0. The benchmark case that will judge it (`stale-unmarked`) is
-pre-registered in [benchmarks/agentic/PREREGISTRO.md](../../benchmarks/agentic/PREREGISTRO.md)
+Status: **implemented on branch `feat/staleness`** (written against 2.8.0;
+section 13 lists where the implementation differs from the text below). The
+benchmark case that will judge it (`stale-unmarked`) is pre-registered in
+[benchmarks/agentic/PREREGISTRO.md](../../benchmarks/agentic/PREREGISTRO.md)
 in the same commit as this document, before any implementation or run.
 
 Origin: feedback from r/mcp, reviewed and approved by the maintainer:
@@ -381,3 +382,37 @@ The new fields must merge with meaning between machines.
   any run, measured on the 2.8.0 build (`before`) and on this branch
   (`after`) with the same harness: see the amendment of 2026-10-04 in
   [PREREGISTRO.md](../../benchmarks/agentic/PREREGISTRO.md).
+
+## 13. Implementation notes
+
+Where the code on this branch differs from, or adds to, the text above:
+
+- **`age_counted_from`.** Section 6 says `last_verified` is "the day the clock
+  runs from (the verified stamp, else the entry date)". Under the legacy grace
+  those two are different days, and reporting the grace stamp as a
+  verification would claim a check nobody made. So `last_verified` is always
+  the real verified-or-recorded day, `age_days` counts from the clock, and a
+  row under grace also carries `age_counted_from` (the stamp's day).
+- **No stamp yet.** A recall on a brain that has not booted this version yet
+  (no `staleness_since`) treats the stamp as "now": full grace, never a flood.
+  Volatile facts are judged as usual.
+- **Protocol neurons are never judged** (recall, inspect), as maintenance's
+  reviews already skip them: their facts are standing instructions, not values
+  about the world.
+- **Counts.** `total_results` counts the rows left in `results`; `returned`
+  adds `possibly_stale`; `possibly_stale` and `possibly_stale_count` appear
+  only when the block is not empty, so a fresh answer carries no new field.
+- **revise status=verified** also returns `retired_targets: [{ target, id,
+  status }]` beside `unmatched`, which is where "comes back with the reason"
+  lives. `entries` accept the entry id as well as the exact text (the hint
+  points at `entry_id`). Preferences, errors and debts are unmatched: they
+  never go stale, so there is nothing to reconfirm.
+- **Detector share, measured** (`detectShelf` over the retrieval fixtures):
+  25 of 48 facts of `fixture.json` (a project brain of versions, prices and
+  hosts), 3 / 494, 3 / 494 and 0 / 494 in the three personal-prose haystacks.
+- **Descriptions, measured on the final text:** recall 964, learn 968, revise
+  946 characters.
+- **Retrieval benchmark** (`node benchmarks/retrieval/run.mjs`, keyword engine)
+  gives, with the feature on, the numbers published for the keyword engine
+  (measured on 2.7.2): recall@1 77%, recall@3 83%, MRR 0.806. The ranking does
+  not read shelf life at all; the partition happens in the server.
