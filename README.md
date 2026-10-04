@@ -49,7 +49,7 @@ Or in USDC. Send **USDC only** and **only on the network shown**; on any other n
 - **🧰 15 tools, one lifecycle** — Every read is a view of `crbro_inspect`; `crbro_learn`, `crbro_revise` and `crbro_forget` are the three stages of one rule (a new truth supersedes the old, an outdated one is retired, a dangerous one is removed), and every description says in its first sentence whether it reads or writes and which neighbour does the adjacent job. Down from 23 in 1.x without touching the brain on disk; `crbro_boot` maps the old names to the new calls *(v2.0+)*
 - **🔁 Lessons that outgrow their project** — Storing the same fact again counts it (`confirmations`, shown by `crbro_inspect` when above 1), and `crbro_consolidate` points out lessons that already live in two or more project neurons, with the `tech_` or `process_` neuron they belong in. It suggests; it never moves anything *(v2.7+)*
 - **🧷 Compact without losing the thread (opt-in)** — `npx crbro-memory install-hooks --compact` saves a redacted checkpoint of a Claude Code session before it compacts — last requests, task list, open items, folder and git remote — and hands it back when the session resumes, in 1,500 characters at most. No model call *(v2.7+)*
-- **📌 Open items in sight (opt-in)** — `npx crbro-memory install-mod` adds a Claude Code mod: the newest open item of the brain above the prompt, whole — its label apart, its numbered steps one per line, its age in color — with ‹ › to go through the rest, and `/pending` (alias `/pendientes`) with every one as a card: filter, *work on this*, *done* and *discard* behind a confirmation, and what was closed lately. It reads through `crbro_context` and closes through it; the brain file is only read when the server is not reachable. English or Spanish (`--lang`). Needs Claude Code 2.1.286 or later: the CLI and the desktop app's Code tab *(v2.8+)*
+- **📌 Open items in sight (on by default for Claude Code, opt-out)** — where Claude Code is installed, `crbro_boot` adds a Claude Code mod on its own, keeps it up to date, and has the assistant tell you once when it does: the newest open item of the brain above the prompt, whole — its label apart, its numbered steps one per line, its age in color — with ‹ › to go through the rest, and `/pending` (alias `/pendientes`) with every one as a card: filter, *work on this*, *done* and *discard* behind a confirmation, and what was closed lately. It reads through `crbro_context` and closes through it; the brain file is only read when the server is not reachable. English or Spanish (`--lang`). Needs Claude Code 2.1.286 or later: the CLI and the desktop app's Code tab. Remove it with `npx crbro-memory uninstall-mod` — it is never put back on its own — or keep it from being installed with `CRBRO_MOD=0` *(v2.8+)*
 - **🔎 Look back at your sessions (read-only)** — `crbro usage` sums the tokens each model took per session, subagents apart; `crbro postmortem` lists candidate lessons — corrections you had to repeat, a tool failing in a row, the same request asked again — and stores nothing. Both read Claude Code's own logs on your disk *(v2.7+)*
 - **⏱️ Memory at the moment of action (opt-in)** — `npx crbro-memory install-hooks --guard` wires a Claude Code `PreToolUse` hook: before a shell command runs, the stored errors, debts and patterns that mention *that command* are added to the model's context — three at most, once per session, never blocking. Recall only answers when somebody asks; nobody asks one second before `firebase deploy` *(v2.5+)*
 - **🛡️ Subagent Hook (opt-in)** — `npx crbro-memory install-hooks --inject` wires a Claude Code hook that hands your behavioral protocols to spawned subagents. Injection is off by default since 1.12 — three clean-control benchmark runs found no measured benefit in any model and real harm in small ones, and shipping an unmeasured default is not what this project does
@@ -222,7 +222,18 @@ A compaction keeps a summary and loses the detail that tells you where you were.
 
 The `install-boot` entry for Claude Code prints the same notice, so it is replaced (and put back by `uninstall-hooks --compact`). A CRBRO hook you wrote yourself is never replaced: the new hooks are added next to it with `--no-boot` / `--no-reminder`, so nothing is read twice. Only Claude Code has `PreCompact`; Codex and the rest are not touched. Like the other hooks, it never blocks: it reads no network, starts no `git` process, ends on its own if stdin never closes, and always exits 0.
 
-### 9. (Claude Code, optional) Open items in sight
+### 9. (Claude Code, on by default) Open items in sight
+
+Nothing to run: if Claude Code is on the machine (`~/.claude` exists), the first `crbro_boot` installs this mod exactly as `install-mod` below would, with the language on auto, and the boot answer carries a `mod_notice` the assistant passes on to you once — what was installed, that it appears in *new* Claude Code sessions, and how to remove it. After an update of CRBRO, a boot that finds the installed files different from the package (SHA-256) refreshes them, without touching `settings.json`, and says so once too; an older CRBRO on the same machine never takes back the files of a newer one. It runs once per server process (once per daemon), never fails or holds up the boot (it waits 1.5 s at most), and two sessions starting at once take turns through a lock file.
+
+To opt out:
+
+```bash
+npx crbro-memory uninstall-mod             # removes it and leaves a mark: it is never put back on its own
+CRBRO_MOD=0                                # in the MCP server's env: no automatic install or update at all
+```
+
+Taking `~/.claude/crbro-mods/crbro-pending` out of `CLAUDE_CODE_PLUGIN_DIRS` by hand counts as a no as well. `install-mod` lifts the mark. A `settings.json` that does not parse is never touched, and the same failure is not retried until that file or the package changes, or a day goes by. If the list already holds another `crbro-pending` (a checkout of this repository, say), nothing is installed beside it.
 
 ```bash
 npx crbro-memory install-mod               # --lang en | es | auto (default: leave it as it is; auto on a first install)
@@ -531,7 +542,17 @@ read its file or call `crbro_inspect`.
 `~/.claude/projects`, locally and read-only: `usage` reads only the model name
 and token counts of each response, `postmortem` only what you typed and the
 names of the tools called — never a tool's input or output — and redacts what
-it prints. What each defense is for, and how to report a vulnerability, is in
+it prints.
+
+The one thing CRBRO writes in Claude Code's folder without being asked is the
+open-items mod: `~/.claude/crbro-mods/` (the mod itself, a `state.json` with
+the opt-out mark and the installed version, and a lock and a notice that last
+seconds) and its one entry in `env.CLAUDE_CODE_PLUGIN_DIRS` of
+`~/.claude/settings.json`. Nothing else in that file is changed, nothing is
+downloaded or sent, and none of it happens without `~/.claude`, with
+`CRBRO_MOD=0`, or after `uninstall-mod`.
+
+What each defense is for, and how to report a vulnerability, is in
 [SECURITY.md](https://github.com/Octonove/crbro-memory/blob/master/SECURITY.md).
 
 ## License
