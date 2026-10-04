@@ -168,6 +168,16 @@ describe('install-mod', () => {
     expect(r.lines.join('\n')).toMatch(/Replaced your earlier copy "crbro-pendientes"/);
   });
 
+  it('warns about a copy in ~/.claude/mods and leaves it alone', () => {
+    const local = pluginAt(join(paths.claudeDir, 'mods', 'crbro-pendientes'), 'crbro-pendientes');
+    pluginAt(join(paths.claudeDir, 'mods', 'unrelated'), 'unrelated');
+    const before = snapshot(join(paths.claudeDir, 'mods'));
+    const r = installMod({ packageDir: PKG, home, ...win });
+    expect(r.elsewhere).toEqual([local]);
+    expect(r.lines.join('\n')).toContain(`Another copy is in ${local}`);
+    expect(snapshot(join(paths.claudeDir, 'mods'))).toBe(before);
+  });
+
   it('replaces another crbro-pending folder too, and never lists itself twice', () => {
     const checkout = pluginAt(join(home, 'src', 'crbro-memory', 'mods', 'crbro-pending'), 'crbro-pending');
     writeSettings({ env: { [PLUGIN_DIRS_VAR]: [paths.installedDir, checkout].join(';') } });
