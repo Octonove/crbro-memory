@@ -31,22 +31,29 @@ Open items in sight, for whoever installs CRBRO, not only for its author.
   `~/.claude/crbro-mods/crbro-pending` and that folder is added once to
   `env.CLAUDE_CODE_PLUGIN_DIRS` in `~/.claude/settings.json`, with `;` on
   Windows and `:` elsewhere. A file with a BOM is read, one that does not
-  parse is left alone, the write is atomic, a second run changes nothing. A
-  folder in that list holding a plugin named `crbro-pendientes` or
-  `crbro-pending` — the hand-made copy — is replaced in place and named, and
-  its folder is left on disk. A copy in `~/.claude/mods` is pointed out and
-  never touched. `uninstall-mod` removes the entry (and the
-  variable when it ends up empty) and deletes its own folder, nothing else.
+  parse is left alone, the write is atomic — through a symlink to its target,
+  with its permission bits and its indentation kept — and a second run
+  changes nothing. A folder in that list holding a plugin named
+  `crbro-pendientes` — the hand-made copy — is replaced in place and named,
+  and its folder is left on disk. Any other copy (another `crbro-pending` in
+  the list, or one in `~/.claude/mods`) is pointed out and never touched.
+  `uninstall-mod` removes the entry (and the variable, and an `env` block,
+  when they end up empty), puts back the `crbro-pendientes` folder it had
+  replaced if it is still there, and deletes its own folder, nothing else.
+  Folders that only the shell's `CLAUDE_CODE_PLUGIN_DIRS` lists are named,
+  never merged in silence.
 - **Verified like the hooks.** `install-mod --verify`, and `install-hooks
   --verify` too, compare the installed copy with the package file by file by
-  SHA-256 and check that `settings.json` lists it; exit 1 on any difference.
+  SHA-256 and check that `settings.json` lists it; a file the package does
+  not ship, or a second copy Claude Code would also load, is a difference
+  too. Exit 1 on any.
 - **Requirement.** Mods need Claude Code 2.1.286 or later, and are drawn in the
   CLI and in the desktop app's Code tab — not in Claude Desktop chat, Codex,
   Cursor or the VS Code extension. A new session picks the mod up.
 - **Package.** `mods/` ships; the mod's tests, `tsconfig.json` and generated
-  types do not (`mods/crbro-pending/.npmignore`). 18 tests for the mod under
-  `claude plugin test`, 28 for the installer in the vitest suite, which now
-  leaves `mods/` to the former.
+  types do not (`mods/crbro-pending/.npmignore`). The mod's tests run under
+  `claude plugin test`, the installer's in the vitest suite, which leaves
+  `mods/` to the former.
 
 ## [2.7.2] — 2026-10-03
 
