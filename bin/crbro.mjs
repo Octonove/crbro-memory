@@ -997,8 +997,9 @@ if (command === 'init') {
   // crbro_boot installs it on its own for whoever has Claude Code, and keeps
   // its files up to date (autoInstallMod in modinstall.ts); these commands are
   // the manual way in and the way out. uninstall-mod leaves a mark in
-  // ~/.claude/crbro-mods/state.json so the boot never puts it back, and
-  // install-mod lifts that mark. CRBRO_MOD=0 turns the automatic part off.
+  // ~/.claude/crbro-mods/state.json so the boot never puts it back, from any
+  // client, and install-mod lifts that mark. CRBRO_MOD=0 turns the automatic
+  // part off in the client whose env has it.
   //
   // mods/crbro-pending is a Claude Code mod: CRBRO's open items above the
   // prompt and /pending (alias /pendientes) with all of them as cards. It is
@@ -1028,6 +1029,8 @@ if (command === 'init') {
       process.exit(1);
     }
     for (const line of r.lines) console.log(line);
+    // The mod is out, but the mark that keeps the boot from putting it back is not.
+    if (r.markFailed) process.exitCode = 1;
   }).catch(err => {
     console.error('  ❌ ' + (err && err.code === 'ERR_MODULE_NOT_FOUND' ? 'Build required. Run: npm run build' : err.message));
     process.exit(1);

@@ -10,8 +10,10 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import {
   autoInstallMod, installMod, uninstallMod, verifyMod, modPaths, modNoticeOnBoot, resetModOnBoot, takeModNotice,
-  readModState, compareVersions, sha256, PLUGIN_DIRS_VAR,
+  readModState, compareVersions, sha256, startModOnBoot, PLUGIN_DIRS_VAR, NOTICE_SESSIONS,
 } from '../src/engine/modinstall.js';
+import { configFingerprint } from '../src/daemon/endpoint.js';
+import { cpSync } from 'node:fs';
 
 /**
  * The automatic install crbro_boot runs once per process: the open-items band
@@ -160,12 +162,17 @@ describe('automatic install', () => {
     expect(existsSync(paths.installedDir)).toBe(false);
   });
 
-  it('a folder taken out of the list by hand counts as a no, and stays out', async () => {
+  it('a folder taken out of the list by hand counts as a no, stays out, and is said once', async () => {
     writeSettings({ env: { [PLUGIN_DIRS_VAR]: 'C:\\plugins\\one' } });
     await auto();
     takeModNotice(home);
     writeSettings({ env: { [PLUGIN_DIRS_VAR]: 'C:\\plugins\\one' } });
-    expect(await auto()).toEqual({ action: 'skipped', reason: 'removed-by-hand' });
+    const r = await auto();
+    expect(r).toMatchObject({ action: 'skipped', reason: 'removed-by-hand' });
+    // Not silent: the user hears that it will not come back, and how to bring it back.
+    expect(r.notice).toMatch(/no longer in env\.CLAUDE_CODE_PLUGIN_DIRS/);
+    expect(r.notice).toContain('npx crbro-memory install-mod brings it back');
+    expect(takeModNotice(home)).toBe(r.notice);
     expect(readModState(home)).toMatchObject({ optedOut: true, optedOutBy: 'unlisted' });
     expect(settings().env[PLUGIN_DIRS_VAR]).toBe('C:\\plugins\\one');
     expect(await auto()).toEqual({ action: 'skipped', reason: 'opted-out' });
@@ -311,6 +318,155 @@ describe('modNoticeOnBoot', () => {
     await auto();
     expect(await modNoticeOnBoot({ home, packageDir: PKG, env: { CRBRO_MOD: '0' }, ...win })).toBeNull();
     expect(existsSync(paths.noticePath)).toBe(true);
+  });
+});
+
+describe('after review', () => {
+  it('CRBRO_MOD=0 is part of the daemon fingerprint: such a client is never served by a daemon without it', () => {
+    expect(configFingerprint({})).toBe(configFingerprint({ CRBRO_MOD: '1' }));
+    expect(configFingerprint({ CRBRO_MOD: '0' })).not.toBe(configFingerprint({}));
+    expect(configFingerprint({ CRBRO_MOD: 'off' })).toBe(configFingerprint({ CRBRO_MOD: '0' }));
+  });
+
+  it('a plugin list only the environment holds is not hidden behind settings.json: skipped, and said once', async () => {
+    writeSettings({ model: 'opus' });
+    const before = readFileSync(paths.settingsPath, 'utf8');
+    const r = await auto({ envDirs: 'C:\\plugins\\shell-only' });
+    expect(r).toMatchObject({ action: 'skipped', reason: 'env-list' });
+    expect(r.notice).toContain('C:\\plugins\\shell-only');
+    expect(readFileSync(paths.settingsPath, 'utf8')).toBe(before);
+    expect(existsSync(paths.installedDir)).toBe(false);
+    expect(takeModNotice(home)).toBe(r.notice);
+    // Said once: the next start writes nothing and says nothing.
+    const snap = snapshot(paths.claudeDir);
+    expect(await auto({ envDirs: 'C:\\plugins\\shell-only' })).toEqual({ action: 'skipped', reason: 'env-list' });
+    expect(snapshot(paths.claudeDir)).toBe(snap);
+    // Moved into settings.json, the mod goes in beside it.
+    writeSettings({ model: 'opus', env: { [PLUGIN_DIRS_VAR]: 'C:\\plugins\\shell-only' } });
+    expect((await auto({ envDirs: 'C:\\plugins\\shell-only' })).action).toBe('installed');
+    expect(listed()).toEqual(['C:\\plugins\\shell-only', paths.installedDir]);
+  });
+
+  it('an installed copy that differs only in line endings is current, not rewritten', async () => {
+    await auto();
+    takeModNotice(home);
+    const file = join(paths.installedDir, 'hooks', 'register.tsx');
+    writeFileSync(file, readFileSync(file, 'utf8').replace(/\r?\n/g, '\r\n'));
+    const snap = snapshot(paths.claudeDir);
+    expect(await auto()).toEqual({ action: 'current' });
+    expect(snapshot(paths.claudeDir)).toBe(snap);
+  });
+
+  it('two builds of one version do not rewrite each other at every start', async () => {
+    const other = join(home, 'other');
+    const otherPkg = join(other, 'mods', 'crbro-pending');
+    cpSync(PKG, otherPkg, { recursive: true });
+    writeFileSync(join(other, 'package.json'), JSON.stringify({ version: VERSION }));
+    writeFileSync(join(otherPkg, 'hooks', 'register.tsx'), readFileSync(join(PKG, 'hooks', 'register.tsx'), 'utf8') + '\n// a local build\n');
+    expect((await auto()).action).toBe('installed');
+    takeModNotice(home);
+    const snap = snapshot(paths.claudeDir);
+    expect(await auto({ packageDir: otherPkg })).toEqual({ action: 'skipped', reason: 'other-build' });
+    expect(snapshot(paths.claudeDir)).toBe(snap);
+    expect(await auto()).toEqual({ action: 'current' });
+    expect(takeModNotice(home)).toBeNull();
+    // A newer version does take over.
+    writeFileSync(join(other, 'package.json'), JSON.stringify({ version: '99.0.0' }));
+    expect((await auto({ packageDir: otherPkg })).action).toBe('updated');
+    expect(compareVersions('2.8.0-beta.1', '2.8.0')).toBe(-1);
+    expect(compareVersions('2.8.0', '2.8.0-beta.1')).toBe(1);
+  });
+
+  it('settings.json saved by someone else between read and write: their change is kept', async () => {
+    writeSettings({ model: 'opus' });
+    let once = false;
+    const r = await auto({
+      beforeSettingsWrite: () => {
+        if (once) return;
+        once = true;
+        writeSettings({ model: 'sonnet', theme: 'dark' });
+      },
+    });
+    expect(r.action).toBe('installed');
+    expect(settings()).toEqual({ model: 'sonnet', theme: 'dark', env: { [PLUGIN_DIRS_VAR]: paths.installedDir } });
+  });
+
+  it('settings.json that keeps changing: nothing written, and not written down as a failure', async () => {
+    writeSettings({ n: 0 });
+    let n = 0;
+    const r = await auto({ beforeSettingsWrite: () => writeSettings({ n: ++n }) });
+    expect(r.action).toBe('failed');
+    expect(settings().env).toBeUndefined();
+    expect(existsSync(paths.installedDir)).toBe(false);
+    expect(readModState(home).failed).toBeUndefined();
+    expect((await auto()).action).toBe('installed');
+  });
+
+  it('uninstall-mod while the boot is installing: its mark wins', async () => {
+    writeSettings({ model: 'opus' });
+    const r = await auto({ beforeSettingsWrite: () => uninstallMod({ home, ...win }) });
+    expect(r).toEqual({ action: 'skipped', reason: 'opted-out' });
+    expect(settings()).toEqual({ model: 'opus' });
+    expect(existsSync(paths.installedDir)).toBe(false);
+    expect(readModState(home).optedOut).toBe(true);
+  });
+
+  it('a lock that changed hands is not removed by the process that lost it', async () => {
+    writeSettings({});
+    const theirs = JSON.stringify({ token: 'theirs' });
+    const r = await auto({ beforeSettingsWrite: () => writeFileSync(paths.lockPath, theirs) });
+    expect(r.action).toBe('installed');
+    expect(readFileSync(paths.lockPath, 'utf8')).toBe(theirs);
+  });
+
+  it('keeps the CRLF line endings of a settings.json', async () => {
+    writeFileSync(paths.settingsPath, '{\r\n  "model": "opus"\r\n}\r\n');
+    await auto();
+    const raw = readFileSync(paths.settingsPath, 'utf8');
+    expect(raw).toContain('\r\n');
+    expect(raw.replace(/\r\n/g, '')).not.toContain('\n');
+  });
+
+  it('a set-aside folder left by a run that died is cleaned up', async () => {
+    const leftover = join(paths.modsDir, 'crbro-pending.4242.old');
+    mkdirSync(leftover, { recursive: true });
+    await auto();
+    expect(existsSync(leftover)).toBe(false);
+    expect(verifyMod({ packageDir: PKG, home, ...win }).ok).toBe(true);
+  });
+
+  it('uninstall-mod says so when it cannot leave its mark', () => {
+    mkdirSync(paths.statePath, { recursive: true });
+    const r = uninstallMod({ home, ...win });
+    expect(r.markFailed).toBe(true);
+    expect(r.lines.join('\n')).toMatch(/Could not write the opt-out mark/);
+  });
+
+  it('the notice goes to a few processes, once each, then is gone; a week-old one is not put back', async () => {
+    const r = await auto();
+    const heard: (string | null)[] = [];
+    for (let i = 0; i < NOTICE_SESSIONS + 1; i++) {
+      resetModOnBoot(); // a new process
+      heard.push(takeModNotice(home));
+      expect(takeModNotice(home)).toBeNull(); // the same process does not hear it twice
+    }
+    expect(heard.filter(Boolean)).toHaveLength(NOTICE_SESSIONS);
+    expect(heard[NOTICE_SESSIONS]).toBeNull();
+    expect(heard[0]).toBe(r.notice);
+
+    resetModOnBoot();
+    writeFileSync(join(paths.installedDir, 'hooks', 'register.tsx'), '// older\n');
+    await auto();
+    resetModOnBoot();
+    expect(takeModNotice(home, () => Date.now() + 8 * 24 * 3600 * 1000)).toMatch(/updated/);
+    resetModOnBoot();
+    expect(takeModNotice(home)).toBeNull();
+  });
+
+  it('starting the boot does not take the notice: only a boot that answers does', async () => {
+    startModOnBoot({ home, packageDir: PKG, env: ON, ...win, budgetMs: 10_000 }); // a boot that then fails
+    const take = startModOnBoot({ home, packageDir: PKG, env: ON, ...win, budgetMs: 10_000 });
+    expect(await take()).toMatch(/installed its Claude Code mod/);
   });
 });
 

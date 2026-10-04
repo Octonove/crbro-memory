@@ -123,10 +123,16 @@ export function configFingerprint(env: NodeJS.ProcessEnv = process.env): string 
   const v = (k: string) => (env[k] || '').trim();
   const semantic = ['0', 'off', 'false', 'no'].includes(v('CRBRO_SEMANTIC').toLowerCase()) ? 'off'
     : ['1', 'on', 'true', 'yes', 'force'].includes(v('CRBRO_SEMANTIC').toLowerCase()) ? 'on' : 'auto';
+  // CRBRO_MOD=0 keeps the Claude Code mod from being installed at boot
+  // (engine/modinstall.ts, MOD_OFF_VALUES): a daemon started without it
+  // must not install it for a client that has it.
+  const mod = ['0', 'off', 'false', 'no'].includes(v('CRBRO_MOD').toLowerCase()) ? 'nomod' : '';
   const parts = [
     semantic, v('CRBRO_SEMANTIC_MODEL'), v('CRBRO_SEMANTIC_DTYPE'), v('CRBRO_SEMANTIC_HOME'), v('CRBRO_SEMANTIC_FLOOR'),
     v('CRBRO_RECENCY'), v('CRBRO_SYNONYMS'), v('CRBRO_AUTOBACKUP') === '0' ? 'nobackup' : '', v('CRBRO_BACKUP_DIR'),
   ];
+  // Appended only when set, so every fingerprint without it stays what it was.
+  if (mod) parts.push(mod);
   return createHash('sha256').update(parts.join('\u0000')).digest('hex').slice(0, 12);
 }
 

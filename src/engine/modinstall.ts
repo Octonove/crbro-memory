@@ -27,12 +27,13 @@
 //
 // `autoInstallMod` is what crbro_boot runs, once per process: the band
 // reaches everyone who has CRBRO and Claude Code without a command, and says
-// so once (mod_notice in the boot answer). It installs the way install-mod
-// does, refreshes the files alone when the package ships different ones, and
-// stays out for good once uninstall-mod has been run (state.json, optedOut),
-// when the folder was taken out of the list by hand, or with CRBRO_MOD=0.
+// so (mod_notice in the boot answer). It installs the way install-mod does,
+// refreshes the files alone when the package ships different ones, and stays
+// out for good once uninstall-mod has been run (state.json, optedOut) or the
+// folder was taken out of the list by hand; CRBRO_MOD=0 keeps the client it
+// is set in out of it.
 
-import { createHash } from 'crypto';
+import { createHash, randomBytes } from 'crypto';
 import {
   cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmdirSync, rmSync,
   statSync, writeFileSync, promises as fsp,
@@ -163,17 +164,22 @@ function pluginNameAt(dir: string, home: string): string | null {
 }
 
 type Settings = Record<string, any>;
-type SettingsRead = { ok: true; settings: Settings | null; indent: string | number } | { ok: false; error: string };
+type SettingsRead =
+  | { ok: true; settings: Settings | null; indent: string | number; eol: string; hash: string }
+  | { ok: false; error: string };
 
 const isObject = (v: unknown): v is Settings => typeof v === 'object' && v !== null && !Array.isArray(v);
 
 /** settings.json as an object, null when absent; refuses anything it would have to guess about. */
 function readSettings(settingsPath: string): SettingsRead {
-  if (!existsSync(settingsPath)) return { ok: true, settings: null, indent: 2 };
+  if (!existsSync(settingsPath)) return { ok: true, settings: null, indent: 2, eol: '\n', hash: 'absent' };
   let settings: unknown;
   let raw: string;
+  let hash: string;
   try {
-    raw = readFileSync(settingsPath, 'utf8');
+    const buf = readFileSync(settingsPath);
+    hash = sha256(buf);
+    raw = buf.toString('utf8');
     settings = JSON.parse(raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw);
   } catch (e) {
     return { ok: false, error: `${settingsPath} exists but could not be parsed — not touching it.\n     ${(e as Error).message}` };
@@ -203,17 +209,30 @@ function readSettings(settingsPath: string): SettingsRead {
       return { ok: false, error: `pluginConfigs["${key}"].options in ${settingsPath} is not an object — not touching it.` };
     }
   }
-  // Written back with the indentation it came with (tabs or n spaces).
+  // Written back with the indentation and the line endings it came with.
   const indent = /\n([ \t]+)"/.exec(raw)?.[1] ?? 2;
-  return { ok: true, settings, indent };
+  const eol = /\r\n/.test(raw) ? '\r\n' : '\n';
+  return { ok: true, settings, indent, eol, hash };
 }
+
+/** Thrown by writeAtomic when settings.json changed after it was read: the caller merges again. */
+const SETTINGS_CHANGED = 'ESETTINGSCHANGED';
+/** Errors a later start may well not meet (a file held open, an antivirus scan): never written down as a failure. */
+const TRANSIENT = new Set(['EBUSY', 'EPERM', 'EACCES', 'ENOTEMPTY', 'EEXIST', SETTINGS_CHANGED]);
 
 /**
  * Writes settings.json through a .tmp + rename. A symlinked settings.json
  * (dotfiles) is written at its target, so the link stays a link, and the
- * file keeps its permission bits: its env block often carries tokens.
+ * file keeps its permission bits (on POSIX: its env block often carries
+ * tokens) and its line endings. With `expectHash`, the file is hashed once
+ * more right before the rename and nothing is written if it is no longer
+ * what was read: Claude Code or an editor saved it in between, and their
+ * change must not be lost. On Windows the renamed file takes the folder's
+ * inherited ACL, and a hard link to settings.json is not kept.
  */
-function writeAtomic(settingsPath: string, settings: Settings, indent: string | number = 2): void {
+function writeAtomic(
+  settingsPath: string, settings: Settings, indent: string | number = 2, eol = '\n', expectHash?: string,
+): void {
   let target = settingsPath;
   try {
     if (lstatSync(settingsPath).isSymbolicLink()) target = realpathSync(settingsPath);
@@ -228,7 +247,14 @@ function writeAtomic(settingsPath: string, settings: Settings, indent: string | 
   }
   const tmp = `${target}.${process.pid}.tmp`;
   try {
-    writeFileSync(tmp, JSON.stringify(settings, null, indent) + '\n', mode === undefined ? 'utf8' : { encoding: 'utf8', mode });
+    let text = JSON.stringify(settings, null, indent) + '\n';
+    if (eol !== '\n') text = text.replace(/\n/g, eol);
+    writeFileSync(tmp, text, mode === undefined ? 'utf8' : { encoding: 'utf8', mode });
+    if (expectHash !== undefined && settingsFingerprint(target) !== expectHash) {
+      const changed = new Error(`${settingsPath} changed while it was being written.`) as NodeJS.ErrnoException;
+      changed.code = SETTINGS_CHANGED;
+      throw changed;
+    }
     renameSync(tmp, target);
   } catch (e) {
     rmSync(tmp, { force: true });
@@ -240,33 +266,83 @@ function splitList(value: string | undefined, sep: string): string[] {
   return (value ?? '').split(sep).map(s => s.trim()).filter(Boolean);
 }
 
-const STAGING = /^crbro-pending\.\d+\.tmp$/;
+const STAGING = /^crbro-pending\.\d+\.(tmp|old)$/;
 
-/** Copies the shipped files into a fresh folder, then swaps it in for the old one. */
+function copyFailed(installedDir: string, e: unknown): NodeJS.ErrnoException {
+  const err = new Error(
+    `could not replace ${installedDir} (${(e as Error).message}).\n` +
+    '     Close the sessions and terminals using that folder and run it again.',
+  ) as NodeJS.ErrnoException;
+  err.code = (e as NodeJS.ErrnoException)?.code;
+  return err;
+}
+
+/**
+ * Copies the shipped files into a fresh folder, then swaps it in: the old
+ * folder is renamed aside first and put back if the swap fails, so the
+ * listed folder is never left missing or half written.
+ */
 function copyMod(packageDir: string, installedDir: string): string[] {
   const files = modFiles(packageDir);
   const parent = path.dirname(installedDir);
   mkdirSync(parent, { recursive: true });
-  // A staging folder left by a run that failed half way: its pid is gone.
+  // A staging or set-aside folder left by a run that failed half way: its pid is gone.
   for (const name of readdirSync(parent)) {
     if (STAGING.test(name)) rmSync(path.join(parent, name), { recursive: true, force: true, maxRetries: 3 });
   }
   const staging = `${installedDir}.${process.pid}.tmp`;
+  const aside = `${installedDir}.${process.pid}.old`;
+  let setAside = false;
   try {
     for (const rel of files) {
       const target = path.join(staging, ...rel.split('/'));
       mkdirSync(path.dirname(target), { recursive: true });
       cpSync(path.join(packageDir, ...rel.split('/')), target);
     }
-    rmSync(installedDir, { recursive: true, force: true, maxRetries: 3 });
+    if (existsSync(installedDir)) { renameSync(installedDir, aside); setAside = true; }
     renameSync(staging, installedDir);
   } catch (e) {
+    if (setAside && !existsSync(installedDir)) {
+      try { renameSync(aside, installedDir); } catch { /* left as .old: the next run puts in a fresh copy */ }
+    }
     rmSync(staging, { recursive: true, force: true });
-    throw new Error(
-      `could not replace ${installedDir} (${(e as Error).message}).\n` +
-      '     Close the sessions and terminals using that folder and run it again.',
-    );
+    throw copyFailed(installedDir, e);
   }
+  if (setAside) {
+    try { rmSync(aside, { recursive: true, force: true, maxRetries: 3 }); } catch { /* the next run removes it */ }
+  }
+  return files;
+}
+
+/**
+ * copyMod for crbro_boot: the same steps through fs.promises, so a slow disk
+ * or a file an antivirus holds (rm's retries) never stalls the event loop,
+ * which in daemon mode serves every conversation.
+ */
+async function copyModAsync(packageDir: string, installedDir: string): Promise<string[]> {
+  const files = modFiles(packageDir);
+  const parent = path.dirname(installedDir);
+  await fsp.mkdir(parent, { recursive: true });
+  for (const name of await fsp.readdir(parent)) {
+    if (STAGING.test(name)) await fsp.rm(path.join(parent, name), { recursive: true, force: true, maxRetries: 3 });
+  }
+  const staging = `${installedDir}.${process.pid}.tmp`;
+  const aside = `${installedDir}.${process.pid}.old`;
+  let setAside = false;
+  try {
+    for (const rel of files) {
+      const target = path.join(staging, ...rel.split('/'));
+      await fsp.mkdir(path.dirname(target), { recursive: true });
+      await fsp.copyFile(path.join(packageDir, ...rel.split('/')), target);
+    }
+    if (existsSync(installedDir)) { await fsp.rename(installedDir, aside); setAside = true; }
+    await fsp.rename(staging, installedDir);
+  } catch (e) {
+    if (setAside && !existsSync(installedDir)) await fsp.rename(aside, installedDir).catch(() => undefined);
+    await fsp.rm(staging, { recursive: true, force: true }).catch(() => undefined);
+    throw copyFailed(installedDir, e);
+  }
+  if (setAside) await fsp.rm(aside, { recursive: true, force: true, maxRetries: 3 }).catch(() => undefined);
   return files;
 }
 
@@ -317,6 +393,10 @@ export interface ModState {
   installed?: boolean;
   /** The CRBRO version whose files are in crbro-mods/crbro-pending. */
   version?: string;
+  /** treeHash of the files written there: tells two builds of one version apart. */
+  pkg?: string;
+  /** The shell-only plugin list the boot last said it would not override (its hash), so it is said once. */
+  envListNoticed?: string;
   /** The last automatic attempt that failed, so it is not retried at every start for the same cause. */
   failed?: { pkg: string; settings: string; at: string; error: string };
 }
@@ -358,21 +438,29 @@ function packageVersion(packageDir: string): string | null {
   }
 }
 
-/** -1, 0 or 1; anything that is not x.y.z compares equal, so it never blocks an update. */
+/**
+ * -1, 0 or 1 on x.y.z; a prerelease (2.8.0-beta.1) is below its release.
+ * Anything that is not x.y.z compares equal, so it never blocks an update.
+ */
 export function compareVersions(a: string, b: string): number {
-  const parse = (v: string) => /^(\d+)\.(\d+)\.(\d+)/.exec(v)?.slice(1).map(Number) ?? null;
+  const parse = (v: string) => /^(\d+)\.(\d+)\.(\d+)(-)?/.exec(v);
   const x = parse(a);
   const y = parse(b);
   if (!x || !y) return 0;
-  for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i]! < y[i]! ? -1 : 1;
+  for (let i = 1; i <= 3; i++) if (Number(x[i]) !== Number(y[i])) return Number(x[i]) < Number(y[i]) ? -1 : 1;
+  if (!!x[4] !== !!y[4]) return x[4] ? -1 : 1;
   return 0;
 }
 
-/** One hash for every shipped file and its path: what "this version of the mod" means. */
-function packageHash(packageDir: string): string {
+/**
+ * One hash for every shipped file and its path, read with LF line endings:
+ * what "this build of the mod" means. A git checkout with autocrlf and the
+ * npm copy of the same release hash the same.
+ */
+function treeHash(dir: string): string {
   const h = createHash('sha256');
-  for (const rel of modFiles(packageDir)) {
-    h.update(rel).update('\0').update(sha256(readFileSync(path.join(packageDir, ...rel.split('/'))))).update('\0');
+  for (const rel of modFiles(dir)) {
+    h.update(rel).update('\0').update(lfSha(readFileSync(path.join(dir, ...rel.split('/'))))).update('\0');
   }
   return h.digest('hex');
 }
@@ -405,6 +493,8 @@ export interface InstallModResult {
   /** Folders the process environment lists that settings.json does not. */
   envOnly: string[];
   lang?: ModLang;
+  /** The error is one a later attempt may not meet (a file held open, settings.json being saved). */
+  transient?: boolean;
   /** What the CLI prints, one line each. */
   lines: string[];
 }
@@ -415,7 +505,17 @@ const REQUIREMENT_LINES = [
   '     Open a new session to see the band; /pending (or /pendientes) opens the list.',
 ];
 
-export function installMod(opts: ModOptions & { lang?: ModLang }): InstallModResult {
+export interface InstallOptions extends ModOptions {
+  lang?: ModLang;
+  /** The automatic install at boot: it never lifts an opt-out mark, and stops if one appears. */
+  auto?: boolean;
+  /** The files, when the caller already copied them (the boot copies without blocking). */
+  copied?: string[];
+  /** Tests only: runs right before settings.json is written. */
+  beforeSettingsWrite?: () => void;
+}
+
+export function installMod(opts: InstallOptions): InstallModResult {
   const platform = opts.platform ?? process.platform;
   const { claudeDir, settingsPath, installedDir, replacedPath } = modPaths(opts.home);
   const base: InstallModResult = {
@@ -433,12 +533,41 @@ export function installMod(opts: ModOptions & { lang?: ModLang }): InstallModRes
     return { ...base, ok: true, skipped, lines: [`  ⚪ ${skipped}`] };
   }
 
+  // The files go in first, so the time between reading settings.json and
+  // writing it back is as short as it can be.
   let files: string[];
   try {
-    files = copyMod(opts.packageDir, installedDir);
+    files = opts.copied ?? copyMod(opts.packageDir, installedDir);
   } catch (e) {
-    return { ...base, error: (e as Error).message };
+    return { ...base, error: (e as Error).message, transient: TRANSIENT.has((e as NodeJS.ErrnoException).code ?? '') };
   }
+
+  // Read, merge and write; if settings.json changed in between, merge again
+  // onto what is there now. Three tries, then give up without writing.
+  for (let attempt = 0; ; attempt++) {
+    const fresh = readSettings(settingsPath);
+    if (!fresh.ok) return { ...base, files, error: fresh.error };
+    const merged = mergeInto(fresh, opts, platform);
+    try {
+      opts.beforeSettingsWrite?.();
+      // uninstall-mod ran while this was under way: its answer wins. Checked
+      // last, right before the write; uninstall-mod writes its mark first.
+      if (opts.auto && readModState(opts.home).optedOut) return { ...base, ok: true, files, skipped: 'opted-out' };
+      recordReplaced(replacedPath, merged.replaced, opts.home, platform);
+      if (merged.changed) writeAtomic(settingsPath, merged.settings, fresh.indent, fresh.eol, fresh.hash);
+      return finishInstall(opts, merged, base, files, platform);
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === SETTINGS_CHANGED && attempt < 2) continue;
+      return { ...base, files, error: (e as Error).message, transient: TRANSIENT.has((e as NodeJS.ErrnoException).code ?? '') };
+    }
+  }
+}
+
+type Merged = { settings: Settings; changed: boolean; next: string[]; replaced: Replaced[]; alreadyListed: boolean };
+
+/** The mod's folder put into the list of a settings.json just read, and its language. Writes nothing. */
+function mergeInto(read: Extract<SettingsRead, { ok: true }>, opts: InstallOptions, platform: NodeJS.Platform): Merged {
+  const { installedDir } = modPaths(opts.home);
   const settings: Settings = read.settings ?? {};
   const before = JSON.stringify(settings);
   const sep = pathListSeparator(platform);
@@ -484,27 +613,42 @@ export function installMod(opts: ModOptions & { lang?: ModLang }): InstallModRes
   } else if (opts.lang === 'auto') {
     dropLanguage(settings);
   }
+  return { settings, changed: JSON.stringify(settings) !== before, next, replaced, alreadyListed };
+}
 
-  // Written down before settings.json, so a failure there never loses it.
-  if (replaced.length > 0) {
-    const known = readReplaced(replacedPath);
-    const merged = [...known, ...replaced.filter(r => !known.some(k => samePath(k.dir, r.dir, opts.home, platform)))];
-    writeFileSync(replacedPath, JSON.stringify({ replaced: merged }, null, 2) + '\n', 'utf8');
-  }
+/** What install-mod replaced, written down before settings.json so a failure there never loses it. */
+function recordReplaced(replacedPath: string, replaced: Replaced[], home: string, platform: NodeJS.Platform): void {
+  if (replaced.length === 0) return;
+  const known = readReplaced(replacedPath);
+  const all = [...known, ...replaced.filter(r => !known.some(k => samePath(k.dir, r.dir, home, platform)))];
+  writeFileSync(replacedPath, JSON.stringify({ replaced: all }, null, 2) + '\n', 'utf8');
+}
 
-  const changed = JSON.stringify(settings) !== before;
-  if (changed) writeAtomic(settingsPath, settings, read.indent);
+function finishInstall(
+  opts: InstallOptions, merged: Merged, base: InstallModResult, files: string[], platform: NodeJS.Platform,
+): InstallModResult {
+  const { installedDir, settingsPath } = modPaths(opts.home);
+  const sep = pathListSeparator(platform);
+  const { changed, next, replaced, alreadyListed } = merged;
 
   // Installed on purpose: any earlier opt-out is lifted, and the automatic
-  // install knows which version these files are.
+  // install knows which build these files are. The automatic install itself
+  // never lifts a mark: that is the user's to do.
   const state = readModState(opts.home);
   const wasOptedOut = state.optedOut === true;
-  delete state.optedOut;
-  delete state.optedOutAt;
-  delete state.optedOutBy;
+  if (!opts.auto) {
+    delete state.optedOut;
+    delete state.optedOutAt;
+    delete state.optedOutBy;
+  }
   delete state.failed;
   state.installed = true;
   state.version = packageVersion(opts.packageDir) ?? undefined;
+  try {
+    state.pkg = treeHash(opts.packageDir);
+  } catch {
+    delete state.pkg;
+  }
   try {
     writeModState(opts.home, state);
   } catch {
@@ -513,7 +657,7 @@ export function installMod(opts: ModOptions & { lang?: ModLang }): InstallModRes
 
   const lines: string[] = [];
   lines.push(`  ✅ Mod ${MOD_NAME} copied (${files.length} files).`);
-  if (wasOptedOut) lines.push('     CRBRO keeps it up to date at boot again (CRBRO_MOD=0 turns that off).');
+  if (wasOptedOut && !opts.auto) lines.push('     CRBRO keeps it up to date at boot again (CRBRO_MOD=0 turns that off).');
   lines.push(`     ${installedDir}`);
   for (const r of replaced) {
     lines.push(`  ✅ Replaced your earlier copy "${r.name}" in ${PLUGIN_DIRS_VAR}: ${r.dir}`);
@@ -580,6 +724,11 @@ export interface UninstallModResult {
   removedDir: boolean;
   /** Folders install-mod had replaced, put back in the list. */
   restored: string[];
+  /**
+   * ~/.claude exists but the opt-out mark could not be written: the boot may
+   * install the mod again. The CLI says so and exits 1.
+   */
+  markFailed: boolean;
   lines: string[];
 }
 
@@ -587,14 +736,15 @@ export function uninstallMod(opts: Omit<ModOptions, 'packageDir'>): UninstallMod
   const platform = opts.platform ?? process.platform;
   const { settingsPath, installedDir, modsDir, replacedPath } = modPaths(opts.home);
   const base: UninstallModResult = {
-    ok: false, installedDir, settingsPath, changed: false, removedDir: false, restored: [], lines: [],
+    ok: false, installedDir, settingsPath, changed: false, removedDir: false, restored: [], markFailed: false, lines: [],
   };
 
   // The opt-out mark goes first, whatever happens next: crbro_boot never
   // installs the mod again on its own until install-mod is run.
   const { claudeDir, noticePath } = modPaths(opts.home);
   let marked = false;
-  if (existsSync(claudeDir)) {
+  const markWanted = existsSync(claudeDir);
+  if (markWanted) {
     try {
       writeModState(opts.home, { optedOut: true, optedOutAt: new Date().toISOString(), optedOutBy: 'uninstall-mod' });
       rmSync(noticePath, { force: true });
@@ -671,9 +821,12 @@ export function uninstallMod(opts: Omit<ModOptions, 'packageDir'>): UninstallMod
   if (marked) {
     lines.push('     CRBRO will not install it again on its own (marked in ~/.claude/crbro-mods/state.json);');
     lines.push('     npx crbro-memory install-mod brings it back.');
+  } else if (markWanted) {
+    lines.push('  ⚠️  Could not write the opt-out mark (~/.claude/crbro-mods/state.json): CRBRO may install the mod');
+    lines.push('     again at its next start. Fix that folder and run this again, or set CRBRO_MOD=0 in every MCP client.');
   }
 
-  return { ...base, ok: true, changed, removedDir, restored, lines };
+  return { ...base, ok: true, changed, removedDir, restored, markFailed: markWanted && !marked, lines };
 }
 
 // ─── Verify ──────────────────────────────────────────────────────
@@ -839,27 +992,40 @@ export function formatModVerify(r: ModVerifyReport): string {
 //
 // crbro_boot runs this once per process (once per daemon too). It installs
 // the mod for anyone who has Claude Code (~/.claude exists) and refreshes its
-// files when the package ships different ones, so an update of CRBRO reaches
-// the band with no command. What it changes, it says once, through a notice
-// the next boot hands to the agent (mod_notice). It never:
-//   - runs with CRBRO_MOD=0 (or off / false / no);
-//   - comes back after uninstall-mod (state.json optedOut), or after the
-//     folder was taken out of CLAUDE_CODE_PLUGIN_DIRS by hand;
-//   - touches a settings.json it cannot parse, or adds a second band beside
-//     another crbro-pending already in the list;
-//   - throws or holds up the boot: every failure is caught and written down,
-//     and the same failure is not retried until the package or settings.json
-//     changes, or a day has gone by.
+// files when the package ships a newer build, so an update of CRBRO reaches
+// the band with no command. What it changes, it says through a notice the
+// next boots hand to the agent (mod_notice). It never:
+//   - runs in a client whose env has CRBRO_MOD=0 (or off / false / no); a
+//     daemon started without it does not serve that client, because the
+//     variable is part of configFingerprint;
+//   - comes back after uninstall-mod (state.json optedOut), from any client,
+//     or after the folder was taken out of CLAUDE_CODE_PLUGIN_DIRS by hand
+//     (said once, with the way back);
+//   - touches a settings.json it cannot parse, adds a second band beside
+//     another crbro-pending already in the list, or writes a list into
+//     settings.json while only the environment holds one: settings.json's env
+//     wins over it, and the folders listed there would stop loading (said
+//     once instead);
+//   - throws or stalls the boot: files are copied through fs.promises, every
+//     failure is caught, and one that is not transient is written down and
+//     not retried until the package or settings.json changes, or a day has
+//     gone by.
 // Two sessions starting at once take turns through an exclusive lock file
-// (auto.lock, taken over after a minute if its owner died), and the write is
-// checked afterwards: the path listed once, every other key kept.
+// (auto.lock, released only by its owner, taken over after a minute if that
+// owner died); settings.json is written only if it is still what was read,
+// and the write is checked afterwards.
 
 export const MOD_SWITCH_VAR = 'CRBRO_MOD';
-const OFF_VALUES = new Set(['0', 'off', 'false', 'no']);
+/** The values of CRBRO_MOD that turn the automatic install off; src/daemon/endpoint.ts mirrors them. */
+export const MOD_OFF_VALUES: ReadonlySet<string> = new Set(['0', 'off', 'false', 'no']);
 const DEFAULT_STALE_LOCK_MS = 60_000;
 const DEFAULT_RETRY_FAILED_MS = 24 * 60 * 60 * 1000;
 /** How long crbro_boot waits for the automatic install before answering without its notice. */
 export const BOOT_BUDGET_MS = 1_500;
+/** A notice is handed to this many server processes, in case one is a background run nobody reads... */
+export const NOTICE_SESSIONS = 3;
+/** ...and dropped after this long, whoever saw it. */
+const NOTICE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
 export type AutoModAction = 'installed' | 'updated' | 'current' | 'skipped' | 'failed';
 
@@ -867,11 +1033,11 @@ export interface AutoModResult {
   action: AutoModAction;
   /**
    * Why it was skipped or failed: disabled, no-claude-code, not-in-package,
-   * opted-out, removed-by-hand, another-copy, newer-installed, failed-before,
-   * busy, or the error.
+   * opted-out, removed-by-hand, another-copy, env-list, newer-installed,
+   * other-build, failed-before, busy, or the error.
    */
   reason?: string;
-  /** The sentence for the user, when something was installed or updated. */
+  /** The sentence for the user, when there is one to say. */
   notice?: string;
 }
 
@@ -881,15 +1047,20 @@ export interface AutoModOptions extends ModOptions {
   now?: () => number;
   staleLockMs?: number;
   retryFailedMs?: number;
+  /** Tests only: runs right before settings.json is written. */
+  beforeSettingsWrite?: () => void;
 }
 
 export function modSwitchedOff(env: NodeJS.ProcessEnv = process.env): boolean {
-  return OFF_VALUES.has(String(env[MOD_SWITCH_VAR] ?? '').trim().toLowerCase());
+  return MOD_OFF_VALUES.has(String(env[MOD_SWITCH_VAR] ?? '').trim().toLowerCase());
 }
 
 const HOW_TO_REMOVE =
-  'To remove it: npx crbro-memory uninstall-mod (CRBRO will not put it back), or set CRBRO_MOD=0 to stop automatic installs.';
-const TELL_ONCE = 'Tell the user this once, briefly, in their language.';
+  'To remove it: npx crbro-memory uninstall-mod (CRBRO will not put it back, whichever app runs it), ' +
+  'or set CRBRO_MOD=0 in the env of every MCP client that runs CRBRO to stop automatic installs.';
+const TELL_ONCE =
+  'Tell the user this once, briefly, in their language. It is handed to up to ' +
+  `${NOTICE_SESSIONS} sessions in case one is a background run nobody reads; if the user plainly knows already, skip it.`;
 
 function installedNotice(version: string | null, r: InstallModResult): string {
   const parts = [
@@ -916,17 +1087,38 @@ function updatedNotice(version: string | null, installedDir: string, files: numb
   ].join(' ');
 }
 
-async function takeLock(lockPath: string, now: () => number, staleMs: number): Promise<boolean> {
+function unlistedNotice(installedDir: string, settingsPath: string): string {
+  return [
+    `CRBRO's Claude Code mod "${MOD_NAME}" (the open-items band and /pending) is no longer in env.${PLUGIN_DIRS_VAR} of ${settingsPath}, where CRBRO had put it.`,
+    'CRBRO takes that as a no and will not put it back on its own (marked in ~/.claude/crbro-mods/state.json).',
+    `If the user did not take it out (a settings.json restored or rewritten by another tool, say), npx crbro-memory install-mod brings it back; its files are in ${installedDir}.`,
+    TELL_ONCE,
+  ].join(' ');
+}
+
+function envListNotice(list: string[], settingsPath: string): string {
+  return [
+    `CRBRO did not install its Claude Code mod "${MOD_NAME}" (the open-items band and /pending): ${PLUGIN_DIRS_VAR} is set in the environment Claude Code starts from (${list.join(', ')}) and not in ${settingsPath},`,
+    'whose env block wins over the environment: writing the variable there would stop those plugins from loading.',
+    `To get the band, move that variable into the env block of ${settingsPath}; the next CRBRO start adds the mod beside those folders.`,
+    'npx crbro-memory uninstall-mod (or CRBRO_MOD=0) stops CRBRO from looking at this again.',
+    TELL_ONCE,
+  ].join(' ');
+}
+
+/** The lock's token when taken, null when another live process holds it. */
+async function takeLock(lockPath: string, now: () => number, staleMs: number): Promise<string | null> {
   await fsp.mkdir(path.dirname(lockPath), { recursive: true });
+  const token = `${process.pid}.${randomBytes(8).toString('hex')}`;
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       const fh = await fsp.open(lockPath, 'wx');
       try {
-        await fh.writeFile(JSON.stringify({ pid: process.pid, at: new Date(now()).toISOString() }));
+        await fh.writeFile(JSON.stringify({ token, pid: process.pid, at: new Date(now()).toISOString() }));
       } finally {
         await fh.close();
       }
-      return true;
+      return token;
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e;
       let age = 0;
@@ -935,47 +1127,114 @@ async function takeLock(lockPath: string, now: () => number, staleMs: number): P
       } catch {
         continue; // Released between the two calls: try again.
       }
-      if (age <= staleMs) return false;
-      // Its owner died half way: take it over, once.
-      await fsp.rm(lockPath, { force: true });
+      if (age <= staleMs) return null;
+      // Its owner died half way. Renamed aside, not deleted: of two processes
+      // that both found it stale, only one rename succeeds.
+      const aside = `${lockPath}.${token}.stale`;
+      try {
+        await fsp.rename(lockPath, aside);
+      } catch {
+        return null;
+      }
+      try {
+        // What was renamed is a lock somebody took a moment ago: give it back.
+        if (now() - (await fsp.stat(aside)).mtimeMs <= staleMs) {
+          if (!existsSync(lockPath)) await fsp.rename(aside, lockPath);
+          return null;
+        }
+      } catch {
+        return null;
+      }
+      await fsp.rm(aside, { force: true }).catch(() => undefined);
     }
   }
-  return false;
+  return null;
+}
+
+/** Removes the lock only if it is still the one this token took. */
+async function releaseLock(lockPath: string, token: string): Promise<void> {
+  try {
+    const held = JSON.parse(await fsp.readFile(lockPath, 'utf8'))?.token;
+    if (held === token) await fsp.rm(lockPath, { force: true });
+  } catch {
+    // Gone, or not ours to remove.
+  }
+}
+
+/** The list settings.json sets, or null when it does not set the variable. */
+function settingsList(settingsPath: string, platform: NodeJS.Platform): string[] | null {
+  const read = readSettings(settingsPath);
+  if (!read.ok) return null;
+  const value = read.settings?.env?.[PLUGIN_DIRS_VAR];
+  return typeof value === 'string' ? splitList(value, pathListSeparator(platform)) : null;
 }
 
 /** Folders in the list holding another crbro-pending (a checkout): installing beside it would draw two bands. */
 function listedOtherPending(settingsPath: string, home: string, platform: NodeJS.Platform, envDirs?: string): string[] {
-  const read = readSettings(settingsPath);
-  if (!read.ok) return [];
-  const value = read.settings?.env?.[PLUGIN_DIRS_VAR];
-  const list = splitList(typeof value === 'string' ? value : (envDirs ?? process.env[PLUGIN_DIRS_VAR]), pathListSeparator(platform));
+  const list = settingsList(settingsPath, platform)
+    ?? splitList(envDirs ?? process.env[PLUGIN_DIRS_VAR], pathListSeparator(platform));
   const { installedDir } = modPaths(home);
   return list.filter(dir => !samePath(dir, installedDir, home, platform) && pluginNameAt(dir, home) === MOD_NAME);
 }
 
-/** Leaves the notice for whichever crbro_boot comes next, in this process or another. */
+/**
+ * Folders only the environment lists: settings.json does not set the
+ * variable, the environment does. Writing a list into settings.json would
+ * hide them from Claude Code.
+ */
+function environmentOnlyList(settingsPath: string, home: string, platform: NodeJS.Platform, envDirs?: string): string[] {
+  if (settingsList(settingsPath, platform) !== null) return [];
+  const { installedDir } = modPaths(home);
+  return splitList(envDirs ?? process.env[PLUGIN_DIRS_VAR], pathListSeparator(platform))
+    .filter(dir => !samePath(dir, installedDir, home, platform));
+}
+
+/** Leaves a notice for the next crbro_boot calls, in this process or another; a newer one replaces it. */
 function leaveNotice(home: string, text: string): void {
   const { noticePath } = modPaths(home);
   const tmp = `${noticePath}.${process.pid}.tmp`;
-  writeFileSync(tmp, JSON.stringify({ notice: text, at: new Date().toISOString() }) + '\n', 'utf8');
+  const notice = { notice: text, id: randomBytes(8).toString('hex'), at: new Date().toISOString(), delivered: 0 };
+  writeFileSync(tmp, JSON.stringify(notice) + '\n', 'utf8');
   renameSync(tmp, noticePath);
 }
 
+/** Notice ids this process has handed over: a later boot of the same conversation, or a subagent's, does not hear it again. */
+const handedOver = new Set<string>();
+
 /**
- * Takes the pending notice, if any. The rename is atomic, so of two boots
- * reaching for it at once exactly one gets it: the notice is said once.
+ * Takes the pending notice, if any, for this boot. The rename is atomic, so
+ * of two boots reaching for it at once exactly one gets it. It goes back for
+ * a later process until NOTICE_SESSIONS processes have had it or it is a
+ * week old: the first boot to take it may be a background run, a scheduled
+ * `claude -p` or another app, with nobody reading.
  */
-export function takeModNotice(home: string): string | null {
+export function takeModNotice(home: string, now: () => number = Date.now): string | null {
   const { noticePath } = modPaths(home);
-  const taken = `${noticePath}.${process.pid}.${Date.now()}.taken`;
+  try {
+    const peek = JSON.parse(readFileSync(noticePath, 'utf8'));
+    if (typeof peek?.id === 'string' && handedOver.has(peek.id)) return null;
+  } catch {
+    return null;
+  }
+  const taken = `${noticePath}.${process.pid}.${randomBytes(4).toString('hex')}.taken`;
   try {
     renameSync(noticePath, taken);
   } catch {
     return null;
   }
   try {
-    const text = JSON.parse(readFileSync(taken, 'utf8'))?.notice;
-    return typeof text === 'string' && text ? text : null;
+    const n = JSON.parse(readFileSync(taken, 'utf8'));
+    const text = n?.notice;
+    if (typeof text !== 'string' || !text) return null;
+    const id = typeof n.id === 'string' ? n.id : null;
+    if (id) handedOver.add(id);
+    const delivered = (Number(n.delivered) || 0) + 1;
+    const age = now() - Date.parse(String(n.at));
+    if (id && delivered < NOTICE_SESSIONS && age < NOTICE_MAX_AGE_MS && !existsSync(noticePath)) {
+      writeFileSync(taken, JSON.stringify({ ...n, delivered }) + '\n', 'utf8');
+      renameSync(taken, noticePath);
+    }
+    return text;
   } catch {
     return null;
   } finally {
@@ -996,7 +1255,7 @@ export async function autoInstallMod(opts: AutoModOptions): Promise<AutoModResul
   }
   if (readModState(opts.home).optedOut) return { action: 'skipped', reason: 'opted-out' };
 
-  const pkg = packageHash(opts.packageDir);
+  const pkg = treeHash(opts.packageDir);
   const version = packageVersion(opts.packageDir);
   const before = readModState(opts.home).failed;
   if (before && before.pkg === pkg && before.settings === settingsFingerprint(settingsPath)
@@ -1004,21 +1263,28 @@ export async function autoInstallMod(opts: AutoModOptions): Promise<AutoModResul
     return { action: 'skipped', reason: 'failed-before' };
   }
 
-  if (!(await takeLock(lockPath, now, opts.staleLockMs ?? DEFAULT_STALE_LOCK_MS))) {
+  const token = await takeLock(lockPath, now, opts.staleLockMs ?? DEFAULT_STALE_LOCK_MS);
+  if (!token) {
     // Another session is doing it right now; its notice reaches whoever boots next.
     return { action: 'skipped', reason: 'busy' };
   }
 
-  const fail = (error: string): AutoModResult => {
-    try {
-      const state = readModState(opts.home);
-      state.failed = { pkg, settings: settingsFingerprint(settingsPath), at: new Date(now()).toISOString(), error };
-      writeModState(opts.home, state);
-    } catch {
-      // Nowhere to write it down: the next start tries again, still without touching anything.
+  // A failure is written down so the same cause is not retried at every
+  // start; one that may well pass next time (a file held open, settings.json
+  // being saved by someone else) is not.
+  const fail = (error: string, transient = false): AutoModResult => {
+    if (!transient) {
+      try {
+        const state = readModState(opts.home);
+        state.failed = { pkg, settings: settingsFingerprint(settingsPath), at: new Date(now()).toISOString(), error };
+        writeModState(opts.home, state);
+      } catch {
+        // Nowhere to write it down: the next start tries again, still without touching anything.
+      }
     }
     return { action: 'failed', reason: error };
   };
+  const isTransient = (e: unknown) => TRANSIENT.has((e as NodeJS.ErrnoException)?.code ?? '');
 
   try {
     // Read again under the lock: the session before may have just changed it.
@@ -1028,90 +1294,140 @@ export async function autoInstallMod(opts: AutoModOptions): Promise<AutoModResul
     if (v.settings_unreadable) return fail(`${settingsPath} could not be parsed — not touching it.`);
 
     if (v.installed && v.listed) {
-      if (v.files.every(f => f.status === 'same')) {
-        // Installed by hand before this existed: remember it, quietly. A
-        // copy already known writes nothing at all.
-        const known: ModState = { ...state, installed: true, version: state.version ?? version ?? undefined, failed: undefined };
+      if (v.files.every(f => f.status === 'same' || f.status === 'line_endings_only')) {
+        // Installed by hand before this existed, or by another build with the
+        // same files: remember it, quietly. A copy already known writes nothing.
+        const newest = version && (!state.version || compareVersions(version, state.version) > 0) ? version : state.version;
+        const known: ModState = { ...state, installed: true, version: newest ?? undefined, pkg, failed: undefined };
         if (JSON.stringify(stateClean(known)) !== JSON.stringify(stateClean(state))) writeModState(opts.home, known);
         return { action: 'current' };
       }
       // A newer CRBRO elsewhere on this machine (another client, a global
       // install) put its files there: an older one does not take them back.
-      if (version && state.version && compareVersions(version, state.version) < 0) {
-        return { action: 'skipped', reason: 'newer-installed' };
+      const order = version && state.version ? compareVersions(version, state.version) : 0;
+      if (order < 0) return { action: 'skipped', reason: 'newer-installed' };
+      // Another build of the same version (a checkout beside the npm copy)
+      // wrote them and they are still as it left them: it keeps them, or the
+      // two would rewrite each other at every start.
+      if (order === 0 && state.pkg && state.pkg !== pkg && treeHash(installedDir) === state.pkg) {
+        return { action: 'skipped', reason: 'other-build' };
       }
       // Only the files: the list already names the folder.
-      const files = copyMod(opts.packageDir, installedDir);
-      writeModState(opts.home, { ...state, installed: true, version: version ?? undefined, failed: undefined });
+      const files = await copyModAsync(opts.packageDir, installedDir);
+      writeModState(opts.home, { ...state, installed: true, version: version ?? undefined, pkg, failed: undefined });
       const notice = updatedNotice(version, installedDir, files.length);
       leaveNotice(opts.home, notice);
       return { action: 'updated', notice };
     }
 
     // It was in once and is no longer listed: somebody took it out by hand.
-    // That is an answer too, and it is kept like uninstall-mod's.
+    // That is an answer too, kept like uninstall-mod's, and said once.
     if (state.installed && !v.listed) {
       writeModState(opts.home, {
         ...state, optedOut: true, optedOutAt: new Date(now()).toISOString(), optedOutBy: 'unlisted', failed: undefined,
       });
-      return { action: 'skipped', reason: 'removed-by-hand' };
+      const notice = unlistedNotice(installedDir, settingsPath);
+      leaveNotice(opts.home, notice);
+      return { action: 'skipped', reason: 'removed-by-hand', notice };
     }
 
     if (listedOtherPending(settingsPath, opts.home, platform, opts.envDirs).length > 0) {
       return { action: 'skipped', reason: 'another-copy' };
     }
 
-    let r = installMod({ packageDir: opts.packageDir, home: opts.home, platform, envDirs: opts.envDirs });
-    if (!r.ok) return fail(r.error ?? 'install-mod failed');
-    if (r.skipped) return { action: 'skipped', reason: 'no-claude-code' };
-    // Checked after writing: something else (Claude Code itself, an editor)
-    // may have written settings.json at the same moment. Once more if so.
-    if (!verifyMod({ ...opts, platform }).listed) {
-      r = installMod({ packageDir: opts.packageDir, home: opts.home, platform, envDirs: opts.envDirs });
-      if (!r.ok) return fail(r.error ?? 'install-mod failed');
+    const envOnly = environmentOnlyList(settingsPath, opts.home, platform, opts.envDirs);
+    if (envOnly.length > 0) {
+      const seen = sha256(Buffer.from(envOnly.join('\n'), 'utf8'));
+      if (state.envListNoticed === seen) return { action: 'skipped', reason: 'env-list' };
+      writeModState(opts.home, { ...state, envListNoticed: seen });
+      const notice = envListNotice(envOnly, settingsPath);
+      leaveNotice(opts.home, notice);
+      return { action: 'skipped', reason: 'env-list', notice };
     }
+
+    const hadDir = existsSync(installedDir);
+    const dropCopy = async () => {
+      if (!hadDir) await fsp.rm(installedDir, { recursive: true, force: true, maxRetries: 3 }).catch(() => undefined);
+    };
+    let files: string[];
+    try {
+      files = await copyModAsync(opts.packageDir, installedDir);
+    } catch (e) {
+      return fail((e as Error).message, isTransient(e));
+    }
+    const install = () => installMod({
+      packageDir: opts.packageDir, home: opts.home, platform, envDirs: opts.envDirs, auto: true, copied: files,
+      beforeSettingsWrite: opts.beforeSettingsWrite,
+    });
+    let r = install();
+    // Checked after writing: something else (Claude Code itself, an editor)
+    // may have written settings.json right after. Once more if so.
+    if (r.ok && !r.skipped && !verifyMod({ ...opts, platform }).listed) r = install();
+    if (r.ok && r.skipped === 'opted-out') {
+      await dropCopy();
+      return { action: 'skipped', reason: 'opted-out' };
+    }
+    if (!r.ok) {
+      await dropCopy();
+      return fail(r.error ?? 'install-mod failed', r.transient);
+    }
+    if (r.skipped) return { action: 'skipped', reason: 'no-claude-code' };
     const notice = installedNotice(version, r);
     leaveNotice(opts.home, notice);
     return { action: 'installed', notice };
   } catch (e) {
-    return fail((e as Error).message);
+    return fail((e as Error).message, isTransient(e));
   } finally {
-    await fsp.rm(lockPath, { force: true }).catch(() => undefined);
+    await releaseLock(lockPath, token);
   }
 }
 
 let onBoot: Promise<AutoModResult> | null = null;
 
 /**
- * What crbro_boot calls: starts the automatic install the first time in this
- * process, waits for it at most `budgetMs`, and returns the notice waiting to
- * be said, or null. Never throws. A notice that misses the budget is said by
- * the next boot.
+ * What crbro_boot calls first: starts the automatic install the first time in
+ * this process and returns the function to call once the boot has its answer
+ * ready. That function waits for the install until `budgetMs` after the start
+ * and takes the notice waiting to be said, or null. Neither throws. A boot
+ * that fails never calls it, so it never takes a notice it cannot hand over.
  */
-export async function modNoticeOnBoot(opts: Partial<AutoModOptions> & { budgetMs?: number } = {}): Promise<string | null> {
+export function startModOnBoot(opts: Partial<AutoModOptions> & { budgetMs?: number } = {}): () => Promise<string | null> {
   try {
     const home = opts.home ?? homedir();
     const env = opts.env ?? process.env;
-    if (modSwitchedOff(env) || !existsSync(modPaths(home).claudeDir)) return null;
+    if (modSwitchedOff(env) || !existsSync(modPaths(home).claudeDir)) return async () => null;
     if (!onBoot) {
       const packageDir = opts.packageDir ?? path.join(__dirname, '..', '..', 'mods', MOD_NAME);
       onBoot = autoInstallMod({ ...opts, home, env, packageDir })
         .catch(e => ({ action: 'failed' as const, reason: (e as Error).message }));
     }
+    const running = onBoot;
     let timer: NodeJS.Timeout | undefined;
     const budget = new Promise<void>(resolve => {
       timer = setTimeout(resolve, opts.budgetMs ?? BOOT_BUDGET_MS);
       timer.unref?.();
     });
-    await Promise.race([onBoot, budget]);
-    if (timer) clearTimeout(timer);
-    return takeModNotice(home);
+    return async () => {
+      try {
+        await Promise.race([running, budget]);
+        if (timer) clearTimeout(timer);
+        return takeModNotice(home, opts.now);
+      } catch {
+        return null;
+      }
+    };
   } catch {
-    return null;
+    return async () => null;
   }
 }
 
-/** Tests only: lets a second boot in the same process run the automatic install again. */
+/** startModOnBoot and its notice in one call. */
+export async function modNoticeOnBoot(opts: Partial<AutoModOptions> & { budgetMs?: number } = {}): Promise<string | null> {
+  return startModOnBoot(opts)();
+}
+
+/** Tests only: the next boot in this process behaves as the first boot of a new process. */
 export function resetModOnBoot(): void {
   onBoot = null;
+  handedOver.clear();
 }
