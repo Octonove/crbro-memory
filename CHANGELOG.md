@@ -2,6 +2,57 @@
 
 All notable changes to CRBRO.
 
+## [Unreleased]
+
+Shelf life, less noise: what 2.9.0 flagged on a real brain was mostly not a
+value that may have changed. Design and measurements in
+[`docs/design/staleness.md`](docs/design/staleness.md) §15. Still 15 tools;
+no parameter or description changes.
+
+- **The noise it answers.** Run read-only over one real personal brain, 2.9.0
+  flagged 810 of 4,858 active entries (17 %) on the first day, every one an
+  inferred-`volatile` fact, none graced. 336 were notes a miner had imported
+  (agent checklists with URLs) and a large share of the rest were dated
+  records of something done. The statements of state that should warn were a
+  minority among them.
+- **A miner line never warns.** A fact with `source: "miner"` and no explicit
+  `shelf_life` is `permanent`, inferred, `shelf_reason: "miner"`. An explicit
+  `shelf_life` still wins. Lines mined before the miner stamped its source
+  (1.5.x) are stored with `source: "session"` and are not reached by this.
+- **A dated record of something done is history.** An unmarked fact whose
+  first sentence names a date (2026-06-18, 18/06/2026, 18-jun-2026, jun 2026,
+  June 18, 2026…) and a finished action (completado, desplegado, publicado,
+  verificado, corregido, migrado, rechazado…, "se publicó", fixed, deployed,
+  released, completed, verified… or an event noun: fix, hotfix, rechazo,
+  incidente, release) is `permanent`, inferred, `shelf_reason: "history"`.
+  Not when that sentence opens a period with its date ("desde el 18-sep",
+  "since", "as of", "a partir de", "a 4-oct"), looks ahead (will, planned,
+  programado, pendiente, caduca, expires, renews, "para el <date>"), speaks of
+  the present (actualmente, currently, ahora, último, last, latest), or states
+  something before the action ("la API corre en el puerto 8443, desplegada el
+  …"). Actualizado, cambiado, configurado, updated, changed and set are not
+  finished actions: they bring a new current value. A line with no date is
+  never history. Only the first sentence is judged; that and the other
+  limits are in the design doc.
+- **The legacy grace reaches inferred-volatile facts.** In a brain that
+  predates shelf life — manifest not stamped yet, or stamped more than a
+  minute after `created` — an unmarked, never-verified line the detector
+  infers volatile and recorded before the stamp starts counting up to 45 days
+  before the stamp, staggered by its text hash like every other graced line:
+  nothing volatile is flagged on upgrade day, and those lines come due spread
+  over days 46–90. A fact marked volatile by hand gets no grace, and in a
+  brain born with shelf life (created and stamped together) nothing changes.
+  Read from `created` and `staleness_since`; nothing new is stored.
+  **Measured on the same brain:** 806 flagged on the stamp day with 2.9.0,
+  695 with the history rule alone, 0 with all of 2.9.1; 289 at +60 days and
+  1,318 at +91. The grace postpones, it does not reduce: the imported
+  checklists that fix 1 cannot see are still the largest group.
+- **`view=status` says the version that runs.** `crbro_version` is read once,
+  when the server loads, not from disk on every call: a process whose files
+  npx replaced reported the new version while it ran the old code. When the
+  package on disk says another version, status adds `installed_version` and a
+  `version_note` (restart the client to load it).
+
 ## [2.9.0] — 2026-10-04
 
 Shelf life: what may have changed since it was last checked comes apart.

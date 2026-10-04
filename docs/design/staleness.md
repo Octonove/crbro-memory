@@ -107,7 +107,7 @@ switched off with `CRBRO_STALENESS=0` (recall then answers exactly as 2.8).
 
 | kind | default class | settable? | clock |
 |---|---|---|---|
-| fact | inferred from content: `volatile` if a rule below fires, else `normal` | yes, `shelf_life` on crbro_learn | `verified ?? added` |
+| fact | inferred: `permanent` when the miner imported it or it is a dated record of something done (2.9.1, §15); else from content, `volatile` if a rule below fires, else `normal` | yes, `shelf_life` on crbro_learn | `verified ?? added` |
 | decision | `durable` | no | `entry_verified[id] ?? date` |
 | pattern | `durable` | no | `entry_verified[id] ?? entry_dates[id]` |
 | preference | `permanent` | no | — |
@@ -170,7 +170,9 @@ stale      = class ≠ permanent and age_days > window(class)
   moved the flood to one later day; each line now starts up to half a window
   before the stamp, by a fixed share of a hash of its text.)* **Volatile facts get no grace**: a port saved five
   months ago deserves the warning on the first recall that serves it, which is
-  exactly the case the feedback is about. Decisions and patterns get the same
+  exactly the case the feedback is about. *(Revised in 2.9.1, §15: in a
+  brain that predates shelf life, inferred-volatile facts get the staggered
+  grace too; a fact marked volatile by hand still gets none.)* Decisions and patterns get the same
   grace (they are `durable` by kind). The stamp is one field in a file boot
   already writes (`last_boot`); no neuron is touched.
 - A recorded date in the future counts as age 0. A **check** dated more than
@@ -366,7 +368,7 @@ The new fields must merge with meaning between machines.
 
 | risk | how it is contained | what would show it failed |
 |---|---|---|
-| **Flooding with warnings** — every recall half "possibly stale", users learn to ignore the block | per-recall cost bounded by `limit`; legacy grace for non-volatile facts; conservative detector; preferences and errors never flagged; kill switch | maintenance `stale_entries` on a brain after upgrade, reported as measured. *Not* U5: the twelve original facts are seeded fresh and none can pass its window, so U5 cannot see false warnings (§13, limits of the benchmark) |
+| **Flooding with warnings** — every recall half "possibly stale", users learn to ignore the block | per-recall cost bounded by `limit`; legacy grace for non-volatile facts (2.9.1: for inferred-volatile ones too in a brain that predates shelf life, and dated records and miner lines are history, §15); conservative detector; preferences and errors never flagged; kill switch | maintenance `stale_entries` on a brain after upgrade, reported as measured. *Not* U5: the twelve original facts are seeded fresh and none can pass its window, so U5 cannot see false warnings (§13, limits of the benchmark) |
 | **Agents stop answering** — a stale row read as "no answer" | rows are moved, not hidden; the hint says "nothing current matched" and how to proceed; the original `memory` + `stale` thresholds must still pass | U5 in the pre-registration |
 | **Hedging instead of checking** — "it was 14, maybe" | the hint names the cheap checks first; the scorer counts a hedged old value apart from a bare one | `hedged` outcome in `stale-unmarked` |
 | **Ranking cost** | none by construction: the partition runs after ranking, on rows already materialised; one map lookup per row | the deterministic retrieval benchmarks must give identical numbers with the feature on (they run on fresh fixtures) |
@@ -698,3 +700,150 @@ does not make it *check*, and the detector missed four of six values that
 changed. On the old-but-true controls, sonnet stays 6/6 and now adds "may be
 out of date" to the volatile one; haiku abstains on it, as on 2.8.0. Full
 tables, per task, in the pre-registration.
+
+## 15. 2.9.1: the noise a real brain showed
+
+### What was measured
+
+On 2026-10-04, the 2.9.0 code (`factStaleness` and `entryStaleness` from
+`dist/`, run by a read-only script that never loaded `Brain` and wrote
+nothing) was run over one real personal brain with the stamp set to that
+day. Only counts are reported here; no text from that brain is in this
+repository.
+
+- 4,858 active entries; **810 flagged on the first day (17 %)**, every one an
+  inferred-`volatile` fact and none graced. By rule: url 347, host 135,
+  version 123, price 66, path 55, port 54, config 30.
+- Read by hand, most of them were not values that may have changed. 336
+  were notes a miner had imported — agent checklists of the shape
+  "- x Navigate to https://…" — and a large share of the rest were **dated
+  records of something done**, of the shapes "FIX <what> (<dd-mmm-yyyy>)",
+  "FASE <n> completada (<mmm yyyy>)", "<yyyy-mm-dd>: VERIFICADO que …",
+  "RECHAZO <store> v<x.y.z> (<dd mmm yyyy>)". They do not go stale: they tell what happened, and
+  they carry their own date.
+- The statements of state that should warn (a service on a localhost port,
+  a plan's yearly price, a minimum version) were a minority, buried.
+
+### What changes
+
+1. **A miner line never warns.** A fact with `source: "miner"` and no
+   explicit `shelf_life` is `permanent`, inferred, with
+   `shelf_reason: "miner"`. An imported note is a copy of something written
+   elsewhere, at some other time; it was never this memory's claim about the
+   present. An explicit `shelf_life` still wins, and the same text learned by
+   a session is judged by its content as before.
+2. **A dated record of something done is history.** An unmarked fact whose
+   head reads as one is `permanent`, inferred, `shelf_reason: "history"`. The
+   rule, in full in `src/engine/shelf.ts` (`isDatedRecord`), works on the
+   line's *head* — its text up to the first sentence end or line break:
+   - the head names a date (2026-06-18, 18/06/2026, 18-jun-2026, 18 de junio
+     de 2026, jun 2026, June 18, 2026; a day and a month without a year
+     count);
+   - it has a word of finished action: a Spanish participle (completado,
+     implementada, resueltos, desplegado, publicado, verificado, corregido,
+     migrado, creado, añadido, rechazado, medido…), an unambiguous Spanish
+     preterite ("desplegó", "migró", "se publicó"), an English past form
+     (fixed, deployed, released, completed, verified, migrated, checked…), or
+     an event noun (fix, hotfix, rechazo, incidente, outage, release,
+     ejecución);
+   - and nothing in the head turns it back into a statement of state: a
+     date that opens a period ("desde el 18-sep", "since", "a partir de",
+     "as of", "from", "hasta", "a 4-oct"); a word of the future or of a
+     deadline (will, planned, previsto, programado, pendiente, caduca,
+     expires, vence, renews, next, "para el <date>", "by <date>" — "tarea
+     programada" and "scheduled task" name a kind of job and do not count);
+     a word of the present (actualmente, currently, ahora, now, todavía,
+     still, vigente, último, last, latest); or a verb of state *before* the
+     first finished-action word ("la API corre en el puerto 8443, desplegada
+     el 2026-06-18" is a port that also says when it went up).
+
+   Words that bring a new current value without telling an event —
+   actualizado, cambiado, configurado, renovado, updated, changed, set — are
+   deliberately not finished-action words. A line without a date is never
+   history, however past its verbs: it cannot show its age.
+
+   Both sides are pinned in `tests/staleness.noise.test.ts` with invented
+   examples: records that become history, and dated statements of state
+   that stay volatile ("Desde el 18-sep el panel escucha en el puerto 9443",
+   "A 4-oct el precio es 35 €", "Comprobado a 4-oct-2026: cuesta 35 €",
+   "Since 2026-09-18 … port 9443 (migrated)", "… renovado el 2026-01-03;
+   caduca el 2027-01-03", "Último despliegue: v2.2.0, publicado el …").
+3. **Legacy brains: inferred-volatile facts get the grace too.**
+   `StalenessContext.legacy` is true when the brain predates shelf life:
+   its manifest is not stamped yet, its `created` cannot be read, or the
+   stamp came more than a minute after `created` (`initialize()` writes both
+   in the same call; an upgrade stamps at the first boot of a new version,
+   days or months later). There an unmarked line that the detector infers
+   volatile, never verified and recorded before the stamp, starts its clock
+   up to half a window (45 days) before the stamp, by the same fixed share
+   of its text hash as every other graced line: on upgrade day nothing
+   volatile is past its window, and the old lines come due spread over days
+   46–90. A fact **marked** volatile by hand gets no grace, and neither does
+   any line in a brain born stamped (a seeded, synced or imported old line
+   there still warns at once — the agentic benchmark's seeded brains keep
+   their 2.9.0 behaviour). Nothing new is stored: the decision is read from
+   `created` and `staleness_since`, both already in the manifest
+   (`stalenessContextOf`).
+4. **`view=status` says the version the process runs.** `crbro_version` is
+   read once, when the server module loads (`src/version.ts`). When the
+   package on disk says another version — npx replaced the files under a
+   running process, which on 2026-10-04 made an old process report the new
+   version while it ran the old code — status adds `installed_version` and a
+   `version_note` asking to restart the client. The version the MCP
+   `initialize` reports is the running one too.
+
+No tool, parameter or description changes; `shelf_reason` gains two values
+(`history`, `miner`) in the learn response and in recall's staleness view.
+
+### Measured after the change
+
+The same read-only pass, this branch's `dist/`, the brain's own `created`
+(it predates shelf life; its manifest was not stamped yet), stamp = the day
+of the run. The brain had changed by a few lines since the first pass.
+
+| | flagged on the stamp day | +60 days | +91 days |
+|---|--:|--:|--:|
+| 2.9.0 | 806 of 4,860 | — | — |
+| fix 2 alone (no legacy grace) | 695 | — | — |
+| 2.9.1 (fixes 1–3) | 0 | 289 | 1,318 |
+
+851 facts now read as history. **The grace postpones; it does not reduce.**
+Every inferred-volatile line comes due within one volatile window of the
+stamp, as designed, and by then more lines have crossed 90 days than on
+upgrade day. Of what is left, the largest group is still the imported
+checklists, and **none of them carries `source: "miner"`**: the miner has
+stamped its lines only since 1.5.x, these were mined before that and are
+stored with `source: "session"`, so fix 1 does not reach them. They need
+either a one-off re-marking of that brain or a rule for the shape of agent
+checklists; neither is in this change, which keeps to the source the miner
+writes.
+
+On this repository's own texts — the retrieval fixtures and haystacks and
+the agentic tasks, 2,425 strings — the history rule fires once (a migration
+record in the retrieval set, `normal` before, so none of the volatile counts reported
+for 2.9.0 moves), and no agentic task changes class.
+
+The precision of fix 2 was checked by reading a random sample of the lines
+it classifies on that brain: they were records (published posts, finished
+phases, runs of scheduled tasks, fixes, verifications). The misses seen go
+the safe way: a record with "pendiente" or "todavía" in its head stays
+where 2.9.0 put it.
+
+### Limits
+
+- **The head decides.** "Migrado a Hetzner (3-oct-2026). El host es
+  10.0.0.5." is history whole: details after the first sentence are not
+  judged, and the record's own date is what tells the reader how old that
+  host is. Equally, a head that is a statement of state is not rescued by a
+  record later in the line.
+- **A verification is a record.** "2026-06-18: VERIFICADO que el puerto es
+  9443" is history by this rule: it says what held on that day, dated. A
+  value meant to warn should be stored as a statement of state, not as a
+  dated check.
+- Spanish and English only, like the rest of the detector. The word lists
+  are short on purpose; a record they miss stays where 2.9.0 put it.
+- Lines imported before the miner stamped its source are not recognised
+  (above).
+- `legacy` is read from `created`: a brain whose manifest was recreated
+  after the upgrade (a restore that rewrote `created`) loses the grace for
+  its volatile lines — the 2.9.0 behaviour, not a new failure.
