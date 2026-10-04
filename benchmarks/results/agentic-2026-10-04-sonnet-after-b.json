@@ -1,0 +1,2395 @@
+{
+  "date": "2026-10-04",
+  "model": "sonnet",
+  "claude_code": "2.1.270 (Claude Code)",
+  "reps": 3,
+  "label": "after-b",
+  "only": [
+    "memory",
+    "stale",
+    "control-prompt",
+    "control-absent",
+    "stale-unmarked-b",
+    "stale-unmarked-b-free",
+    "old-true-b"
+  ],
+  "crbro": {
+    "version": "2.8.0",
+    "commit": "a2bffef3aa02f2e1beb17c535938a92ade369bf8",
+    "dirty": false,
+    "dist": "C:\\Users\\Usuario\\Desktop\\proyectos\\Desarrollo IDEAS\\crbro-memory\\dist"
+  },
+  "compared_with": "benchmarks/results/agentic-2026-10-04-sonnet-before-b.json",
+  "aggregate": {
+    "baseline": {
+      "memory": {
+        "n": 12,
+        "correct": 0,
+        "stale": 0,
+        "hedged": 0,
+        "abstain": 11,
+        "wrong": 1,
+        "cost_usd": 0.052777599999999994,
+        "turns": 12
+      },
+      "stale": {
+        "n": 12,
+        "correct": 0,
+        "stale": 0,
+        "hedged": 0,
+        "abstain": 12,
+        "wrong": 0,
+        "cost_usd": 0.0497336,
+        "turns": 12
+      },
+      "control-prompt": {
+        "n": 6,
+        "correct": 6,
+        "stale": 0,
+        "hedged": 0,
+        "abstain": 0,
+        "wrong": 0,
+        "cost_usd": 0.025064799999999998,
+        "turns": 6
+      },
+      "control-absent": {
+        "n": 6,
+        "correct": 6,
+        "stale": 0,
+        "hedged": 0,
+        "abstain": 0,
+        "wrong": 0,
+        "cost_usd": 0.0248388,
+        "turns": 6
+      },
+      "stale-unmarked-b": {
+        "n": 18,
+        "correct": 9,
+        "stale": 0,
+        "hedged": 0,
+        "abstain": 9,
+        "wrong": 0,
+        "cost_usd": 0.17238739999999997,
+        "turns": 41
+      },
+      "stale-unmarked-b-free": {
+        "n": 6,
+        "correct": 0,
+        "stale": 0,
+        "hedged": 0,
+        "abstain": 0,
+        "wrong": 6,
+        "cost_usd": 0.0383392,
+        "turns": 6
+      },
+      "old-true-b": {
+        "n": 6,
+        "correct": 2,
+        "stale": 0,
+        "hedged": 0,
+        "abstain": 4,
+        "wrong": 0,
+        "cost_usd": 0.0649356,
+        "turns": 15
+      }
+    },
+    "crbro": {
+      "memory": {
+        "n": 12,
+        "correct": 12,
+        "stale": 0,
+        "hedged": 0,
+        "abstain": 0,
+        "wrong": 0,
+        "cost_usd": 0.2643492,
+        "turns": 36
+      },
+      "stale": {
+        "n": 12,
+        "correct": 12,
+        "stale": 0,
+        "hedged": 0,
+        "abstain": 0,
+        "wrong": 0,
+        "cost_usd": 0.26688200000000006,
+        "turns": 36
+      },
+      "control-prompt": {
+        "n": 6,
+        "correct": 6,
+        "stale": 0,
+        "hedged": 0,
+        "abstain": 0,
+        "wrong": 0,
+        "cost_usd": 0.13039620000000002,
+        "turns": 16
+      },
+      "control-absent": {
+        "n": 6,
+        "correct": 6,
+        "stale": 0,
+        "hedged": 0,
+        "abstain": 0,
+        "wrong": 0,
+        "cost_usd": 0.1746104,
+        "turns": 23
+      },
+      "stale-unmarked-b": {
+        "n": 18,
+        "correct": 0,
+        "stale": 12,
+        "hedged": 6,
+        "abstain": 0,
+        "wrong": 0,
+        "cost_usd": 0.4901438000000001,
+        "turns": 58
+      },
+      "stale-unmarked-b-free": {
+        "n": 6,
+        "correct": 0,
+        "stale": 3,
+        "hedged": 3,
+        "abstain": 0,
+        "wrong": 0,
+        "cost_usd": 0.1808528,
+        "turns": 21
+      },
+      "old-true-b": {
+        "n": 6,
+        "correct": 6,
+        "stale": 0,
+        "hedged": 0,
+        "abstain": 0,
+        "wrong": 0,
+        "cost_usd": 0.15249100000000002,
+        "turns": 18
+      }
+    }
+  },
+  "verdict": {
+    "checks": [
+      {
+        "id": 1,
+        "rule": "crbro correct on memory+stale >= 80%",
+        "value": 100,
+        "pass": true
+      },
+      {
+        "id": 2,
+        "rule": "crbro stale answers <= 5%",
+        "value": 0,
+        "pass": true
+      },
+      {
+        "id": 3,
+        "rule": "crbro invents no more than baseline on control-absent",
+        "value": [
+          0,
+          0
+        ],
+        "pass": true
+      },
+      {
+        "id": 4,
+        "rule": "no arm under 90% on control-prompt",
+        "value": 100,
+        "pass": true
+      }
+    ],
+    "enough_reps": true,
+    "claim_allowed": true
+  },
+  "verdict_unmarked": null,
+  "verdict_unmarked_b": {
+    "kind": "stale-unmarked-b",
+    "checks": [
+      {
+        "id": "U1",
+        "rule": "crbro correct on stale-unmarked >= 75%",
+        "value": 0,
+        "pass": false
+      },
+      {
+        "id": "U2",
+        "rule": "crbro gives the old value unflagged in <= 10% of stale-unmarked",
+        "value": 66.7,
+        "pass": false
+      },
+      {
+        "id": "U3",
+        "rule": "crbro correct >= baseline correct on stale-unmarked",
+        "value": [
+          0,
+          9
+        ],
+        "pass": false
+      },
+      {
+        "id": "U4",
+        "rule": "fewer unflagged old values than the before build (same model, same n)",
+        "value": [
+          12,
+          18
+        ],
+        "pass": true
+      },
+      {
+        "id": "U5",
+        "rule": "the four original thresholds still hold in this run",
+        "value": [
+          true,
+          true,
+          true,
+          true
+        ],
+        "pass": true
+      }
+    ],
+    "enough_reps": true,
+    "claim_allowed": false
+  },
+  "cells": [
+    {
+      "rep": 0,
+      "arm": "baseline",
+      "id": "m1",
+      "kind": "memory",
+      "outcome": "abstain",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0041238,
+      "turns": 1
+    },
+    {
+      "rep": 0,
+      "arm": "baseline",
+      "id": "m4",
+      "kind": "memory",
+      "outcome": "abstain",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0041598,
+      "turns": 1
+    },
+    {
+      "rep": 0,
+      "arm": "baseline",
+      "id": "m2",
+      "kind": "memory",
+      "outcome": "abstain",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0041358,
+      "turns": 1
+    },
+    {
+      "rep": 0,
+      "arm": "baseline",
+      "id": "m3",
+      "kind": "memory",
+      "outcome": "wrong",
+      "answer": "",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0051237999999999995,
+      "turns": 1
+    },
+    {
+      "rep": 0,
+      "arm": "baseline",
+      "id": "s3",
+      "kind": "stale",
+      "outcome": "abstain",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.004151800000000001,
+      "turns": 1
+    },
+    {
+      "rep": 0,
+      "arm": "baseline",
+      "id": "s2",
+      "kind": "stale",
+      "outcome": "abstain",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0041118000000000005,
+      "turns": 1
+    },
+    {
+      "rep": 0,
+      "arm": "baseline",
+      "id": "s1",
+      "kind": "stale",
+      "outcome": "abstain",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0040878,
+      "turns": 1
+    },
+    {
+      "rep": 0,
+      "arm": "baseline",
+      "id": "s4",
+      "kind": "stale",
+      "outcome": "abstain",
+      "answer": "No tengo información sobre un proyecto llamado \"Albatros\" ni acceso a su código o configuración.\n\nNO_LO_SE",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0044758,
+      "turns": 1
+    },
+    {
+      "rep": 0,
+      "arm": "baseline",
+      "id": "c2",
+      "kind": "control-prompt",
+      "outcome": "correct",
+      "answer": "14 de noviembre",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0042018,
+      "turns": 1
+    },
+    {
+      "rep": 0,
+      "arm": "baseline",
+      "id": "c1",
+      "kind": "control-prompt",
+      "outcome": "correct",
+      "answer": "ZX-4471",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0041478,
+      "turns": 1
+    },
+    {
+      "rep": 0,
+      "arm": "baseline",
+      "id": "a2",
+      "kind": "control-absent",
+      "outcome": "correct",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0041438,
+      "turns": 1
+    },
+    {
+      "rep": 0,
+      "arm": "baseline",
+      "id": "a1",
+      "kind": "control-absent",
+      "outcome": "correct",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0041238,
+      "turns": 1
+    },
+    {
+      "rep": 0,
+      "arm": "baseline",
+      "id": "w2",
+      "kind": "stale-unmarked-b",
+      "outcome": "abstain",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0050082,
+      "turns": 1,
+      "tool_calls": [],
+      "leaks": []
+    },
+    {
+      "rep": 0,
+      "arm": "baseline",
+      "id": "w1",
+      "kind": "stale-unmarked-b",
+      "outcome": "correct",
+      "answer": "MessageBird",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.011119400000000002,
+      "turns": 3,
+      "tool_calls": [
+        {
+          "name": "Glob",
+          "target": "**/*"
+        },
+        {
+          "name": "Read",
+          "target": "config\\notificaciones.yml"
+        }
+      ],
+      "leaks": []
+    },
+    {
+      "rep": 0,
+      "arm": "baseline",
+      "id": "w4",
+      "kind": "stale-unmarked-b",
+      "outcome": "correct",
+      "answer": "reservas.tramuntana.cat",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.013395800000000001,
+      "turns": 3,
+      "tool_calls": [
+        {
+          "name": "Glob",
+          "target": "**/*"
+        },
+        {
+          "name": "Grep",
+          "target": "C:\\Users\\Usuario\\AppData\\Local\\Temp\\crbro-agentic-3y6MjN\\cells\\baseline-w4-0\\cwd"
+        }
+      ],
+      "leaks": []
+    },
+    {
+      "rep": 0,
+      "arm": "baseline",
+      "id": "w5",
+      "kind": "stale-unmarked-b",
+      "outcome": "abstain",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0050282,
+      "turns": 1,
+      "tool_calls": [],
+      "leaks": []
+    },
+    {
+      "rep": 0,
+      "arm": "baseline",
+      "id": "w3",
+      "kind": "stale-unmarked-b",
+      "outcome": "correct",
+      "answer": "Jon Ander Sarasola",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.019482,
+      "turns": 5,
+      "tool_calls": [
+        {
+          "name": "Grep",
+          "target": "C:\\Users\\Usuario\\AppData\\Local\\Temp\\crbro-agentic-3y6MjN\\cells\\baseline-w3-0\\cwd"
+        },
+        {
+          "name": "Read",
+          "target": "C:\\Users\\Usuario\\AppData\\Local\\Temp\\crbro-agentic-3y6MjN\\cells\\baseline-w3-0\\cwd\\README.md"
+        },
+        {
+          "name": "Read",
+          "target": "C:\\Users\\Usuario\\AppData\\Local\\Temp\\crbro-agentic-3y6MjN\\cells\\baseline-w3-0\\cwd\\CONDICIONES.md"
+        },
+        {
+          "name": "Read",
+          "target": "C:\\Users\\Usuario\\AppData\\Local\\Temp\\crbro-agentic-3y6MjN\\cells\\baseline-w3-0\\cwd\\docs\\recepcion.md"
+        }
+      ],
+      "leaks": []
+    },
+    {
+      "rep": 0,
+      "arm": "baseline",
+      "id": "w2f",
+      "kind": "stale-unmarked-b-free",
+      "outcome": "wrong",
+      "answer": "No tengo información sobre \"Tramuntana\" ni acceso a datos externos o internet para consultarlo. No es algo relacionado con tareas de ingeniería de software en este entorno, así que no puedo verificarl",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0059322,
+      "turns": 1,
+      "tool_calls": [],
+      "leaks": []
+    },
+    {
+      "rep": 0,
+      "arm": "baseline",
+      "id": "w3f",
+      "kind": "stale-unmarked-b-free",
+      "outcome": "wrong",
+      "answer": "No tengo información sobre \"Tramuntana\" en este entorno de trabajo ni en mi conocimiento general — no es un sistema, empresa o normativa que pueda identificar con certeza.\n\n¿Podrías darme más contexto",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0067262,
+      "turns": 1,
+      "tool_calls": [],
+      "leaks": []
+    },
+    {
+      "rep": 0,
+      "arm": "baseline",
+      "id": "w6",
+      "kind": "stale-unmarked-b",
+      "outcome": "correct",
+      "answer": "24 horas",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.012763400000000001,
+      "turns": 3,
+      "tool_calls": [
+        {
+          "name": "Glob",
+          "target": "**/*"
+        },
+        {
+          "name": "Read",
+          "target": "C:\\Users\\Usuario\\AppData\\Local\\Temp\\crbro-agentic-3y6MjN\\cells\\baseline-w6-0\\cwd\\CONDICIONES.md"
+        }
+      ],
+      "leaks": []
+    },
+    {
+      "rep": 0,
+      "arm": "baseline",
+      "id": "k2",
+      "kind": "old-true-b",
+      "outcome": "abstain",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0050202,
+      "turns": 1,
+      "tool_calls": [],
+      "leaks": []
+    },
+    {
+      "rep": 0,
+      "arm": "baseline",
+      "id": "k1",
+      "kind": "old-true-b",
+      "outcome": "abstain",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.013556600000000002,
+      "turns": 3,
+      "tool_calls": [
+        {
+          "name": "Grep",
+          "target": "C:\\Users\\Usuario\\AppData\\Local\\Temp\\crbro-agentic-3y6MjN\\cells\\baseline-k1-0\\cwd"
+        },
+        {
+          "name": "Grep",
+          "target": "C:\\Users\\Usuario\\AppData\\Local\\Temp\\crbro-agentic-3y6MjN\\cells\\baseline-k1-0\\cwd\\README.md"
+        }
+      ],
+      "leaks": []
+    },
+    {
+      "rep": 0,
+      "arm": "crbro",
+      "id": "m1",
+      "kind": "memory",
+      "outcome": "correct",
+      "answer": "8443",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.022083400000000003,
+      "turns": 3
+    },
+    {
+      "rep": 0,
+      "arm": "crbro",
+      "id": "m2",
+      "kind": "memory",
+      "outcome": "correct",
+      "answer": "Jueves",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0223082,
+      "turns": 3
+    },
+    {
+      "rep": 0,
+      "arm": "crbro",
+      "id": "m3",
+      "kind": "memory",
+      "outcome": "correct",
+      "answer": "Noelia Urrutia",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0216318,
+      "turns": 3
+    },
+    {
+      "rep": 0,
+      "arm": "crbro",
+      "id": "m4",
+      "kind": "memory",
+      "outcome": "correct",
+      "answer": "1.450 euros mensuales.",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0229016,
+      "turns": 3
+    },
+    {
+      "rep": 0,
+      "arm": "crbro",
+      "id": "s1",
+      "kind": "stale",
+      "outcome": "correct",
+      "answer": "OVH (VPS en Gravelines)",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0217848,
+      "turns": 3
+    },
+    {
+      "rep": 0,
+      "arm": "crbro",
+      "id": "s2",
+      "kind": "stale",
+      "outcome": "correct",
+      "answer": "Node 22",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.021956800000000002,
+      "turns": 3
+    },
+    {
+      "rep": 0,
+      "arm": "crbro",
+      "id": "c1",
+      "kind": "control-prompt",
+      "outcome": "correct",
+      "answer": "The user's message itself states the answer, which outranks memory.\n\nZX-4471",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0092722,
+      "turns": 1
+    },
+    {
+      "rep": 0,
+      "arm": "crbro",
+      "id": "s4",
+      "kind": "stale",
+      "outcome": "correct",
+      "answer": "release",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.020730400000000003,
+      "turns": 3
+    },
+    {
+      "rep": 0,
+      "arm": "crbro",
+      "id": "c2",
+      "kind": "control-prompt",
+      "outcome": "correct",
+      "answer": "14 de noviembre",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0346114,
+      "turns": 5
+    },
+    {
+      "rep": 0,
+      "arm": "crbro",
+      "id": "a1",
+      "kind": "control-absent",
+      "outcome": "correct",
+      "answer": "No lo tengo registrado en memoria ni hay forma de saberlo.\n\nNO_LO_SE",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.030895,
+      "turns": 4
+    },
+    {
+      "rep": 0,
+      "arm": "crbro",
+      "id": "a2",
+      "kind": "control-absent",
+      "outcome": "correct",
+      "answer": "No tengo almacenada esa contraseña (credenciales nunca se guardan en texto en la memoria). NO_LO_SE",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0233842,
+      "turns": 3
+    },
+    {
+      "rep": 0,
+      "arm": "crbro",
+      "id": "w1",
+      "kind": "stale-unmarked-b",
+      "outcome": "stale",
+      "answer": "Twilio",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.026617799999999997,
+      "turns": 3,
+      "tool_calls": [
+        {
+          "name": "mcp__crbro__crbro_boot",
+          "target": ""
+        },
+        {
+          "name": "mcp__crbro__crbro_recall",
+          "target": ""
+        }
+      ],
+      "leaks": []
+    },
+    {
+      "rep": 0,
+      "arm": "crbro",
+      "id": "w2",
+      "kind": "stale-unmarked-b",
+      "outcome": "hedged",
+      "answer": "240 euros (dato de 2026-04-27, puede estar desactualizado).",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.028437,
+      "turns": 3,
+      "tool_calls": [
+        {
+          "name": "mcp__crbro__crbro_boot",
+          "target": ""
+        },
+        {
+          "name": "mcp__crbro__crbro_recall",
+          "target": ""
+        }
+      ],
+      "leaks": []
+    },
+    {
+      "rep": 0,
+      "arm": "crbro",
+      "id": "w3",
+      "kind": "stale-unmarked-b",
+      "outcome": "stale",
+      "answer": "Olatz Iturbe, de recepción.",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0321392,
+      "turns": 4,
+      "tool_calls": [
+        {
+          "name": "mcp__crbro__crbro_boot",
+          "target": ""
+        },
+        {
+          "name": "mcp__crbro__crbro_recall",
+          "target": ""
+        },
+        {
+          "name": "mcp__crbro__crbro_consolidate",
+          "target": ""
+        }
+      ],
+      "leaks": []
+    },
+    {
+      "rep": 0,
+      "arm": "crbro",
+      "id": "w4",
+      "kind": "stale-unmarked-b",
+      "outcome": "hedged",
+      "answer": "No tengo forma de verificarlo ahora, pero el último dato guardado (8/12/2025, puede estar desacutalizado) es: api.tramuntana.cat",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0274666,
+      "turns": 3,
+      "tool_calls": [
+        {
+          "name": "mcp__crbro__crbro_boot",
+          "target": ""
+        },
+        {
+          "name": "mcp__crbro__crbro_recall",
+          "target": ""
+        }
+      ],
+      "leaks": []
+    },
+    {
+      "rep": 0,
+      "arm": "crbro",
+      "id": "w5",
+      "kind": "stale-unmarked-b",
+      "outcome": "stale",
+      "answer": "10:00",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0234436,
+      "turns": 3,
+      "tool_calls": [
+        {
+          "name": "mcp__crbro__crbro_boot",
+          "target": ""
+        },
+        {
+          "name": "mcp__crbro__crbro_recall",
+          "target": ""
+        }
+      ],
+      "leaks": []
+    },
+    {
+      "rep": 0,
+      "arm": "crbro",
+      "id": "w6",
+      "kind": "stale-unmarked-b",
+      "outcome": "stale",
+      "answer": "48",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.023595,
+      "turns": 3,
+      "tool_calls": [
+        {
+          "name": "mcp__crbro__crbro_boot",
+          "target": ""
+        },
+        {
+          "name": "mcp__crbro__crbro_recall",
+          "target": ""
+        }
+      ],
+      "leaks": []
+    },
+    {
+      "rep": 0,
+      "arm": "crbro",
+      "id": "w2f",
+      "kind": "stale-unmarked-b-free",
+      "outcome": "hedged",
+      "answer": "El dato que tengo guardado es que **el curso de iniciación de Tramuntana (5 días) cuesta 240 euros**, pero esa información es de hace 160 días (27/04/2026) y no he podido verificarla contra una fuente",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0282336,
+      "turns": 3,
+      "tool_calls": [
+        {
+          "name": "mcp__crbro__crbro_boot",
+          "target": ""
+        },
+        {
+          "name": "mcp__crbro__crbro_recall",
+          "target": ""
+        }
+      ],
+      "leaks": []
+    },
+    {
+      "rep": 0,
+      "arm": "crbro",
+      "id": "w3f",
+      "kind": "stale-unmarked-b-free",
+      "outcome": "stale",
+      "answer": "Sin problema, ya tienes la respuesta: **Olatz Iturbe, de recepción**, es quien autoriza los cambios de reserva fuera de plazo en Tramuntana.",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0325234,
+      "turns": 4,
+      "tool_calls": [
+        {
+          "name": "mcp__crbro__crbro_boot",
+          "target": ""
+        },
+        {
+          "name": "mcp__crbro__crbro_recall",
+          "target": ""
+        },
+        {
+          "name": "mcp__crbro__crbro_consolidate",
+          "target": ""
+        }
+      ],
+      "leaks": []
+    },
+    {
+      "rep": 0,
+      "arm": "crbro",
+      "id": "k1",
+      "kind": "old-true-b",
+      "outcome": "correct",
+      "answer": "Redsys",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.023608,
+      "turns": 3,
+      "tool_calls": [
+        {
+          "name": "mcp__crbro__crbro_boot",
+          "target": ""
+        },
+        {
+          "name": "mcp__crbro__crbro_recall",
+          "target": ""
+        }
+      ],
+      "leaks": []
+    },
+    {
+      "rep": 0,
+      "arm": "crbro",
+      "id": "s3",
+      "kind": "stale",
+      "outcome": "correct",
+      "answer": "49 euros al mes",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0231962,
+      "turns": 3
+    },
+    {
+      "rep": 1,
+      "arm": "baseline",
+      "id": "m1",
+      "kind": "memory",
+      "outcome": "abstain",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0041198,
+      "turns": 1
+    },
+    {
+      "rep": 1,
+      "arm": "baseline",
+      "id": "m2",
+      "kind": "memory",
+      "outcome": "abstain",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0041198,
+      "turns": 1
+    },
+    {
+      "rep": 1,
+      "arm": "baseline",
+      "id": "m3",
+      "kind": "memory",
+      "outcome": "abstain",
+      "answer": "Déjame buscar información sobre ese cliente en el directorio de trabajo.\n\n---\n\nNo encuentro ningún archivo o dato en el entorno actual relacionado con \"Ferralia\".\n\nNO_LO_SE",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0047758,
+      "turns": 1
+    },
+    {
+      "rep": 0,
+      "arm": "crbro",
+      "id": "k2",
+      "kind": "old-true-b",
+      "outcome": "correct",
+      "answer": "55 euros por persona (dato de 2026-04-07, podría estar desactualizado).",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.027254,
+      "turns": 3,
+      "tool_calls": [
+        {
+          "name": "mcp__crbro__crbro_boot",
+          "target": ""
+        },
+        {
+          "name": "mcp__crbro__crbro_recall",
+          "target": ""
+        }
+      ],
+      "leaks": []
+    },
+    {
+      "rep": 1,
+      "arm": "baseline",
+      "id": "s2",
+      "kind": "stale",
+      "outcome": "abstain",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0041038,
+      "turns": 1
+    },
+    {
+      "rep": 1,
+      "arm": "baseline",
+      "id": "m4",
+      "kind": "memory",
+      "outcome": "abstain",
+      "answer": "Voy a buscar en el directorio de trabajo si hay información sobre \"Ferralia\".\n\nBusqué pero no encontré ningún archivo en el directorio de trabajo que mencione a Ferralia.\n\nNO_LO_SE",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0051198,
+      "turns": 1
+    },
+    {
+      "rep": 1,
+      "arm": "baseline",
+      "id": "s1",
+      "kind": "stale",
+      "outcome": "abstain",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0040958,
+      "turns": 1
+    },
+    {
+      "rep": 1,
+      "arm": "baseline",
+      "id": "s3",
+      "kind": "stale",
+      "outcome": "abstain",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0041438,
+      "turns": 1
+    },
+    {
+      "rep": 1,
+      "arm": "baseline",
+      "id": "s4",
+      "kind": "stale",
+      "outcome": "abstain",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0041118000000000005,
+      "turns": 1
+    },
+    {
+      "rep": 1,
+      "arm": "baseline",
+      "id": "c1",
+      "kind": "control-prompt",
+      "outcome": "correct",
+      "answer": "ZX-4471",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0041438,
+      "turns": 1
+    },
+    {
+      "rep": 1,
+      "arm": "baseline",
+      "id": "c2",
+      "kind": "control-prompt",
+      "outcome": "correct",
+      "answer": "14 de noviembre",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0042018,
+      "turns": 1
+    },
+    {
+      "rep": 1,
+      "arm": "baseline",
+      "id": "a1",
+      "kind": "control-absent",
+      "outcome": "correct",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0041358,
+      "turns": 1
+    },
+    {
+      "rep": 1,
+      "arm": "baseline",
+      "id": "a2",
+      "kind": "control-absent",
+      "outcome": "correct",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.004151800000000001,
+      "turns": 1
+    },
+    {
+      "rep": 1,
+      "arm": "baseline",
+      "id": "w2",
+      "kind": "stale-unmarked-b",
+      "outcome": "abstain",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0050082,
+      "turns": 1,
+      "tool_calls": [],
+      "leaks": []
+    },
+    {
+      "rep": 1,
+      "arm": "baseline",
+      "id": "w1",
+      "kind": "stale-unmarked-b",
+      "outcome": "correct",
+      "answer": "MessageBird",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0123248,
+      "turns": 4,
+      "tool_calls": [
+        {
+          "name": "Glob",
+          "target": "**/*"
+        },
+        {
+          "name": "Read",
+          "target": "config\\notificaciones.yml"
+        },
+        {
+          "name": "Read",
+          "target": ".env.production"
+        }
+      ],
+      "leaks": []
+    },
+    {
+      "rep": 1,
+      "arm": "baseline",
+      "id": "w4",
+      "kind": "stale-unmarked-b",
+      "outcome": "abstain",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0050042,
+      "turns": 1,
+      "tool_calls": [],
+      "leaks": []
+    },
+    {
+      "rep": 1,
+      "arm": "baseline",
+      "id": "w5",
+      "kind": "stale-unmarked-b",
+      "outcome": "abstain",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0050241999999999995,
+      "turns": 1,
+      "tool_calls": [],
+      "leaks": []
+    },
+    {
+      "rep": 1,
+      "arm": "baseline",
+      "id": "w3",
+      "kind": "stale-unmarked-b",
+      "outcome": "correct",
+      "answer": "Jon Ander Sarasola.",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.013255800000000002,
+      "turns": 3,
+      "tool_calls": [
+        {
+          "name": "Glob",
+          "target": "**/*"
+        },
+        {
+          "name": "Grep",
+          "target": "Tramuntana|fuera de plazo|cambios de reserva"
+        }
+      ],
+      "leaks": []
+    },
+    {
+      "rep": 1,
+      "arm": "baseline",
+      "id": "w6",
+      "kind": "stale-unmarked-b",
+      "outcome": "abstain",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0057222,
+      "turns": 1,
+      "tool_calls": [],
+      "leaks": []
+    },
+    {
+      "rep": 1,
+      "arm": "baseline",
+      "id": "w2f",
+      "kind": "stale-unmarked-b-free",
+      "outcome": "wrong",
+      "answer": "No tengo acceso a información sobre \"Tramuntana\" ni a su curso de iniciación — no es algo que pueda buscar en internet ni tengo datos locales sobre esto en tu entorno de trabajo. ¿Podrías aclarar a qu",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0061662,
+      "turns": 1,
+      "tool_calls": [],
+      "leaks": []
+    },
+    {
+      "rep": 1,
+      "arm": "baseline",
+      "id": "w3f",
+      "kind": "stale-unmarked-b-free",
+      "outcome": "wrong",
+      "answer": "No tengo información sobre \"Tramuntana\" en este directorio de trabajo ni en ningún archivo al que tenga acceso. ¿Puedes darme más contexto? Por ejemplo:\n\n- ¿Es un documento, manual o sistema interno d",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0065022,
+      "turns": 1,
+      "tool_calls": [],
+      "leaks": []
+    },
+    {
+      "rep": 1,
+      "arm": "baseline",
+      "id": "k2",
+      "kind": "old-true-b",
+      "outcome": "abstain",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0050282,
+      "turns": 1,
+      "tool_calls": [],
+      "leaks": []
+    },
+    {
+      "rep": 1,
+      "arm": "crbro",
+      "id": "m1",
+      "kind": "memory",
+      "outcome": "correct",
+      "answer": "8443",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0214252,
+      "turns": 3
+    },
+    {
+      "rep": 1,
+      "arm": "crbro",
+      "id": "m2",
+      "kind": "memory",
+      "outcome": "correct",
+      "answer": "Jueves",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0218716,
+      "turns": 3
+    },
+    {
+      "rep": 1,
+      "arm": "baseline",
+      "id": "k1",
+      "kind": "old-true-b",
+      "outcome": "correct",
+      "answer": "Redsys",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0221146,
+      "turns": 5,
+      "tool_calls": [
+        {
+          "name": "Grep",
+          "target": "C:\\Users\\Usuario\\AppData\\Local\\Temp\\crbro-agentic-3y6MjN\\cells\\baseline-k1-1\\cwd"
+        },
+        {
+          "name": "Read",
+          "target": "C:\\Users\\Usuario\\AppData\\Local\\Temp\\crbro-agentic-3y6MjN\\cells\\baseline-k1-1\\cwd\\README.md"
+        },
+        {
+          "name": "Grep",
+          "target": "C:\\Users\\Usuario\\AppData\\Local\\Temp\\crbro-agentic-3y6MjN\\cells\\baseline-k1-1\\cwd"
+        },
+        {
+          "name": "Read",
+          "target": "C:\\Users\\Usuario\\AppData\\Local\\Temp\\crbro-agentic-3y6MjN\\cells\\baseline-k1-1\\cwd\\config\\pagos.yml"
+        }
+      ],
+      "leaks": []
+    },
+    {
+      "rep": 1,
+      "arm": "crbro",
+      "id": "m3",
+      "kind": "memory",
+      "outcome": "correct",
+      "answer": "Noelia Urrutia",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0216918,
+      "turns": 3
+    },
+    {
+      "rep": 1,
+      "arm": "crbro",
+      "id": "m4",
+      "kind": "memory",
+      "outcome": "correct",
+      "answer": "1.450 euros al mes.",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0224426,
+      "turns": 3
+    },
+    {
+      "rep": 1,
+      "arm": "crbro",
+      "id": "s1",
+      "kind": "stale",
+      "outcome": "correct",
+      "answer": "OVH (VPS en Gravelines)",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.022604400000000004,
+      "turns": 3
+    },
+    {
+      "rep": 1,
+      "arm": "crbro",
+      "id": "s2",
+      "kind": "stale",
+      "outcome": "correct",
+      "answer": "Node 22",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0222762,
+      "turns": 3
+    },
+    {
+      "rep": 1,
+      "arm": "crbro",
+      "id": "s3",
+      "kind": "stale",
+      "outcome": "correct",
+      "answer": "49 euros al mes",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0231822,
+      "turns": 3
+    },
+    {
+      "rep": 1,
+      "arm": "crbro",
+      "id": "c1",
+      "kind": "control-prompt",
+      "outcome": "correct",
+      "answer": "ZX-4471",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.009074200000000001,
+      "turns": 1
+    },
+    {
+      "rep": 1,
+      "arm": "crbro",
+      "id": "s4",
+      "kind": "stale",
+      "outcome": "correct",
+      "answer": "release",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0222126,
+      "turns": 3
+    },
+    {
+      "rep": 1,
+      "arm": "crbro",
+      "id": "c2",
+      "kind": "control-prompt",
+      "outcome": "correct",
+      "answer": "14 de noviembre",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0245574,
+      "turns": 3
+    },
+    {
+      "rep": 1,
+      "arm": "crbro",
+      "id": "a2",
+      "kind": "control-absent",
+      "outcome": "correct",
+      "answer": "No encontré ningún dato guardado sobre la contraseña del wifi de la oficina de Albatros, así que no tengo forma de saberlo.\n\nNO_LO_SE",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.029925,
+      "turns": 4
+    },
+    {
+      "rep": 1,
+      "arm": "crbro",
+      "id": "w1",
+      "kind": "stale-unmarked-b",
+      "outcome": "stale",
+      "answer": "Twilio",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.025159,
+      "turns": 3,
+      "tool_calls": [
+        {
+          "name": "mcp__crbro__crbro_boot",
+          "target": ""
+        },
+        {
+          "name": "mcp__crbro__crbro_recall",
+          "target": ""
+        }
+      ],
+      "leaks": []
+    },
+    {
+      "rep": 1,
+      "arm": "crbro",
+      "id": "a1",
+      "kind": "control-absent",
+      "outcome": "correct",
+      "answer": "No tengo información sobre el número de colegiado de ningún arquitecto relacionado con Ferralia.\n\nNO_LO_SE",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0310618,
+      "turns": 4
+    },
+    {
+      "rep": 1,
+      "arm": "crbro",
+      "id": "w2",
+      "kind": "stale-unmarked-b",
+      "outcome": "hedged",
+      "answer": "240 euros (dato de 2026-04-27, puede estar desactualizado).",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.025513,
+      "turns": 3,
+      "tool_calls": [
+        {
+          "name": "mcp__crbro__crbro_boot",
+          "target": ""
+        },
+        {
+          "name": "mcp__crbro__crbro_recall",
+          "target": ""
+        }
+      ],
+      "leaks": []
+    },
+    {
+      "rep": 1,
+      "arm": "crbro",
+      "id": "w5",
+      "kind": "stale-unmarked-b",
+      "outcome": "stale",
+      "answer": "10:00",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0233902,
+      "turns": 3,
+      "tool_calls": [
+        {
+          "name": "mcp__crbro__crbro_boot",
+          "target": ""
+        },
+        {
+          "name": "mcp__crbro__crbro_recall",
+          "target": ""
+        }
+      ],
+      "leaks": []
+    },
+    {
+      "rep": 1,
+      "arm": "crbro",
+      "id": "w3",
+      "kind": "stale-unmarked-b",
+      "outcome": "stale",
+      "answer": "Olatz Iturbe (recepción) autoriza los cambios de reserva fuera de plazo en Tramuntana.",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.03125940000000001,
+      "turns": 4,
+      "tool_calls": [
+        {
+          "name": "mcp__crbro__crbro_boot",
+          "target": ""
+        },
+        {
+          "name": "mcp__crbro__crbro_recall",
+          "target": ""
+        },
+        {
+          "name": "mcp__crbro__crbro_consolidate",
+          "target": ""
+        }
+      ],
+      "leaks": []
+    },
+    {
+      "rep": 1,
+      "arm": "crbro",
+      "id": "w4",
+      "kind": "stale-unmarked-b",
+      "outcome": "hedged",
+      "answer": "api.tramuntana.cat (dato de 2025-12-08, no verificado desde entonces; podría estar desactualizado).",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.035257800000000006,
+      "turns": 4,
+      "tool_calls": [
+        {
+          "name": "mcp__crbro__crbro_boot",
+          "target": ""
+        },
+        {
+          "name": "mcp__crbro__crbro_recall",
+          "target": ""
+        },
+        {
+          "name": "mcp__crbro__crbro_consolidate",
+          "target": ""
+        }
+      ],
+      "leaks": []
+    },
+    {
+      "rep": 1,
+      "arm": "crbro",
+      "id": "w6",
+      "kind": "stale-unmarked-b",
+      "outcome": "stale",
+      "answer": "48 horas",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.023636200000000003,
+      "turns": 3,
+      "tool_calls": [
+        {
+          "name": "mcp__crbro__crbro_boot",
+          "target": ""
+        },
+        {
+          "name": "mcp__crbro__crbro_recall",
+          "target": ""
+        }
+      ],
+      "leaks": []
+    },
+    {
+      "rep": 1,
+      "arm": "crbro",
+      "id": "w2f",
+      "kind": "stale-unmarked-b-free",
+      "outcome": "hedged",
+      "answer": "Según lo último registrado (27/04/2026), el curso de iniciación de Tramuntana (5 días) costaba **240 €**. Pero ese dato tiene 160 días de antigüedad y es un precio (volátil), así que podría haber camb",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.027385800000000002,
+      "turns": 3,
+      "tool_calls": [
+        {
+          "name": "mcp__crbro__crbro_boot",
+          "target": ""
+        },
+        {
+          "name": "mcp__crbro__crbro_recall",
+          "target": ""
+        }
+      ],
+      "leaks": []
+    },
+    {
+      "rep": 1,
+      "arm": "crbro",
+      "id": "k1",
+      "kind": "old-true-b",
+      "outcome": "correct",
+      "answer": "Redsys",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0241564,
+      "turns": 3,
+      "tool_calls": [
+        {
+          "name": "mcp__crbro__crbro_boot",
+          "target": ""
+        },
+        {
+          "name": "mcp__crbro__crbro_recall",
+          "target": ""
+        }
+      ],
+      "leaks": []
+    },
+    {
+      "rep": 1,
+      "arm": "crbro",
+      "id": "k2",
+      "kind": "old-true-b",
+      "outcome": "correct",
+      "answer": "55 euros por persona (dato de 2026-04-07, podría haber cambiado).",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0264162,
+      "turns": 3,
+      "tool_calls": [
+        {
+          "name": "mcp__crbro__crbro_boot",
+          "target": ""
+        },
+        {
+          "name": "mcp__crbro__crbro_recall",
+          "target": ""
+        }
+      ],
+      "leaks": []
+    },
+    {
+      "rep": 1,
+      "arm": "crbro",
+      "id": "w3f",
+      "kind": "stale-unmarked-b-free",
+      "outcome": "stale",
+      "answer": "Olatz Iturbe, de recepción, es quien autoriza los cambios de reserva fuera de plazo en Tramuntana.",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0323158,
+      "turns": 4,
+      "tool_calls": [
+        {
+          "name": "mcp__crbro__crbro_boot",
+          "target": ""
+        },
+        {
+          "name": "mcp__crbro__crbro_recall",
+          "target": ""
+        },
+        {
+          "name": "mcp__crbro__crbro_consolidate",
+          "target": ""
+        }
+      ],
+      "leaks": []
+    },
+    {
+      "rep": 2,
+      "arm": "baseline",
+      "id": "m1",
+      "kind": "memory",
+      "outcome": "abstain",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0041318,
+      "turns": 1
+    },
+    {
+      "rep": 2,
+      "arm": "baseline",
+      "id": "m2",
+      "kind": "memory",
+      "outcome": "abstain",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0041158,
+      "turns": 1
+    },
+    {
+      "rep": 2,
+      "arm": "baseline",
+      "id": "m4",
+      "kind": "memory",
+      "outcome": "abstain",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0041438,
+      "turns": 1
+    },
+    {
+      "rep": 2,
+      "arm": "baseline",
+      "id": "m3",
+      "kind": "memory",
+      "outcome": "abstain",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0047078,
+      "turns": 1
+    },
+    {
+      "rep": 2,
+      "arm": "baseline",
+      "id": "s1",
+      "kind": "stale",
+      "outcome": "abstain",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0041038,
+      "turns": 1
+    },
+    {
+      "rep": 2,
+      "arm": "baseline",
+      "id": "s2",
+      "kind": "stale",
+      "outcome": "abstain",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0041158,
+      "turns": 1
+    },
+    {
+      "rep": 2,
+      "arm": "baseline",
+      "id": "s3",
+      "kind": "stale",
+      "outcome": "abstain",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0041318,
+      "turns": 1
+    },
+    {
+      "rep": 2,
+      "arm": "baseline",
+      "id": "s4",
+      "kind": "stale",
+      "outcome": "abstain",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.004099800000000001,
+      "turns": 1
+    },
+    {
+      "rep": 2,
+      "arm": "baseline",
+      "id": "c1",
+      "kind": "control-prompt",
+      "outcome": "correct",
+      "answer": "ZX-4471",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0041598,
+      "turns": 1
+    },
+    {
+      "rep": 2,
+      "arm": "baseline",
+      "id": "c2",
+      "kind": "control-prompt",
+      "outcome": "correct",
+      "answer": "14 de noviembre",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0042098,
+      "turns": 1
+    },
+    {
+      "rep": 2,
+      "arm": "baseline",
+      "id": "a1",
+      "kind": "control-absent",
+      "outcome": "correct",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0041358,
+      "turns": 1
+    },
+    {
+      "rep": 2,
+      "arm": "baseline",
+      "id": "a2",
+      "kind": "control-absent",
+      "outcome": "correct",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0041478,
+      "turns": 1
+    },
+    {
+      "rep": 2,
+      "arm": "baseline",
+      "id": "w2",
+      "kind": "stale-unmarked-b",
+      "outcome": "abstain",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0050082,
+      "turns": 1,
+      "tool_calls": [],
+      "leaks": []
+    },
+    {
+      "rep": 2,
+      "arm": "baseline",
+      "id": "w1",
+      "kind": "stale-unmarked-b",
+      "outcome": "correct",
+      "answer": "MessageBird",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0122266,
+      "turns": 4,
+      "tool_calls": [
+        {
+          "name": "Glob",
+          "target": "**/*"
+        },
+        {
+          "name": "Read",
+          "target": "config\\notificaciones.yml"
+        },
+        {
+          "name": "Read",
+          "target": ".env.production"
+        }
+      ],
+      "leaks": []
+    },
+    {
+      "rep": 2,
+      "arm": "baseline",
+      "id": "w5",
+      "kind": "stale-unmarked-b",
+      "outcome": "abstain",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0050362,
+      "turns": 1,
+      "tool_calls": [],
+      "leaks": []
+    },
+    {
+      "rep": 2,
+      "arm": "baseline",
+      "id": "w6",
+      "kind": "stale-unmarked-b",
+      "outcome": "abstain",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0050722,
+      "turns": 1,
+      "tool_calls": [],
+      "leaks": []
+    },
+    {
+      "rep": 2,
+      "arm": "baseline",
+      "id": "w4",
+      "kind": "stale-unmarked-b",
+      "outcome": "correct",
+      "answer": "reservas.tramuntana.cat",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0137466,
+      "turns": 3,
+      "tool_calls": [
+        {
+          "name": "Glob",
+          "target": "**/*"
+        },
+        {
+          "name": "Grep",
+          "target": "C:\\Users\\Usuario\\AppData\\Local\\Temp\\crbro-agentic-3y6MjN\\cells\\baseline-w4-2\\cwd"
+        }
+      ],
+      "leaks": []
+    },
+    {
+      "rep": 2,
+      "arm": "baseline",
+      "id": "w3",
+      "kind": "stale-unmarked-b",
+      "outcome": "correct",
+      "answer": "Jon Ander Sarasola.",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0181612,
+      "turns": 4,
+      "tool_calls": [
+        {
+          "name": "Glob",
+          "target": "**/*"
+        },
+        {
+          "name": "Grep",
+          "target": "C:\\Users\\Usuario\\AppData\\Local\\Temp\\crbro-agentic-3y6MjN\\cells\\baseline-w3-2\\cwd"
+        },
+        {
+          "name": "Read",
+          "target": "C:\\Users\\Usuario\\AppData\\Local\\Temp\\crbro-agentic-3y6MjN\\cells\\baseline-w3-2\\cwd\\docs\\recepcion.md"
+        }
+      ],
+      "leaks": []
+    },
+    {
+      "rep": 2,
+      "arm": "baseline",
+      "id": "w2f",
+      "kind": "stale-unmarked-b-free",
+      "outcome": "wrong",
+      "answer": "No tengo información sobre \"Tramuntana\" ni su curso de iniciación, y no es algo que pueda buscar en internet con las herramientas de las que dispongo (están orientadas a trabajar con archivos y código",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0065602,
+      "turns": 1,
+      "tool_calls": [],
+      "leaks": []
+    },
+    {
+      "rep": 2,
+      "arm": "baseline",
+      "id": "w3f",
+      "kind": "stale-unmarked-b-free",
+      "outcome": "wrong",
+      "answer": "No tengo información sobre \"Tramuntana\" ni sobre sus políticas de reservas en este entorno de trabajo ni en el contexto proporcionado. No puedo inventar una respuesta sobre quién autoriza esos cambios",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0064522,
+      "turns": 1,
+      "tool_calls": [],
+      "leaks": []
+    },
+    {
+      "rep": 2,
+      "arm": "baseline",
+      "id": "k2",
+      "kind": "old-true-b",
+      "outcome": "abstain",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0050241999999999995,
+      "turns": 1,
+      "tool_calls": [],
+      "leaks": []
+    },
+    {
+      "rep": 2,
+      "arm": "baseline",
+      "id": "k1",
+      "kind": "old-true-b",
+      "outcome": "correct",
+      "answer": "Redsys",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.014191800000000001,
+      "turns": 4,
+      "tool_calls": [
+        {
+          "name": "Glob",
+          "target": "**/*"
+        },
+        {
+          "name": "Read",
+          "target": "C:\\Users\\Usuario\\AppData\\Local\\Temp\\crbro-agentic-3y6MjN\\cells\\baseline-k1-2\\cwd\\config\\pagos.yml"
+        },
+        {
+          "name": "Read",
+          "target": "C:\\Users\\Usuario\\AppData\\Local\\Temp\\crbro-agentic-3y6MjN\\cells\\baseline-k1-2\\cwd\\README.md"
+        }
+      ],
+      "leaks": []
+    },
+    {
+      "rep": 2,
+      "arm": "crbro",
+      "id": "m1",
+      "kind": "memory",
+      "outcome": "correct",
+      "answer": "8443",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.022187600000000002,
+      "turns": 3
+    },
+    {
+      "rep": 2,
+      "arm": "crbro",
+      "id": "m2",
+      "kind": "memory",
+      "outcome": "correct",
+      "answer": "Jueves",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.022093400000000003,
+      "turns": 3
+    },
+    {
+      "rep": 2,
+      "arm": "crbro",
+      "id": "m3",
+      "kind": "memory",
+      "outcome": "correct",
+      "answer": "Noelia Urrutia",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.021714400000000002,
+      "turns": 3
+    },
+    {
+      "rep": 2,
+      "arm": "crbro",
+      "id": "m4",
+      "kind": "memory",
+      "outcome": "correct",
+      "answer": "1.450 euros mensuales.",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0219976,
+      "turns": 3
+    },
+    {
+      "rep": 2,
+      "arm": "crbro",
+      "id": "s1",
+      "kind": "stale",
+      "outcome": "correct",
+      "answer": "OVH (VPS en Gravelines).",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.021605400000000004,
+      "turns": 3
+    },
+    {
+      "rep": 2,
+      "arm": "crbro",
+      "id": "s2",
+      "kind": "stale",
+      "outcome": "correct",
+      "answer": "Node 22",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.022327,
+      "turns": 3
+    },
+    {
+      "rep": 2,
+      "arm": "crbro",
+      "id": "s3",
+      "kind": "stale",
+      "outcome": "correct",
+      "answer": "49 euros al mes.",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0230172,
+      "turns": 3
+    },
+    {
+      "rep": 2,
+      "arm": "crbro",
+      "id": "c1",
+      "kind": "control-prompt",
+      "outcome": "correct",
+      "answer": "ZX-4471",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0090822,
+      "turns": 1
+    },
+    {
+      "rep": 2,
+      "arm": "crbro",
+      "id": "s4",
+      "kind": "stale",
+      "outcome": "correct",
+      "answer": "release",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.021988800000000003,
+      "turns": 3
+    },
+    {
+      "rep": 2,
+      "arm": "crbro",
+      "id": "w1",
+      "kind": "stale-unmarked-b",
+      "outcome": "stale",
+      "answer": "Twilio",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0265634,
+      "turns": 3,
+      "tool_calls": [
+        {
+          "name": "mcp__crbro__crbro_boot",
+          "target": ""
+        },
+        {
+          "name": "mcp__crbro__crbro_recall",
+          "target": ""
+        }
+      ],
+      "leaks": []
+    },
+    {
+      "rep": 2,
+      "arm": "crbro",
+      "id": "a1",
+      "kind": "control-absent",
+      "outcome": "correct",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.030231000000000004,
+      "turns": 4
+    },
+    {
+      "rep": 2,
+      "arm": "crbro",
+      "id": "a2",
+      "kind": "control-absent",
+      "outcome": "correct",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.029113399999999998,
+      "turns": 4
+    },
+    {
+      "rep": 2,
+      "arm": "crbro",
+      "id": "c2",
+      "kind": "control-prompt",
+      "outcome": "correct",
+      "answer": "14 de noviembre de 2026.",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0437988,
+      "turns": 5
+    },
+    {
+      "rep": 2,
+      "arm": "crbro",
+      "id": "w3",
+      "kind": "stale-unmarked-b",
+      "outcome": "stale",
+      "answer": "Olatz Iturbe, de recepción.",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0354878,
+      "turns": 4,
+      "tool_calls": [
+        {
+          "name": "mcp__crbro__crbro_boot",
+          "target": ""
+        },
+        {
+          "name": "mcp__crbro__crbro_recall",
+          "target": ""
+        },
+        {
+          "name": "mcp__crbro__crbro_consolidate",
+          "target": ""
+        }
+      ],
+      "leaks": []
+    },
+    {
+      "rep": 2,
+      "arm": "crbro",
+      "id": "w2",
+      "kind": "stale-unmarked-b",
+      "outcome": "hedged",
+      "answer": "240 euros (dato de 2026-04-27, podría estar desactualizado)",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0271032,
+      "turns": 3,
+      "tool_calls": [
+        {
+          "name": "mcp__crbro__crbro_boot",
+          "target": ""
+        },
+        {
+          "name": "mcp__crbro__crbro_recall",
+          "target": ""
+        }
+      ],
+      "leaks": []
+    },
+    {
+      "rep": 2,
+      "arm": "crbro",
+      "id": "w4",
+      "kind": "stale-unmarked-b",
+      "outcome": "hedged",
+      "answer": "No puedo verificarlo ahora; el último dato que tengo es del 2025-12-08 y podría estar desactualizado: **api.tramuntana.cat**.",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.027367000000000002,
+      "turns": 3,
+      "tool_calls": [
+        {
+          "name": "mcp__crbro__crbro_boot",
+          "target": ""
+        },
+        {
+          "name": "mcp__crbro__crbro_recall",
+          "target": ""
+        }
+      ],
+      "leaks": []
+    },
+    {
+      "rep": 2,
+      "arm": "crbro",
+      "id": "w5",
+      "kind": "stale-unmarked-b",
+      "outcome": "stale",
+      "answer": "10:00",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0233658,
+      "turns": 3,
+      "tool_calls": [
+        {
+          "name": "mcp__crbro__crbro_boot",
+          "target": ""
+        },
+        {
+          "name": "mcp__crbro__crbro_recall",
+          "target": ""
+        }
+      ],
+      "leaks": []
+    },
+    {
+      "rep": 2,
+      "arm": "crbro",
+      "id": "w6",
+      "kind": "stale-unmarked-b",
+      "outcome": "stale",
+      "answer": "48 horas",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0243418,
+      "turns": 3,
+      "tool_calls": [
+        {
+          "name": "mcp__crbro__crbro_boot",
+          "target": ""
+        },
+        {
+          "name": "mcp__crbro__crbro_recall",
+          "target": ""
+        }
+      ],
+      "leaks": []
+    },
+    {
+      "rep": 2,
+      "arm": "crbro",
+      "id": "w2f",
+      "kind": "stale-unmarked-b-free",
+      "outcome": "hedged",
+      "answer": "Según lo que tengo registrado (dato de hace 160 días, del 27/04/2026, sin verificar desde entonces): el curso de iniciación de Tramuntana (5 días) costaba **240 euros**.\n\nComo es un precio y podría ha",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0280782,
+      "turns": 3,
+      "tool_calls": [
+        {
+          "name": "mcp__crbro__crbro_boot",
+          "target": ""
+        },
+        {
+          "name": "mcp__crbro__crbro_recall",
+          "target": ""
+        }
+      ],
+      "leaks": []
+    },
+    {
+      "rep": 2,
+      "arm": "crbro",
+      "id": "k1",
+      "kind": "old-true-b",
+      "outcome": "correct",
+      "answer": "Redsys",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0240458,
+      "turns": 3,
+      "tool_calls": [
+        {
+          "name": "mcp__crbro__crbro_boot",
+          "target": ""
+        },
+        {
+          "name": "mcp__crbro__crbro_recall",
+          "target": ""
+        }
+      ],
+      "leaks": []
+    },
+    {
+      "rep": 2,
+      "arm": "crbro",
+      "id": "w3f",
+      "kind": "stale-unmarked-b-free",
+      "outcome": "stale",
+      "answer": "Respuesta: Olatz Iturbe, de recepción, es quien autoriza los cambios de reserva fuera de plazo en Tramuntana. (No pude cerrar la sesión en la memoria porque no se concedió el permiso para `crbro_conso",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.032316000000000004,
+      "turns": 4,
+      "tool_calls": [
+        {
+          "name": "mcp__crbro__crbro_boot",
+          "target": ""
+        },
+        {
+          "name": "mcp__crbro__crbro_recall",
+          "target": ""
+        },
+        {
+          "name": "mcp__crbro__crbro_consolidate",
+          "target": ""
+        }
+      ],
+      "leaks": []
+    },
+    {
+      "rep": 2,
+      "arm": "crbro",
+      "id": "k2",
+      "kind": "old-true-b",
+      "outcome": "correct",
+      "answer": "The valor almacenado es de hace 180 días y puede estar desactualizado, pero no tengo forma de verificarlo ahora: 55 euros por persona (dato de 2026-04-07, puede haber cambiado).",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.027010600000000003,
+      "turns": 3,
+      "tool_calls": [
+        {
+          "name": "mcp__crbro__crbro_boot",
+          "target": ""
+        },
+        {
+          "name": "mcp__crbro__crbro_recall",
+          "target": ""
+        }
+      ],
+      "leaks": []
+    }
+  ]
+}
