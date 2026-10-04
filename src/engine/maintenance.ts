@@ -7,7 +7,7 @@ import { entryId } from '../sync/ops.js';
 import { inferEntryDay, isDayPrecision, datesInText } from './dates.js';
 import { fold } from '../search/tokenize.js';
 import { factId } from '../utils/hash.js';
-import { stalenessContext, factStaleness, entryStaleness, type StalenessContext, type StaleInfo, type ShelfLife } from './shelf.js';
+import { stalenessContextOf, factStaleness, entryStaleness, type StalenessContext, type StaleInfo, type ShelfLife } from './shelf.js';
 import type { Brain } from './brain.js';
 import type { Cortex } from './cortex.js';
 import type { Synapses } from './synapses.js';
@@ -797,9 +797,9 @@ export class Maintenance {
     const hoy = today();
     const vencidas: ExpiredEntry[] = [];
     // Shelf life: the same pass judges every live fact, decision and pattern.
-    let since: string | undefined;
-    try { since = (await this.brain.getManifest()).staleness_since; } catch { /* no manifest: full grace */ }
-    const vida: StalenessContext | null = stalenessContext(since);
+    let manifiesto: { staleness_since?: string; created?: string } | undefined;
+    try { manifiesto = await this.brain.getManifest(); } catch { /* no manifest: full grace */ }
+    const vida: StalenessContext | null = stalenessContextOf(manifiesto);
     const rancias: Array<StaleEntry & { overdue: number }> = [];
     const gordas: SplitCandidate[] = [];
     const enNeuronas = new Map<string, number>();

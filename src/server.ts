@@ -18,8 +18,6 @@
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
 
 import { Brain } from './engine/brain.js';
 import { Cortex, sessionScope, findPromotionCandidates, type PromotionCandidate } from './engine/cortex.js';
@@ -35,8 +33,9 @@ import { autoBackupIfDue, resolveBackupDir } from './engine/backup.js';
 import { startModOnBoot } from './engine/modinstall.js';
 import { writeTriggerIndex, loadAllNeurons } from './engine/triggers.js';
 import { neuronId, inferNeuronType, techKeywordIn } from './utils/ids.js';
-import { SHELF_LIVES, stalenessEnabled, shelfWindows, stalenessContext, factStaleness, entryStaleness } from './engine/shelf.js';
+import { SHELF_LIVES, stalenessEnabled, shelfWindows, stalenessContextOf, factStaleness, entryStaleness } from './engine/shelf.js';
 import { namedSources } from './engine/source.js';
+import { RUNNING_VERSION, versionStatus } from './version.js';
 
 /** A neuron this size with no summary is worth two lines from whoever is closing the session. */
 const SUMMARY_NUDGE_MIN_ENTRIES = 25;
@@ -130,19 +129,9 @@ function staleFraming(text: string, s: { age_days: number; last_verified: string
   return { warning, next_step };
 }
 
-/**
- * The version of CRBRO that is actually running. The manifest carries its own
- * version, but that one stamps the brain FORMAT and has not moved since 1.0.0
- * — reporting it as "the version" told every user the same thing regardless of
- * what they had installed, which is no use to anyone deciding whether to
- * update.
- */
+/** The version this process runs (read once at load: src/version.ts). */
 function runningVersion(): string {
-  try {
-    return JSON.parse(readFileSync(join(__dirname, '..', 'package.json'), 'utf8')).version;
-  } catch {
-    return 'unknown';
-  }
+  return RUNNING_VERSION;
 }
 
 function textResult(text: string, isError = false) {
@@ -488,6 +477,8 @@ export function createServer(shared?: Engines): McpServer {
         view: z.enum(INSPECT_VIEWS),
         status: z.object({
           crbro_version: z.string(),
+          installed_version: z.string().optional(),
+          version_note: z.string().optional(),
           brain_format: z.string().optional(),
           total_neurons: z.number(),
           total_synapses: z.number(),
@@ -550,7 +541,10 @@ export function createServer(shared?: Engines): McpServer {
           const manifest = await brain.getManifest();
           const hot = await readJSON<HotTopics>(brain.paths.hotTopics());
           return done({
-            crbro_version: runningVersion(),
+            // The version this process RUNS, read once at start; when the
+            // package on disk says another one (npx replaced the files under
+            // a running process), it is added apart, with a note (2.9.1).
+            ...versionStatus(),
             brain_format: manifest.version,
             total_neurons: manifest.total_neurons,
             total_synapses: manifest.total_synapses,
@@ -602,7 +596,7 @@ export function createServer(shared?: Engines): McpServer {
           const retired = (id: string) => neuron!.entry_status?.[id]?.status;
           // Shelf life: the same three facts recall shows, so the index of a
           // neuron and a recall never disagree about what is old.
-          const vida = stalenessContext((await brain.getManifest()).staleness_since);
+          const vida = stalenessContextOf(await brain.getManifest());
           const rancio = (s: { stale: boolean; age_days: number } | null) => (s?.stale ? { stale_days: s.age_days } : {});
 
           type Row = {

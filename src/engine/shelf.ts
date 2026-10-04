@@ -9,7 +9,9 @@
 //               values, who holds a role          (default window: 90 days)
 //   normal    — any other fact                    (365 days)
 //   durable   — decisions, procedures (patterns)  (730 days)
-//   permanent — history: preferences, errors, debts, a fact marked so (never)
+//   permanent — history: preferences, errors, debts, a fact marked so, and
+//               (2.9.1) a dated record of something done or a line the
+//               miner imported                    (never)
 //
 // The windows are a policy choice, not a measurement: nothing in this
 // repository measures how long a port or a price stays true. They are set so
@@ -82,7 +84,12 @@ export function mostVolatile(a: ShelfLife | undefined, b: ShelfLife | undefined)
 // costs a check; a false negative leaves a volatile value unflagged, which is
 // how every version before this one behaved — not a regression.
 
-export type ShelfReason = 'version' | 'price' | 'port' | 'host' | 'url' | 'path' | 'config' | 'role';
+/**
+ * Why an unmarked fact got its class. The first eight make it volatile;
+ * `history` (a dated record of something done) and `miner` (imported by the
+ * miner) make it permanent (2.9.1).
+ */
+export type ShelfReason = 'version' | 'price' | 'port' | 'host' | 'url' | 'path' | 'config' | 'role' | 'history' | 'miner';
 
 /** Lower-cased, accents folded: "versión" and "VERSION" read alike. Length-preserving for Latin text. */
 function fold(text: string): string {
@@ -176,13 +183,137 @@ const ROLE_THEN_NAME = new RegExp(`\\b(?:${roleAlt})\\b[^.\\n]{0,60}?(?:\\b(?:is
  */
 const NAME_THEN_ROLE = new RegExp(`${NAME}\\s+(?:is|es)\\s+(?:(?:now|ahora)\\s+)?(?:the|el|la|our|nuestr[oa])\\s+(?:(?:new|nuev[oa])\\s+)?(?:${roleAlt})\\b`, 'u');
 
+// ─── History: a dated record of something done (2.9.1) ───────────
+//
+// "FASE 2 completada (ago 2026)", "2026-08-11: VERIFICADO que …", "RECHAZO
+// de la tienda v3.4.0 (9 jul 2026)", "Deployed v2.3.1 on 2026-06-18":
+// a line that says what was done and when does not go stale — it tells what
+// happened, and it carries its own date, so whoever reads it sees how old it
+// is. Before 2.9.1 the version, URL or path inside such a record made the
+// whole line volatile, and on a real personal brain records were a large
+// share of what the detector flagged (docs/design/staleness.md §15).
+//
+// The rule, all on the line's HEAD (its text up to the first sentence end —
+// ". ", "! ", "? " — or line break; details after it are not judged):
+//   1. the head names a date: 2026-06-18, 18/06/2026, 18-jun-2026, 18 de
+//      junio (de 2026), jun 2026, June 18, 2026;
+//   2. the head has a word of finished action: a Spanish participle
+//      (completado, implementada, resueltos, desplegado, publicado, verificado,
+//      corregido, migrado, creado, añadido, rechazado, medido…), an
+//      unambiguous Spanish preterite (desplegó, migró, corrigió, resolvió, or
+//      any of them after "se": "se publicó"), an English past form (fixed,
+//      deployed, released, completed, verified, migrated, checked…) or an
+//      event noun (fix, hotfix, rechazo, incidente, outage, release,
+//      ejecución…);
+//   3. and none of these turns it back into a statement of state:
+//      - a date that opens a period: "desde el 18-sep", "since", "a partir
+//        de", "as of", "from", "hasta", "until", "a 4-oct", "al 4-oct";
+//      - a word of the future or of a deadline: will, planned, previsto,
+//        programado, pendiente, caduca, expires, vence, renews, next,
+//        próximo, "para el <date>", "by <date>", "antes del <date>" ("tarea
+//        programada" and "scheduled task" name a kind of job and do not count);
+//      - a word of the present: actualmente, currently, ahora, now, todavía,
+//        still, vigente, último, last, latest;
+//      - a verb of state BEFORE the first finished-action word: "la API
+//        corre en el puerto 8443, desplegada el 2026-06-18" is a port that
+//        also says when it went up, so it stays volatile.
+// Words that introduce a new current value without telling an event —
+// actualizado, cambiado, configurado, updated, changed, set, renovado — are
+// deliberately not finished-action words. A line with no date is never
+// history, however past its verbs are: it cannot show its age.
+//
+// Limits, said once: the head decides, so "Migrado a Hetzner (3-oct-2026).
+// El host es 10.0.0.5." is history whole; the line's own date is what tells
+// the reader how old that host is. Only Spanish and English. A record without
+// a date ("Publicado el artículo en https://…") is not history.
+
+/** Month names and the abbreviations people write, es/en, longest first. */
+const MONTH = '(?:enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|setiembre|octubre|noviembre|diciembre|'
+  + 'january|february|march|april|june|july|august|september|october|november|december|'
+  + 'ene|feb|mar|abr|may|jun|jul|ago|sept|sep|oct|nov|dic|jan|apr|aug|dec)\\.?(?![a-z])';
+/** A calendar date as people write it, on folded text. Year optional only after a day and a month name. */
+const DATE = '(?:'
+  + '(?<![\\d./-])20\\d{2}[-/]\\d{1,2}[-/]\\d{1,2}(?![\\d])'                     // 2026-06-18
+  + '|(?<![\\d./-])\\d{1,2}/\\d{1,2}/(?:20)?\\d{2}(?![\\d./])'                    // 18/06/2026
+  + '|(?<![\\d./-])\\d{1,2}-\\d{1,2}-(?:20)?\\d{2}(?![\\d./-])'                   // 18-06-2026
+  + '|(?<![\\d./-])\\d{1,2}\\.\\d{1,2}\\.20\\d{2}(?![\\d.])'                       // 18.06.2026 (not a version)
+  + `|(?<!\\d)\\d{1,2}º?(?:\\s+de\\s+|[\\s-]+)${MONTH}(?:(?:\\s+de\\s+|,?\\s+|-)20\\d{2}(?!\\d))?`  // 18-jun(-2026), 18 de junio de 2026
+  + `|(?<![a-z])${MONTH}(?:\\s+de\\s+|\\s+|-)20\\d{2}(?!\\d)`                     // jun 2026, junio de 2026
+  + `|(?<![a-z])${MONTH}\\s+\\d{1,2}(?:st|nd|rd|th)?,?\\s+20\\d{2}(?!\\d)`         // June 18, 2026
+  + ')';
+const DATE_RE = new RegExp(DATE);
+
+/** Not part of a path, a branch name or an identifier: "fix-newsletter/", "hotfix/login" are not events. */
+const W0 = '(?<![a-z0-9_/.\\-])';
+const W1 = '(?![a-z0-9_/\\-])';
+const DONE = new RegExp(W0 + '(?:'
+  // Spanish participles, any gender and number; "complet-" also covers the adjective ("Auditoría completa").
+  + '(?:completad|complet|implementad|resuelt|desplegad|publicad|verificad|comprobad|confirmad|corregid|migrad|cread'
+  + '|anadid|rechazad|denegad|arreglad|terminad|finalizad|lanzad|instalad|eliminad|borrad|cerrad|aprobad|enviad|entregad'
+  + '|auditad|integrad|solucionad|probad|testead|validad|detectad|reparad|restaurad|revertid|fusionad|renombrad|retirad'
+  + '|descartad|construid|realizad|ejecutad|aplicad|cancelad|abortad|medid|reescrit|rehech)(?:o|a|os|as)'
+  // Spanish preterites that are not also a common noun, adjective or present tense.
+  + '|desplego|desplegue|migro|migre|corrigio|corregi|resolvio|resolvi|rechace|arregle|verifique|verifico|finalizo'
+  + '|finalice|elimino|elimine|aprobo|publique|implemente|implemento|hizo|hice|hicimos'
+  // "se" + preterite is unambiguous even where the bare form is not ("se publicó" vs "público").
+  + '|se (?:publico|creo|anadio|lanzo|instalo|elimino|borro|desplego|corrigio|resolvio|migro|cerro|aprobo|envio|entrego'
+  + '|termino|completo|implemento|aplico|ejecuto|cancelo|midio|arreglo|reparo|verifico|comprobo|rechazo)'
+  // Event nouns.
+  + '|fix|hotfix|bugfix|rechazo|incidente|incidencia|incident|outage|caida|post-?mortem|release|lanzamiento|ejecucion'
+  // English past forms.
+  + '|fixed|deployed|released|completed|implemented|resolved|published|verified|confirmed|migrated|created|added'
+  + '|rejected|shipped|merged|launched|installed|removed|deleted|done|finished|approved|sent|closed|audited|tested'
+  + '|validated|detected|repaired|restored|reverted|solved|delivered|submitted|renamed|built|rolled back|refactored|applied'
+  + '|checked|measured|executed|uploaded|posted|cancell?ed|aborted'
+  + ')' + W1);
+/** A date that opens a period, or a moment that does: the line states what holds from then on. */
+const OPENS_PERIOD = new RegExp(
+  `(?<![a-z])(?:desde|since|a partir del?|as of|as from|from|effective(?: from)?|con efecto(?: desde)?|a fecha de|hasta|until|till|a|al)\\s+`
+  + `(?:(?:el|la|los|the|dia|day)\\s+)*(?:${DATE}|entonces|then|hoy|today|ahora|now|ese dia|that day)`);
+/** The future, a deadline or a renewal: something still to happen is not a record. */
+const FUTURE = new RegExp(
+  // "Tarea programada" and "scheduled task" name a kind of job, not a future: they stay out.
+  '(?<![a-z])(?:will|shall|going to|planned|planificad[oa]s?|previst[oa]s?|(?<!(?:tarea|rutina)s? )programad[oa]s?'
+  + '|scheduled(?! (?:tasks?|jobs?|routines?))|pendientes?|pending'
+  + '|por hacer|to-do|deadline|fecha limite|plazo|vencen?|vencimiento|caducan?|caducidad|expiran?|expires?|expiry'
+  + '|renuevan?|renews?|renewal|next|proxim[oa]s?|siguientes?)(?![a-z])'
+  + `|(?<![a-z])(?:para el|para|by|antes del?|before|no later than)\\s+(?:(?:el|la|the)\\s+)?${DATE}`);
+/** The present: the line says what holds now, whatever else it records. */
+const PRESENT = /(?<![a-z])(?:actualmente|currently|ahora|now|todavia|aun|still|hoy en dia|a dia de hoy|vigente|en vigor|in force|ultim[oa]s?|last|latest)(?![a-z])/;
+/** Verbs that state how something is. Before the first finished-action word they make the line a statement of state. */
+const STATE_VERB = /(?<![a-z])(?:es|son|esta|estan|is|are|corre|corren|runs?|usa|usan|uses?|tiene|tienen|cuesta|cuestan|costs?|vale|valen|apunta|apuntan|points?|escucha|escuchan|listens?|requiere|requieren|requires?|sirve|sirven|serves?|vive|viven|lives?|funciona|funcionan|works?|contiene|contienen|contains?|ocupa|ocupan)(?![a-z])/;
+
+/** The head of a line: up to the first sentence end or line break. */
+function headOf(folded: string): string {
+  const m = /[.!?](?=\s|$)|\n/.exec(folded);
+  return m ? folded.slice(0, m.index) : folded;
+}
+
 /**
- * The class an unmarked fact gets from its text: volatile when a rule fires
- * (and which one), normal otherwise.
+ * True when the text reads as a dated record of something done (see the
+ * rule above). Exported for the tests and the design doc's examples.
  */
-export function detectShelf(text: string): { shelf: 'volatile' | 'normal'; reason?: ShelfReason } {
+export function isDatedRecord(text: string): boolean {
+  const raw = String(text || '');
+  if (!raw.trim()) return false;
+  const head = headOf(fold(raw));
+  if (!DATE_RE.test(head)) return false;
+  const done = DONE.exec(head);
+  if (!done) return false;
+  if (OPENS_PERIOD.test(head) || FUTURE.test(head) || PRESENT.test(head)) return false;
+  if (STATE_VERB.test(head.slice(0, done.index))) return false;
+  return true;
+}
+
+/**
+ * The class an unmarked fact gets from its text: permanent when it is a dated
+ * record of something done (2.9.1), else volatile when a rule fires (and
+ * which one), normal otherwise.
+ */
+export function detectShelf(text: string): { shelf: 'volatile' | 'normal' | 'permanent'; reason?: ShelfReason } {
   const raw = String(text || '');
   if (!raw.trim()) return { shelf: 'normal' };
+  if (isDatedRecord(raw)) return { shelf: 'permanent', reason: 'history' };
   const t = fold(raw);
   for (const r of RULES) {
     if (r.test(raw, t)) return { shelf: 'volatile', reason: r.reason };
@@ -191,9 +322,16 @@ export function detectShelf(text: string): { shelf: 'volatile' | 'normal'; reaso
   return { shelf: 'normal' };
 }
 
-/** The class that applies to a fact: its explicit shelf_life, or the one its text implies. */
-export function shelfOfFact(f: Pick<Fact, 'text' | 'shelf_life'>): { shelf: ShelfLife; inferred: boolean; reason?: ShelfReason } {
+/**
+ * The class that applies to a fact: its explicit shelf_life; else permanent
+ * when the miner imported it (2.9.1: an imported note is a copy of something
+ * written elsewhere, at some other time, and was never a claim this memory
+ * made about the present — warning on it is noise); else the one its text
+ * implies.
+ */
+export function shelfOfFact(f: Pick<Fact, 'text' | 'shelf_life'> & { source?: string }): { shelf: ShelfLife; inferred: boolean; reason?: ShelfReason } {
   if (isShelfLife(f.shelf_life)) return { shelf: f.shelf_life, inferred: false };
+  if (f.source === 'miner') return { shelf: 'permanent', inferred: true, reason: 'miner' };
   const d = detectShelf(f.text);
   return { shelf: d.shelf, inferred: true, ...(d.reason ? { reason: d.reason } : {}) };
 }
@@ -224,11 +362,56 @@ export interface StalenessContext {
   windows: ShelfWindows;
   /** manifest.staleness_since: the first boot of a CRBRO that knows shelf life. Absent → now (full grace). */
   since?: string;
+  /**
+   * The brain existed before a CRBRO that knows shelf life first booted it
+   * (2.9.1). Then the facts the detector infers volatile get the staggered
+   * grace too, not only the rest: a brain written for months before 2.9 has
+   * hundreds of them, and flagging them all on upgrade day is the flood the
+   * grace exists to prevent. A brain created by 2.9 or later is not legacy,
+   * so a volatile line written there before the stamp still warns at once.
+   */
+  legacy?: boolean;
 }
 
-export function stalenessContext(since?: string | null, env: NodeJS.ProcessEnv = process.env, nowMs: number = Date.now()): StalenessContext | null {
+/**
+ * How long after `created` a stamp may come and still belong to a brain born
+ * stamped: initialize() writes both in the same call, an upgrade writes the
+ * stamp at the first boot of a new version, days or months later.
+ */
+const LEGACY_MARGIN_MS = 60_000;
+
+/**
+ * Whether a brain predates shelf life, from its manifest: not stamped yet, a
+ * creation date that cannot be read, or a stamp later than its creation by
+ * more than LEGACY_MARGIN_MS.
+ */
+export function isLegacyBrain(created: string | null | undefined, since: string | null | undefined): boolean {
+  const s = parseMs(since ?? undefined);
+  if (s === null) return true;
+  const c = parseMs(created ?? undefined);
+  if (c === null) return true;
+  return s - c > LEGACY_MARGIN_MS;
+}
+
+/**
+ * `created` is the manifest's: pass it (see stalenessContextOf) and the
+ * context knows whether the brain is legacy. Left out, it is not legacy —
+ * the 2.9.0 behaviour, where a volatile fact never got the grace.
+ */
+export function stalenessContext(since?: string | null, env: NodeJS.ProcessEnv = process.env, nowMs: number = Date.now(), created?: string | null): StalenessContext | null {
   if (!stalenessEnabled(env)) return null;
-  return { nowMs, windows: shelfWindows(env), ...(since ? { since } : {}) };
+  const legacy = created !== undefined && isLegacyBrain(created, since);
+  return { nowMs, windows: shelfWindows(env), ...(since ? { since } : {}), ...(legacy ? { legacy: true } : {}) };
+}
+
+/** The context for a brain, from its manifest (or none, when it could not be read: no legacy, full grace). */
+export function stalenessContextOf(
+  manifest: { staleness_since?: string | null; created?: string | null } | null | undefined,
+  env: NodeJS.ProcessEnv = process.env,
+  nowMs: number = Date.now(),
+): StalenessContext | null {
+  if (!manifest) return stalenessContext(undefined, env, nowMs);
+  return stalenessContext(manifest.staleness_since, env, nowMs, manifest.created ?? null);
 }
 
 export interface StaleInfo {
@@ -343,10 +526,14 @@ export function factStaleness(f: Fact, ctx: StalenessContext): StaleInfo | null 
   // the recorded date, never from a day that has not come.
   const verified = plausibleCheck(f.verified, ctx.nowMs);
   const clock = verified ?? f.added;
-  // Legacy grace: never re-checked, nobody chose its class, not volatile.
-  // Volatile facts get none: a port saved months ago deserves the warning on
-  // the first recall that serves it — that is the case this exists for.
-  const graceable = !verified && s.inferred && s.shelf !== 'volatile';
+  // Legacy grace: never re-checked, nobody chose its class. A volatile fact
+  // gets it only in a brain that predates shelf life (2.9.1): there the
+  // detector's volatile lines are hundreds, written before anyone could mark
+  // them, and flagging them all on upgrade day buries the few that matter. A
+  // fact marked volatile by hand gets none (not inferred), and in a brain
+  // born with shelf life neither does an inferred one: a port saved months
+  // ago deserves the warning on the first recall that serves it.
+  const graceable = !verified && s.inferred && (s.shelf !== 'volatile' || ctx.legacy === true);
   return judge(s.shelf, s.inferred, s.reason, clock, graceable, ctx, entryId(f.text));
 }
 
