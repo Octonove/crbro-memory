@@ -263,7 +263,8 @@ describe('install-mod', () => {
     writeFileSync(join(stale, 'hooks', 'half.ts'), '//');
     installMod({ packageDir: PKG, home, ...win });
     expect(existsSync(stale)).toBe(false);
-    expect(readdirSync(paths.modsDir)).toEqual(['crbro-pending']);
+    // Beside the mod, only its bookkeeping (state.json: installed, version).
+    expect(readdirSync(paths.modsDir).sort()).toEqual(['crbro-pending', 'state.json']);
   });
 
   it('--lang en|es stores the mod\'s language; auto takes it out again', () => {
@@ -311,7 +312,8 @@ describe('uninstall-mod', () => {
     writeFileSync(join(paths.modsDir, 'another-mod', 'x.txt'), 'keep');
     mkdirSync(join(paths.claudeDir, 'crbro-hooks'), { recursive: true });
     writeFileSync(join(paths.claudeDir, 'crbro-hooks', 'crbro-guard.mjs'), '// keep');
-    const others = () => snapshot(home).split('\n').filter(l => !l.includes('crbro-pending') && !l.includes('settings.json')).join('\n');
+    const others = () => snapshot(home).split('\n')
+      .filter(l => !l.includes('crbro-pending') && !l.includes('settings.json') && !l.includes('state.json')).join('\n');
     const before = others();
 
     const r = uninstallMod({ home, ...win });
@@ -337,9 +339,22 @@ describe('uninstall-mod', () => {
   it('leaves settings.json and ~/.claude as install-mod found them', () => {
     writeSettings({ theme: 'dark' });
     installMod({ packageDir: PKG, home, lang: 'en', ...win });
-    uninstallMod({ home, ...win });
+    const r = uninstallMod({ home, ...win });
     expect(settings()).toEqual({ theme: 'dark' });
-    expect(existsSync(paths.modsDir)).toBe(false);
+    // All that is left is the opt-out mark, so crbro_boot never puts it back.
+    expect(readdirSync(paths.modsDir)).toEqual(['state.json']);
+    expect(JSON.parse(readFileSync(paths.statePath, 'utf8'))).toMatchObject({ optedOut: true, optedOutBy: 'uninstall-mod' });
+    expect(r.lines.join('\n')).toMatch(/will not install it again on its own/);
+  });
+
+  it('install-mod lifts the opt-out mark uninstall-mod left', () => {
+    installMod({ packageDir: PKG, home, ...win });
+    uninstallMod({ home, ...win });
+    const r = installMod({ packageDir: PKG, home, ...win });
+    const state = JSON.parse(readFileSync(paths.statePath, 'utf8'));
+    expect(state.optedOut).toBeUndefined();
+    expect(state.installed).toBe(true);
+    expect(r.lines.join('\n')).toMatch(/up to date at boot again/);
   });
 
   it('puts the crbro-pendientes copy it replaced back where it was', () => {

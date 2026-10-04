@@ -992,7 +992,13 @@ if (command === 'init') {
   });
 
 } else if (command === 'install-mod' || command === 'uninstall-mod') {
-  // ─── The open-items band for Claude Code (opt-in) ──────────────
+  // ─── The open-items band for Claude Code ───────────────────────
+  //
+  // crbro_boot installs it on its own for whoever has Claude Code, and keeps
+  // its files up to date (autoInstallMod in modinstall.ts); these commands are
+  // the manual way in and the way out. uninstall-mod leaves a mark in
+  // ~/.claude/crbro-mods/state.json so the boot never puts it back, and
+  // install-mod lifts that mark. CRBRO_MOD=0 turns the automatic part off.
   //
   // mods/crbro-pending is a Claude Code mod: CRBRO's open items above the
   // prompt and /pending (alias /pendientes) with all of them as cards. It is
@@ -1387,7 +1393,8 @@ if (command === 'init') {
   console.log('    npx crbro-memory uninstall-hooks --compact   Remove both and put back what was replaced');
   console.log('    npx crbro-memory install-hooks --verify      SHA-256 of the installed hooks and mod against this package (read-only)');
   console.log('    npx crbro-memory install-mod [--lang en|es|auto]  Claude Code band + /pending with the open items (Claude Code 2.1.286+)');
-  console.log('    npx crbro-memory uninstall-mod                Remove the mod and its CLAUDE_CODE_PLUGIN_DIRS entry');
+  console.log('                                                 crbro_boot installs and updates it on its own; CRBRO_MOD=0 turns that off');
+  console.log('    npx crbro-memory uninstall-mod                Remove the mod and its CLAUDE_CODE_PLUGIN_DIRS entry; never put back on its own');
   console.log('    npx crbro-memory install-mod --verify         SHA-256 of the installed mod against this package (read-only)');
   console.log('');
   console.log('  Looking back at Claude Code sessions (read-only; last 7 days unless --days N, 0 = all):');

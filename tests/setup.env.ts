@@ -11,6 +11,12 @@ process.env.CRBRO_SEMANTIC ??= '0';
 // the one that covers consolidate switches this back on.
 process.env.CRBRO_AUTOBACKUP ??= '0';
 
+// No automatic install of the Claude Code mod from the suite either: every
+// crbro_boot would try it against the sandbox home. The tests that cover it
+// pass their own env and home to the module, and the boot test switches this
+// back on for its own throwaway home.
+process.env.CRBRO_MOD ??= '0';
+
 // No test ever reaches the real brain. Every server test sets CRBRO_PATH to a
 // temporary folder of its own; this is for the one that forgets, or sets it too
 // late: without it `new Brain()` falls back to ~/.crbro — and once did, writing
