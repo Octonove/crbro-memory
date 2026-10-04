@@ -58,6 +58,15 @@ describe('release metadata', () => {
     }
   });
 
+  it('the mod install-mod copies exists and ships', () => {
+    const bin = read('bin/crbro.mjs');
+    expect(bin).toMatch(/'mods',\s*'crbro-pending'/);
+    for (const f of ['.claude-plugin/plugin.json', 'hooks/hooks.json', 'hooks/register.tsx', 'types/index.d.ts']) {
+      expect(existsSync(path.join(root, 'mods', 'crbro-pending', f)), f).toBe(true);
+      expect(shipped(`mods/crbro-pending/${f}`), f).toBe(true);
+    }
+  });
+
   it('SECURITY.md exists, ships and is linked from the README', () => {
     expect(existsSync(path.join(root, 'SECURITY.md'))).toBe(true);
     expect(shipped('SECURITY.md')).toBe(true);

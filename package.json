@@ -46,6 +46,7 @@
     "dist/",
     "bin/",
     "hooks/",
+    "mods/",
     "README.md",
     "SECURITY.md",
     "LICENSE"
