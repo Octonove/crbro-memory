@@ -105,7 +105,9 @@ describe('staleness through the MCP tools', () => {
     expect(port.results.map((r: any) => r.matching_content)).not.toContain(PORT);
     expect(port.possibly_stale).toHaveLength(1);
     const row = port.possibly_stale[0];
-    expect(row).toMatchObject({ neuron_id: pelicano, matching_content: PORT, age_days: 200, shelf_life: 'volatile', shelf_inferred: true });
+    expect(row).toMatchObject({ neuron_id: pelicano, last_known: PORT, age_days: 200, shelf_life: 'volatile', shelf_inferred: true });
+    // Iteration 2: the old line is not served as ordinary content.
+    expect(row.matching_content).toBeUndefined();
     expect(row.last_verified).toBe(ago(200).slice(0, 10));
     expect(row.entry_id).toBeTruthy();
     expect(row.staleness).toBeUndefined();                 // the internal field never leaves the server
@@ -138,7 +140,7 @@ describe('staleness through the MCP tools', () => {
     expect(both.hint).not.toMatch(/^Nothing current matched/);
     expect(both.hint).toContain('possibly_stale');
     // Never re-headed: the stale row still speaks with its stale line.
-    expect(both.possibly_stale[0].matching_content).toBe(PORT);
+    expect(both.possibly_stale[0].last_known).toBe(PORT);
     // Every row keeps its rank, so results[0] is never mistaken for the best match.
     const ranks = [...both.results, ...both.possibly_stale].map((r: any) => r.rank).sort();
     expect(ranks).toEqual([1, 2]);
@@ -189,14 +191,14 @@ describe('staleness through the MCP tools', () => {
     // index carries the recorded date: rebuild it from the edited file first.
     await call('crbro_maintenance', {});
     const r = await json('crbro_recall', { query: 'puerto panel administración Pelícano', since: '30d' });
-    const served = [...r.results, ...(r.possibly_stale || [])].map((x: any) => x.matching_content);
+    const served = [...r.results, ...(r.possibly_stale || [])].map((x: any) => x.matching_content ?? x.last_known);
     expect(served).not.toContain(PORT);
   });
 
   it('learning the same text again reconfirms it (a session is a check)', async () => {
     await edit(root, pelicano, n => { for (const f of n.facts) if (f.text === PRICE) { f.added = ago(150); delete f.verified; } });
     const stale = await json('crbro_recall', { query: 'plan Equipo cuesta euros' });
-    expect(stale.possibly_stale?.[0]?.matching_content).toBe(PRICE);
+    expect(stale.possibly_stale?.[0]?.last_known).toBe(PRICE);
 
     const again = await json('crbro_learn', { topic: 'Pelícano', type: 'fact', content: PRICE, keywords: ['tarifa'] });
     expect(again.reconfirmed).toBe(true);
@@ -212,7 +214,7 @@ describe('staleness through the MCP tools', () => {
     expect(r.updated_in_place).toBe(true);
     expect(r.reconfirmed).toBeUndefined();
     const still = await json('crbro_recall', { query: 'plan Equipo cuesta euros' });
-    expect(still.possibly_stale?.[0]?.matching_content).toBe(PRICE);
+    expect(still.possibly_stale?.[0]?.last_known).toBe(PRICE);
     // The bare repeat is the check.
     const bare = await json('crbro_learn', { topic: 'Pelícano', type: 'fact', content: PRICE });
     expect(bare.reconfirmed).toBe(true);
@@ -412,10 +414,10 @@ describe('a brain written before shelf life', () => {
     expect(decision.results[0].matching_content).toContain('Garza se despliega a mano.');
 
     const port = await json('crbro_recall', { query: 'API interna Garza puerto' });
-    expect(port.possibly_stale?.[0]).toMatchObject({ matching_content: OLD_PORT, age_days: 400, shelf_life: 'volatile' });
+    expect(port.possibly_stale?.[0]).toMatchObject({ last_known: OLD_PORT, age_days: 400, shelf_life: 'volatile' });
 
     const undated = await json('crbro_recall', { query: 'servidor Garza puerto 2222' });
-    const row = [...undated.results, ...(undated.possibly_stale || [])].find((r: any) => r.matching_content === UNDATED);
+    const row = [...undated.results, ...(undated.possibly_stale || [])].find((r: any) => (r.matching_content ?? r.last_known) === UNDATED);
     expect(row).toBeTruthy();
     expect(undated.results.map((r: any) => r.matching_content)).toContain(UNDATED);
   });
