@@ -101,6 +101,39 @@ describe('team spaces: verify ops', () => {
     expect('verified' in n.facts[0]).toBe(false);
   });
 
+  it('a check dated in the future never sticks: a real check afterwards wins (review fix)', () => {
+    const futuro = op({ op: 'verify', eid: FID, ekind: 'fact', at: '2099-01-01T00:00:00.000Z', by: 'reloj-adelantado' });
+    const fe = op({ op: 'verify', eid: entryId(PATTERN), ekind: 'entry', at: '2099-01-01T00:00:00.000Z' });
+    const solo = applyOps(base(), [futuro, fe]).neuron;
+    expect(solo.facts[0].verified).toBeUndefined();
+    expect(solo.entry_verified).toBeUndefined();
+    const hoy = new Date(Date.now() - 60_000).toISOString();
+    const real = op({ op: 'verify', eid: FID, ekind: 'fact', at: hoy, by: 'luis' });
+    for (const orden of [[futuro, real], [real, futuro]]) {
+      expect(applyOps(base(), orden).neuron.facts[0].verified).toBe(hoy);
+    }
+    // A future stamp already on disk (written by an older build) loses to a real check too.
+    const local = base();
+    local.facts[0].verified = '2099-01-01T00:00:00.000Z';
+    expect(applyOps(local, [real]).neuron.facts[0].verified).toBe(hoy);
+  });
+
+  it('a fact stored before ids existed, with a double space: its check still lands on the teammate (review fix)', () => {
+    const texto = 'Precio  del plan: 29 EUR';
+    expect(entryId(texto)).not.toBe(factId(texto));
+    // The first share names it by entryId (normalized); learn and revise name the check by factId (raw).
+    const fop = op({ op: 'fact', fid: entryId(texto), text: texto, conf: 1 });
+    const vop = op({ op: 'verify', eid: factId(texto), ekind: 'fact', at: '2026-09-01T00:00:00.000Z' });
+    const r = applyOps(base(), [fop, vop]);
+    expect(r.neuron.facts.find(f => f.text === texto)!.verified).toBe('2026-09-01T00:00:00.000Z');
+    expect(r.report.verifications_updated).toBe(1);
+    // And the other way round: a local legacy fact with no id, a check named by entryId.
+    const local = base();
+    local.facts.push({ text: texto, confidence: 1, added: '2026-01-01T00:00:00.000Z', source: 'session', status: 'active' });
+    const v2 = op({ op: 'verify', eid: entryId(texto), ekind: 'fact', at: '2026-09-02T00:00:00.000Z' });
+    expect(applyOps(local, [v2]).neuron.facts.find(f => f.text === texto)!.verified).toBe('2026-09-02T00:00:00.000Z');
+  });
+
   it('the log line is a v1 op an older client reads and skips by kind', () => {
     const line = encodeOp(v2);
     const { ops, skipped } = decodeOps(line + '\n');
@@ -122,15 +155,26 @@ describe('team spaces: shelf on the fact op', () => {
     }
   });
 
-  it('a local explicit value is only ever made more volatile by a teammate', () => {
+  it('a local explicit value is only ever made more volatile by an op', () => {
     const local = base();
     local.facts[0].shelf_life = 'normal';
     const r = applyOps(local, [durable]);
-    expect(r.neuron.facts[0].shelf_life).toBe('normal');   // lengthening stays local
+    expect(r.neuron.facts[0].shelf_life).toBe('normal');
     expect(r.report.shelf_updated).toBe(0);
     const r2 = applyOps(local, [volatile]);
     expect(r2.neuron.facts[0].shelf_life).toBe('volatile');
     expect(r2.report.shelf_updated).toBe(1);
+  });
+
+  it('lengthening a shared fact does not hold: the original volatile op is still in the log (review fix)', () => {
+    // My own first op said volatile; I re-learned it as normal, which emitted a second op.
+    const original = op({ op: 'fact', fid: FID, text: FACT, conf: 1, shelf: 'volatile' });
+    const relearn = op({ op: 'fact', fid: FID, text: FACT, conf: 1, shelf: 'normal', at: '2026-09-20T00:00:00.000Z' });
+    const local = base();
+    local.facts[0].shelf_life = 'normal';
+    const r = applyOps(local, [original, relearn]);
+    expect(r.neuron.facts[0].shelf_life).toBe('volatile');   // learn warns about this in shared_warning
+    expect(r.report.shelf_updated).toBe(1);
   });
 
   it('a new fact arrives with its explicit shelf; an unknown value is ignored', () => {
@@ -178,6 +222,42 @@ describe('cortex: what writes verified, and what carries it', () => {
     expect(emitted.filter(e => e.change.kind === 'verify')).toEqual([
       { nid: id, change: { kind: 'verify', eid: f.id, ekind: 'fact', at: f.verified } },
     ]);
+  });
+
+  it('the same session repeating a fact emits one verify op, not one per repeat (review fix)', async () => {
+    const r = await cortex.learn('Tienda', 'fact', FACT);
+    const id = r.neuron!.id;
+    for (let i = 0; i < 3; i++) {
+      const again = await cortex.learn('Tienda', 'fact', FACT, { neuronId: id });
+      expect(again.reconfirmed).toBe(true);
+    }
+    expect(emitted.map(e => e.change.kind)).toEqual(['fact', 'verify']);
+  });
+
+  it('a re-learn that edits the line (keywords, class, confidence) is not a check (review fix)', async () => {
+    const r = await cortex.learn('Tienda', 'fact', FACT);
+    const id = r.neuron!.id;
+    const conKeys = await cortex.learn('Tienda', 'fact', FACT, { neuronId: id, keys: ['panel', 'admin'] });
+    expect(conKeys.updated_in_place).toBe(true);
+    expect(conKeys.reconfirmed).toBeUndefined();
+    const conClase = await cortex.learn('Tienda', 'fact', FACT, { neuronId: id, shelfLife: 'durable' });
+    expect(conClase.reconfirmed).toBeUndefined();
+    const conConf = await cortex.learn('Tienda', 'fact', FACT, { neuronId: id, confidence: 0.6 });
+    expect(conConf.reconfirmed).toBeUndefined();
+    expect((await cortex.peek(id))!.facts[0].verified).toBeUndefined();
+    expect(emitted.some(e => e.change.kind === 'verify')).toBe(false);
+    // The same keywords again change nothing, so that call is a bare repeat: a check.
+    const igual = await cortex.learn('Tienda', 'fact', FACT, { neuronId: id, keys: ['panel'] });
+    expect(igual.reconfirmed).toBe(true);
+  });
+
+  it('lengthening an explicit class is reported, shortening is not', async () => {
+    const r = await cortex.learn('Tienda', 'fact', FACT, { shelfLife: 'volatile' });
+    const id = r.neuron!.id;
+    const largo = await cortex.learn('Tienda', 'fact', FACT, { neuronId: id, shelfLife: 'durable' });
+    expect(largo.shelf_lengthened).toBe(true);
+    const corto = await cortex.learn('Tienda', 'fact', FACT, { neuronId: id, shelfLife: 'volatile' });
+    expect(corto.shelf_lengthened).toBeUndefined();
   });
 
   it('an explicit shelf_life travels on the fact change; an inferred one never does', async () => {

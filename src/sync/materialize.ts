@@ -16,6 +16,7 @@ import { now } from '../utils/fs.js';
 import type { Neuron, Fact, Decision, FactStatus } from '../types/index.js';
 import type { Op, FactOp, StatusOp, DecisionOp, MapOp, PurgeOp, VerifyOp } from './ops.js';
 import { normalizeText, entryId } from './ops.js';
+import { factId } from '../utils/hash.js';
 import { mostVolatile, latestOf, isShelfLife } from '../engine/shelf.js';
 
 /** Fields that disagreed and were left alone, so a human can look. */
@@ -163,6 +164,16 @@ export function applyOps(
   for (const f of neuron.facts) {
     byFid.set(f.id || '', f);
   }
+  // A fact stored before ids existed is shared under entryId(text) (the
+  // normalized text), while learn and revise name it by factId(text) (the raw
+  // text) when they emit a check. The two differ when the text has double
+  // spaces or is not NFC, so register both hashes too: otherwise a teammate's
+  // verify op finds no target and the check is dropped without a word.
+  // Explicit ids win; a hash never displaces one.
+  const alias = (f: Fact) => {
+    for (const k of [entryId(f.text), factId(f.text)]) if (!byFid.has(k)) byFid.set(k, f);
+  };
+  for (const f of neuron.facts) alias(f);
   // Facts stored before ids existed: index them by their text so an incoming
   // note about the same sentence lands on the same fact instead of duplicating.
   const byText = new Map<string, Fact>();
@@ -207,6 +218,7 @@ export function applyOps(
       if (isShelfLife(fo.shelf)) fact.shelf_life = fo.shelf;
       neuron.facts.push(fact);
       byFid.set(fo.fid, fact);
+      alias(fact);
       byText.set(normalizeText(fo.text), fact);
       report.facts_added++;
     } else if (op.op === 'status') {

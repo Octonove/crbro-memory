@@ -161,14 +161,18 @@ stale      = class ≠ permanent and age_days > window(class)
 - **Legacy grace.** The first boot of this version stamps
   `manifest.staleness_since`. A fact that has no `verified`, no explicit
   `shelf_life`, an inferred class other than `volatile`, and an `added` before
-  that stamp, has its clock start at the stamp instead. The bulk of an old
-  brain therefore does not turn "possibly stale" on upgrade day; it ages from
-  then like anything new. **Volatile facts get no grace**: a port saved five
+  that stamp, has its clock start near the stamp instead. The bulk of an old
+  brain therefore does not turn "possibly stale" on upgrade day. *(Revised
+  after review, see §13: starting every such line at the stamp itself only
+  moved the flood to one later day; each line now starts up to half a window
+  before the stamp, by a fixed share of a hash of its text.)* **Volatile facts get no grace**: a port saved five
   months ago deserves the warning on the first recall that serves it, which is
   exactly the case the feedback is about. Decisions and patterns get the same
   grace (they are `durable` by kind). The stamp is one field in a file boot
   already writes (`last_boot`); no neuron is touched.
-- A clock in the future (a teammate's skewed `at`) counts as age 0.
+- A recorded date in the future counts as age 0. A **check** dated more than
+  a day ahead of this machine's clock counts as no check at all (§13): with
+  "latest wins" it would otherwise pin the line as fresh until that day.
 
 ## 4. Marking at save time — `crbro_learn`
 
@@ -185,7 +189,8 @@ shelf_life: z.enum(['volatile', 'normal', 'durable', 'permanent']).optional()
   `shelf_reason` when it was inferred.
 - Exact-duplicate fact (the existing branch that merges keywords): a given
   `shelf_life` different from the stored one replaces it
-  (`updated_in_place: true`), and the line is **reconfirmed** (section 5).
+  (`updated_in_place: true`). *(Revised, §13: such a call is an edit and does
+  not reconfirm; only a bare repeat does, section 5.)*
 - Ignored, with no error, for other kinds — the same as `rationale` today.
 
 ## 5. Reconfirming
@@ -201,8 +206,11 @@ ever touches `verified`.
    if it holds again). `note` is ignored for this status. Response:
    `verified: [ids]`, `unmatched`. This is the call the `possibly_stale`
    block points at when the check says "still true".
-2. **Learning the exact same text again** stamps `verified = now`, in the same
-   branch that already merges keywords and counts `confirmations`. The model
+2. **Learning the exact same text again**, with nothing else in the call,
+   stamps `verified = now`, in the same branch that already merges keywords
+   and counts `confirmations`. *(Revised, §13: a re-learn that also brings new
+   keywords, a confidence or a class edits the line and does not reconfirm,
+   and the `verify` op goes out once per line per session.)* The model
    that re-states a fact it just read from the source has, in effect, checked
    it. Exceptions: the **miner** never reconfirms (re-reading an old transcript
    is not a check — the same rule that keeps it out of `confirmations`), and a
@@ -323,8 +331,11 @@ The new fields must merge with meaning between machines.
   when explicit. Merge: **the most volatile explicit value wins**
   (volatile < normal < durable < permanent). The costs are asymmetric: a
   needless warning costs one check; a missing one costs a wrong answer.
-  Consequence, documented like keyword unions today: lengthening a shared
-  fact's shelf life stays local.
+  Consequence: lengthening a shared fact's shelf life does not hold. *(Revised,
+  §13: the first version of this text said it "stays local"; in fact the
+  older, more volatile op stays in the append-only log and the next sync
+  restores it on every machine, the one that lengthened it included. learn
+  says so in `shared_warning`.)*
 - **`entry_verified`** is rebuilt from `verify` ops with `ekind: 'entry'`, and
   pruned with the other sidecars when an entry leaves.
 - **Compatibility.** `OPS_VERSION` stays 1, as in 2.0 when purge kinds were
@@ -352,13 +363,13 @@ The new fields must merge with meaning between machines.
 
 | risk | how it is contained | what would show it failed |
 |---|---|---|
-| **Flooding with warnings** — every recall half "possibly stale", users learn to ignore the block | per-recall cost bounded by `limit`; legacy grace for non-volatile facts; conservative detector; preferences and errors never flagged; kill switch | maintenance `stale_entries` on a brain after upgrade, reported as measured; a regression in the benchmark's `memory` tasks, whose facts are fresh and must never be flagged (U5) |
+| **Flooding with warnings** — every recall half "possibly stale", users learn to ignore the block | per-recall cost bounded by `limit`; legacy grace for non-volatile facts; conservative detector; preferences and errors never flagged; kill switch | maintenance `stale_entries` on a brain after upgrade, reported as measured. *Not* U5: the twelve original facts are seeded fresh and none can pass its window, so U5 cannot see false warnings (§13, limits of the benchmark) |
 | **Agents stop answering** — a stale row read as "no answer" | rows are moved, not hidden; the hint says "nothing current matched" and how to proceed; the original `memory` + `stale` thresholds must still pass | U5 in the pre-registration |
 | **Hedging instead of checking** — "it was 14, maybe" | the hint names the cheap checks first; the scorer counts a hedged old value apart from a bare one | `hedged` outcome in `stale-unmarked` |
 | **Ranking cost** | none by construction: the partition runs after ranking, on rows already materialised; one map lookup per row | the deterministic retrieval benchmarks must give identical numbers with the feature on (they run on fresh fixtures) |
 | **Token cost** | moved rows replace rows, they do not add to them; four short fields per moved row; one hint sentence | the cost columns of the agentic results, before vs after |
 | **Tool descriptions over 1,000 characters** (recall is at 999 today) | the new behaviour is described in parameter `.describe()`s, the hint and the instructions; recall's description is rewritten to 962 characters by dropping two clauses that live elsewhere (the default of five is in `limit`, "before crbro_learn" is in learn's own description, `matched_neurons` in the output schema); learn 957 → 930, revise 841 → 932, measured on the candidate texts | `tests/tool.definitions.test.ts` |
-| **False freshness** — `verified` only means someone said they checked | documented; the miner can never set it; a teammate's check is visible as a `verify` op with its author | — |
+| **False freshness** — `verified` only means someone said they checked | documented; the miner can never set it; a re-learn that edits the line (keywords, class, confidence) does not set it; a check dated in the future is ignored; a teammate's check is visible as a `verify` op with its author | — |
 | **Detector false positives on prose** | rules require a number or a role pattern next to the trigger word; unit tests with negatives | detector share on fixtures, reported before release |
 
 ## 11. Out of scope
@@ -411,8 +422,102 @@ Where the code on this branch differs from, or adds to, the text above:
   25 of 48 facts of `fixture.json` (a project brain of versions, prices and
   hosts), 3 / 494, 3 / 494 and 0 / 494 in the three personal-prose haystacks.
 - **Descriptions, measured on the final text:** recall 964, learn 968, revise
-  946 characters.
+  946 characters (learn 973 after the review changes below).
 - **Retrieval benchmark** (`node benchmarks/retrieval/run.mjs`, keyword engine)
   gives, with the feature on, the numbers published for the keyword engine
   (measured on 2.7.2): recall@1 77%, recall@3 83%, MRR 0.806. The ranking does
   not read shelf life at all; the partition happens in the server.
+
+### Changes after review (2026-10-04, before the `after` run)
+
+Two reviews of the implementation (compatibility and teams; benchmark
+integrity). What was changed in the code, each with a test:
+
+- **A check from the future no longer sticks.** A `verify` op (or a stored
+  `verified`) dated more than a day ahead of this machine's clock counts as no
+  check: `latestOf` ignores it in every merge (materialize, `unionNeuron`) and
+  the age runs from the recorded date. Before, a teammate with a clock set to
+  2099 pinned the line as fresh until 2099 and no real check could replace it.
+- **Lengthening a shared fact's class is said, not promised.** The text that
+  said it "stays local" was wrong (§8). `crbro_learn` now returns
+  `shared_warning` when a less volatile explicit class replaces a more
+  volatile one on a shared neuron.
+- **The legacy grace is staggered.** Starting every old line at the stamp only
+  delayed the flood to one day (365 days after the stamp for normal facts, 730
+  for decisions and patterns). Now each line's clock starts
+  `min(stamp - recorded, window/2 x share)` before the stamp, where `share` is
+  a fixed value in [0, 1) from an FNV-1a hash of the line's text
+  (`spreadOf`): deterministic, the same on every machine, nothing stored. On
+  the stamp day nothing is due (at most half a window has elapsed); an old
+  brain's lines come due spread evenly over the second half of the first
+  window. The rule keeps no "oldest first" order: before the stamp nobody
+  checked any of them, so the order among them carries no information.
+- **The daemon fingerprint** includes `CRBRO_STALENESS` and `CRBRO_SHELF_DAYS`
+  (normalized, and only when they differ from the defaults), so a client that
+  switched the feature off is not served by a daemon that has it on.
+- **One `verify` op per line per session.** Re-learning the same fact again
+  and again in one session stamped and emitted every time; on a shared neuron
+  each one was a line in the team's log, which is never compacted.
+- **Legacy facts with two hashes.** The first share names a fact without id
+  by `entryId(text)` (normalized), learn and revise name its check by
+  `factId(text)` (raw); with a double space or non-NFC text they differ and
+  the check was dropped on the teammate. Materialize now resolves both.
+- **The stamp does not drift.** `updateManifest` wrote the whole cached
+  manifest and could erase `staleness_since` (a cache older than the first
+  boot of this version); it now keeps the earliest stamp of disk and cache,
+  and boot restores one that an older CRBRO dropped while this process knew it.
+- **The best match is never hidden behind another entity.** When the
+  top-ranked row moves to `possibly_stale`, `results[0]` is a lower-ranked
+  row, sometimes about something else (reproduced on the benchmark brain: a
+  question about Pelícano's price showed another product's 49 € at the head of
+  `results`). Every row now carries `rank` when anything moved, and the hint
+  opens with "The best match (rank 1) moved to possibly_stale; results holds
+  lower-ranked rows that may be about something else."
+- **A re-learn that edits is not a check.** `keywords_hint` asks the agent to
+  call learn again with the same text to add keywords, and that call stamped
+  `verified`: an old line left `possibly_stale` without anyone looking at the
+  source. Now only a bare repeat (no new keywords, class or confidence)
+  reconfirms. The learn description says "a bare repeat counts as
+  re-verified" (973 characters).
+
+Deviations from the tables above that the first version of this section left
+out:
+
+- **Detector rules broader than the table in §3.** `port` accepts the number
+  up to 20 characters after the word (`el puerto se movió al 2299`).
+  `config` also fires on a snake_case key followed by a number
+  (`memory_limit de 512M`), on `fijado/establecido en` plus a number, and on
+  `max`, `máximo`, `mínimo`, `retries`, `umbral` and similar within 25
+  characters of a number. `es` was taken off the list of versioned products
+  (it fired on Spanish "es 3"). Known false positives of the broad `config`
+  rule: "Antonio entrena como máximo 3 días por semana." and "Prefiere un
+  máximo de 2 reuniones al día." come out volatile. Left as is for now (a
+  false positive costs one check); a technical context (a key or a unit)
+  would be the next restriction to try.
+- **The detector share is in-sample.** The rules were widened after reviewing
+  what they caught on `fixture.json`, and the 25 of 48 reported above was
+  measured on that same fixture afterwards.
+- **Recall's description** also lost the clause "Retired entries never
+  surface" to stay under 1,000 characters; revise's description already says
+  retired lines leave recall.
+
+Limits of the agentic benchmark, to be said with any result:
+
+- **U5 cannot detect a flood of warnings.** The twelve original facts are
+  seeded with today's date, so none can pass its window; no task has an old
+  value that is still true. A detector that flagged every old line would pass
+  the benchmark exactly as well. The cost of false warnings (turns,
+  abstentions, hedging on true values) is not measured.
+- **u3 and u4 match the detector's own examples.** The rules and the four
+  task texts were written by the same author in the same commit, and the table
+  in §3 lists `PostgreSQL 14` and `puerto 9090`. That u3 and u4 are flagged
+  without a mark shows the detector recognises its own examples, not that it
+  generalises.
+- **Denied writes in `after`.** The `possibly_stale` hint tells the agent to
+  call `crbro_revise` or `crbro_learn` after checking; the cells only allow
+  boot, recall and inspect, so those calls are denied and cost turns. They are
+  counted from `tool_calls` when the results are published.
+- Planned for the next amendment, pre-registered before it is measured: old
+  but still-true controls (a volatile fact 200 days old whose value matches
+  the file), a mixed query with an unrelated old row, and unmarked tasks
+  written by someone else.

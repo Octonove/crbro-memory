@@ -255,6 +255,35 @@ const parseMs = (iso: string | undefined): number | null => {
 };
 
 /**
+ * How far ahead of this machine's clock a check may be dated and still count:
+ * a day, for time zones and ordinary drift. Anything later is a clock that is
+ * wrong (a teammate's, or a corrupt `at`), and a check from the future would
+ * otherwise win every "latest" merge and keep the line fresh until that day.
+ */
+export const FUTURE_SLACK_MS = DAY_MS;
+
+/** A verification instant, or undefined when it is malformed or too far in the future to be real. */
+export function plausibleCheck(iso: string | undefined, nowMs: number = Date.now()): string | undefined {
+  const t = parseMs(iso);
+  if (t === null || t > nowMs + FUTURE_SLACK_MS) return undefined;
+  return iso;
+}
+
+/**
+ * A fixed share in [0, 1) for a line, from its text hash (FNV-1a): the same
+ * line gets the same share on every machine and every call, so the staggered
+ * grace is deterministic and needs nothing stored.
+ */
+export function spreadOf(seed: string): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < seed.length; i++) {
+    h ^= seed.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h / 0x1_0000_0000;
+}
+
+/**
  * Judge one entry. `clock` is verified ?? recorded date; `graceable` says
  * whether the legacy grace may move the clock forward to `ctx.since`.
  * Returns null when there is nothing to judge: no date (a line with no date
@@ -267,19 +296,33 @@ function judge(
   clockIso: string | undefined,
   graceable: boolean,
   ctx: StalenessContext,
+  seed: string,
 ): StaleInfo | null {
   const t = parseMs(clockIso);
   if (t === null) return null;
   let desde = t;
   let ageFrom: string | undefined;
+  const window = shelf === 'permanent' ? null : ctx.windows[shelf];
   if (graceable) {
     // No stamp yet (a recall before the first boot of this version): the
     // grace runs from now, so an old brain is never flagged before it is stamped.
     const s = ctx.since ? parseMs(ctx.since) : ctx.nowMs;
-    if (s !== null && s > t) { desde = s; ageFrom = new Date(s).toISOString().slice(0, 10); }
+    if (s !== null && s > t) {
+      // Staggered, not one shared start: if every old line ran from the
+      // stamp, they would all cross their window on the same day and an old
+      // brain would go from no warnings to all of them at once. Each line's
+      // clock starts up to half a window before the stamp, by a fixed share
+      // drawn from a hash of its text, and never before its real date. On the
+      // stamp day nothing is past its window (at most half of it has
+      // elapsed), and an old brain's lines come due evenly over the second
+      // half of the first window instead of on one day.
+      const half = window === null ? 0 : (window * DAY_MS) / 2;
+      const atras = Math.min(s - t, half * spreadOf(seed));
+      desde = s - atras;
+      ageFrom = new Date(desde).toISOString().slice(0, 10);
+    }
   }
   const age = Math.max(0, Math.floor((ctx.nowMs - desde) / DAY_MS));
-  const window = shelf === 'permanent' ? null : ctx.windows[shelf];
   return {
     stale: window !== null && age > window,
     age_days: age,
@@ -296,13 +339,15 @@ function judge(
 export function factStaleness(f: Fact, ctx: StalenessContext): StaleInfo | null {
   if (!f || (f.status && f.status !== 'active')) return null;
   const s = shelfOfFact(f);
-  const verified = parseMs(f.verified) !== null ? f.verified : undefined;
+  // A check dated in the future is treated as no check: the clock runs from
+  // the recorded date, never from a day that has not come.
+  const verified = plausibleCheck(f.verified, ctx.nowMs);
   const clock = verified ?? f.added;
   // Legacy grace: never re-checked, nobody chose its class, not volatile.
   // Volatile facts get none: a port saved months ago deserves the warning on
   // the first recall that serves it — that is the case this exists for.
   const graceable = !verified && s.inferred && s.shelf !== 'volatile';
-  return judge(s.shelf, s.inferred, s.reason, clock, graceable, ctx);
+  return judge(s.shelf, s.inferred, s.reason, clock, graceable, ctx, entryId(f.text));
 }
 
 /**
@@ -326,13 +371,17 @@ export function entryStaleness(neuron: Neuron, kind: string, text: string, ctx: 
     fecha = neuron.entry_dates?.[entryId(base)];
   }
   const id = entryId(base);
-  const verified = parseMs(neuron.entry_verified?.[id]) !== null ? neuron.entry_verified![id] : undefined;
-  return judge(shelf, true, undefined, verified ?? fecha, !verified && shelf !== 'permanent', ctx);
+  const verified = plausibleCheck(neuron.entry_verified?.[id], ctx.nowMs);
+  return judge(shelf, true, undefined, verified ?? fecha, !verified && shelf !== 'permanent', ctx, id);
 }
 
-/** The latest of two ISO instants (absent or unparseable loses). */
-export function latestOf(a: string | undefined, b: string | undefined): string | undefined {
-  const ta = parseMs(a), tb = parseMs(b);
+/**
+ * The latest of two ISO instants. Absent, unparseable or implausibly future
+ * (past now + FUTURE_SLACK_MS) loses: a check from a clock that is ahead must
+ * not win every later merge and pin the line as fresh until that day.
+ */
+export function latestOf(a: string | undefined, b: string | undefined, nowMs: number = Date.now()): string | undefined {
+  const ta = parseMs(plausibleCheck(a, nowMs)), tb = parseMs(plausibleCheck(b, nowMs));
   if (ta === null) return tb === null ? undefined : b;
   if (tb === null) return a;
   return tb > ta ? b : a;

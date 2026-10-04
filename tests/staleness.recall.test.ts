@@ -139,6 +139,26 @@ describe('staleness through the MCP tools', () => {
     expect(both.hint).toContain('possibly_stale');
     // Never re-headed: the stale row still speaks with its stale line.
     expect(both.possibly_stale[0].matching_content).toBe(PORT);
+    // Every row keeps its rank, so results[0] is never mistaken for the best match.
+    const ranks = [...both.results, ...both.possibly_stale].map((r: any) => r.rank).sort();
+    expect(ranks).toEqual([1, 2]);
+    if (both.possibly_stale[0].rank === 1) {
+      expect(both.hint).toMatch(/^The best match \(rank 1\) moved to possibly_stale/);
+    } else {
+      expect(both.hint).not.toMatch(/^The best match/);
+    }
+  });
+
+  it('when the top-ranked row moves, the hint says so first (review fix)', async () => {
+    // A query only the stale Pelícano line answers well, plus a weaker row elsewhere.
+    const r = await json('crbro_recall', { query: 'Pelícano panel administración puerto 9090', limit: 3 });
+    expect(r.possibly_stale?.[0]).toMatchObject({ neuron_id: pelicano, rank: 1 });
+    expect(r.results.length).toBeGreaterThan(0);
+    expect(r.results.every((x: any) => x.rank > 1)).toBe(true);
+    expect(r.hint).toMatch(/^The best match \(rank 1\) moved to possibly_stale; results holds lower-ranked rows/);
+    // Without anything stale, rows carry no rank: the answer is as it always was.
+    const fresh = await json('crbro_recall', { query: 'Docker Compose facturación' });
+    expect(fresh.results[0].rank).toBeUndefined();
   });
 
   it('crbro_revise status=verified brings it back into results, and reading never does', async () => {
@@ -184,6 +204,20 @@ describe('staleness through the MCP tools', () => {
     const fresh = await json('crbro_recall', { query: 'plan Equipo cuesta euros' });
     expect(fresh.results[0].matching_content).toBe(PRICE);
     expect(fresh.possibly_stale).toBeUndefined();
+  });
+
+  it('a re-learn that only adds keywords is not a check: the line stays in possibly_stale (review fix)', async () => {
+    await edit(root, pelicano, n => { for (const f of n.facts) if (f.text === PRICE) { f.added = ago(200); delete f.verified; } });
+    const r = await json('crbro_learn', { topic: 'Pelícano', type: 'fact', content: PRICE, keywords: ['suscripción', 'cuota'] });
+    expect(r.updated_in_place).toBe(true);
+    expect(r.reconfirmed).toBeUndefined();
+    const still = await json('crbro_recall', { query: 'plan Equipo cuesta euros' });
+    expect(still.possibly_stale?.[0]?.matching_content).toBe(PRICE);
+    // The bare repeat is the check.
+    const bare = await json('crbro_learn', { topic: 'Pelícano', type: 'fact', content: PRICE });
+    expect(bare.reconfirmed).toBe(true);
+    const fresh = await json('crbro_recall', { query: 'plan Equipo cuesta euros' });
+    expect(fresh.results[0].matching_content).toBe(PRICE);
   });
 
   it('a different shelf_life on the same text replaces the stored one (updated_in_place)', async () => {
@@ -280,6 +314,42 @@ describe('staleness through the MCP tools', () => {
   });
 });
 
+describe('a shared neuron: lengthening a shelf life is local only, and learn says so', () => {
+  let holder: string;
+  let root: string;
+  let client: Client;
+  const json = async (name: string, args: Record<string, unknown> = {}) => body(await client.callTool({ name, arguments: args }));
+
+  beforeAll(async () => {
+    holder = await fs.mkdtemp(path.join(os.tmpdir(), 'crbro-stale-shared-'));
+    root = path.join(holder, 'brain');
+    await fs.mkdir(root, { recursive: true });
+    client = await connect(root);
+    await json('crbro_boot');
+  }, 60_000);
+
+  afterAll(async () => {
+    await client?.close();
+    delete process.env.CRBRO_PATH;
+    await fs.rm(holder, { recursive: true, force: true });
+  });
+
+  it('shared_warning on a longer class for a shared neuron; nothing when shorter or not shared', async () => {
+    const TXT = 'El plan Básico de Martín cuesta 9 euros al mes.';
+    const id = (await json('crbro_learn', { topic: 'Martín', type: 'fact', content: TXT, keywords: ['precio'], shelf_life: 'volatile' })).neuron_id;
+    // Not shared yet: lengthening is simply applied.
+    const local = await json('crbro_learn', { topic: 'Martín', type: 'fact', content: TXT, shelf_life: 'normal' });
+    expect(local.shared_warning).toBeUndefined();
+    await json('crbro_learn', { topic: 'Martín', type: 'fact', content: TXT, shelf_life: 'volatile' });
+    // Marked shared (the map file is what sharedMap reads).
+    await fs.writeFile(path.join(root, 'shared-map.json'), JSON.stringify({ [id]: 'equipo' }));
+    const longer = await json('crbro_learn', { topic: 'Martín', type: 'fact', content: TXT, shelf_life: 'durable' });
+    expect(longer.shared_warning).toMatch(/shared in space "equipo".*local only.*restores the more volatile value/);
+    const shorter = await json('crbro_learn', { topic: 'Martín', type: 'fact', content: TXT, shelf_life: 'volatile' });
+    expect(shorter.shared_warning).toBeUndefined();
+  });
+});
+
 describe('a brain written before shelf life', () => {
   let holder: string;
   let root: string;
@@ -348,6 +418,26 @@ describe('a brain written before shelf life', () => {
     const row = [...undated.results, ...(undated.possibly_stale || [])].find((r: any) => r.matching_content === UNDATED);
     expect(row).toBeTruthy();
     expect(undated.results.map((r: any) => r.matching_content)).toContain(UNDATED);
+  });
+
+  it('a manifest write from a cache older than the stamp keeps the stamp (review fix)', async () => {
+    const { Brain } = await import('../src/engine/brain.js');
+    const mf = path.join(root, 'manifest.json');
+    const sello = JSON.parse(await fs.readFile(mf, 'utf8')).staleness_since;
+    expect(sello).toBeTruthy();
+    // A process that cached the manifest before the first boot of this version.
+    const viejo = new Brain(root);
+    const cache = JSON.parse(await fs.readFile(mf, 'utf8'));
+    delete cache.staleness_since;
+    (viejo as any).manifest = cache;
+    await viejo.updateManifest({ total_sessions: 7 });
+    const m = JSON.parse(await fs.readFile(mf, 'utf8'));
+    expect(m.total_sessions).toBe(7);
+    expect(m.staleness_since).toBe(sello);
+    // And a writer that dropped it (an older CRBRO) is undone by the next boot of a process that knew it.
+    await fs.writeFile(mf, JSON.stringify({ ...m, staleness_since: undefined }));
+    await viejo.boot();
+    expect(JSON.parse(await fs.readFile(mf, 'utf8')).staleness_since).toBe(sello);
   });
 
   it('recall writes nothing to the neuron file', async () => {

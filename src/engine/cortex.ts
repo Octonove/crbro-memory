@@ -31,7 +31,7 @@ const NAME_MATCH_THRESHOLD = 0.85;
  * same session (a retry, the post-compaction re-save) does not count twice.
  * Not cleared by consolidate, which ends a chapter, not the conversation.
  */
-export interface SessionTally { facts: number; decisions: number; topics: Set<string>; witnessed?: Set<string> }
+export interface SessionTally { facts: number; decisions: number; topics: Set<string>; witnessed?: Set<string>; verifiedEmitted?: Set<string> }
 export const newTally = (): SessionTally => ({ facts: 0, decisions: 0, topics: new Set<string>(), witnessed: new Set<string>() });
 /**
  * The connection a request belongs to, carried through every await. Empty
@@ -488,7 +488,10 @@ export function unionNeuron(target: Neuron, source: Neuron): {
   else delete neuron.entry_status;
 
   const verificadas: Record<string, string> = { ...(source.entry_verified || {}) };
-  for (const [k, v] of Object.entries(target.entry_verified || {})) verificadas[k] = latestOf(verificadas[k], v) || v;
+  for (const [k, v] of Object.entries(target.entry_verified || {})) {
+    const l = latestOf(verificadas[k], v);
+    if (l) verificadas[k] = l; else if (!verificadas[k]) verificadas[k] = v;
+  }
   const verificadasVivas: Record<string, string> = {};
   for (const k of Object.keys(verificadas).sort()) if (vivos.has(k)) verificadasVivas[k] = verificadas[k];
   if (Object.keys(verificadasVivas).length) neuron.entry_verified = verificadasVivas;
@@ -846,6 +849,8 @@ export class Cortex {
     shelf?: { shelf_life: ShelfLife; inferred: boolean; reason?: ShelfReason };
     /** Exact-duplicate fact learned again by a session: its `verified` was stamped now. */
     reconfirmed?: boolean;
+    /** An explicit shelf_life was replaced by a less volatile one (team merge restores the more volatile value). */
+    shelf_lengthened?: boolean;
   }> {
     // Credentials never make it to disk. The sentence around them survives, so
     // "the deploy token is [REDACTED: npm token]" still records that a token
@@ -889,6 +894,7 @@ export class Cortex {
     let confirmations: number | undefined;
     let shelf: { shelf_life: ShelfLife; inferred: boolean; reason?: ShelfReason } | undefined;
     let reconfirmed = false;
+    let shelfLengthened = false;
     let verificar: { eid: string; at: string } | null = null;
     const vidaPedida: ShelfLife | undefined = isShelfLife(options?.shelfLife) ? options!.shelfLife : undefined;
     let skippedRetired: { id: string; status: 'superseded' | 'retracted'; revised?: string; note?: string } | null = null;
@@ -965,16 +971,14 @@ export class Cortex {
               }
               if (options?.source !== 'miner') vistos.add(testigo);
               confirmations = existente.confirmations ?? 1;
-              // Saying the same line again is a check (shelf life): the clock
-              // restarts. Not for the miner: re-reading an old transcript is
-              // not looking at the source.
-              if (options?.source !== 'miner') {
-                existente.verified = now();
-                reconfirmed = true;
-                verificar = { eid: existente.id || factId(existente.text), at: existente.verified };
-              }
               let cambiado = false;
               if (vidaPedida && vidaPedida !== existente.shelf_life) {
+                // Lengthening an explicit class (volatile → durable, say). On a
+                // shared neuron the more volatile value comes back from the
+                // log on the next sync; the server warns about it.
+                if (existente.shelf_life && mostVolatile(existente.shelf_life, vidaPedida) === existente.shelf_life) {
+                  shelfLengthened = true;
+                }
                 existente.shelf_life = vidaPedida;
                 cambiado = true;
               }
@@ -993,6 +997,24 @@ export class Cortex {
                 if (merged.length !== (existente.keys || []).length) {
                   existente.keys = merged;
                   cambiado = true;
+                }
+              }
+              // Saying the same line again, and nothing else, is a check
+              // (shelf life): the clock restarts. Not when the call also
+              // brings keywords, a confidence or a class — that is editing the
+              // line, and the server itself asks for exactly that re-learn to
+              // add keywords, so counting it would mark an unchecked line as
+              // checked. Not for the miner either: re-reading an old
+              // transcript is not looking at the source.
+              if (options?.source !== 'miner' && !cambiado) {
+                existente.verified = now();
+                reconfirmed = true;
+                // One op per line per session: a retry or the re-save after a
+                // compaction must not add a line to the team's log each time.
+                const yaVerificadas = (this.tally.verifiedEmitted ??= new Set<string>());
+                if (!yaVerificadas.has(testigo)) {
+                  yaVerificadas.add(testigo);
+                  verificar = { eid: existente.id || factId(existente.text), at: existente.verified };
                 }
               }
               if (cambiado) {
@@ -1134,6 +1156,7 @@ export class Cortex {
       ...(confirmations !== undefined ? { confirmations } : {}),
       ...(shelf ? { shelf } : {}),
       ...(reconfirmed ? { reconfirmed } : {}),
+      ...(shelfLengthened ? { shelf_lengthened: true } : {}),
     };
   }
 

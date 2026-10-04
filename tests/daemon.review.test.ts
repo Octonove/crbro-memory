@@ -173,6 +173,19 @@ describe('the handshake', () => {
     }
   });
 
+  it('shelf-life settings are part of the fingerprint, and the defaults leave it unchanged', () => {
+    const base = configFingerprint({});
+    // Off switch: every spelling that switches it off is the same setting.
+    expect(configFingerprint({ CRBRO_STALENESS: '0' })).not.toBe(base);
+    expect(configFingerprint({ CRBRO_STALENESS: 'off' })).toBe(configFingerprint({ CRBRO_STALENESS: '0' }));
+    expect(configFingerprint({ CRBRO_STALENESS: '1' })).toBe(base);
+    // Windows: compared normalized, so the defaults spelled out change nothing.
+    expect(configFingerprint({ CRBRO_SHELF_DAYS: 'volatile=90,normal=365,durable=730' })).toBe(base);
+    expect(configFingerprint({ CRBRO_SHELF_DAYS: 'volatile=30' })).not.toBe(base);
+    expect(configFingerprint({ CRBRO_SHELF_DAYS: 'volatile=30' })).toBe(configFingerprint({ CRBRO_SHELF_DAYS: ' Volatile : 30 ' }));
+    expect(configFingerprint({ CRBRO_SHELF_DAYS: 'nonsense' })).toBe(base);
+  });
+
   it('a client configured differently from the daemon serves itself, and says so', async () => {
     const build = newBuild();
     const daemon = await startDaemon({ build, idleMinutes: 0, log: () => undefined });

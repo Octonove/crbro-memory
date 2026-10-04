@@ -18,6 +18,7 @@ import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypt
 import { promises as fs, statSync, readFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { stalenessEnabled, shelfWindows, DEFAULT_SHELF_DAYS } from '../engine/shelf.js';
 
 export const DAEMON_PROTOCOL = 1;
 const DAEMON_DIR = '.daemon';
@@ -133,6 +134,15 @@ export function configFingerprint(env: NodeJS.ProcessEnv = process.env): string 
   ];
   // Appended only when set, so every fingerprint without it stays what it was.
   if (mod) parts.push(mod);
+  // Shelf life is judged in the serving process (recall, inspect,
+  // maintenance), so a client that switched it off or changed the windows
+  // must not be served with the daemon's. Normalized values, and only when
+  // they differ from the defaults, so existing fingerprints do not move.
+  if (!stalenessEnabled(env)) parts.push('nostale');
+  const w = shelfWindows(env);
+  if (w.volatile !== DEFAULT_SHELF_DAYS.volatile || w.normal !== DEFAULT_SHELF_DAYS.normal || w.durable !== DEFAULT_SHELF_DAYS.durable) {
+    parts.push(`shelf:${w.volatile}/${w.normal}/${w.durable}`);
+  }
   return createHash('sha256').update(parts.join('\u0000')).digest('hex').slice(0, 12);
 }
 
