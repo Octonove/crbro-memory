@@ -1,0 +1,626 @@
+{
+  "date": "2026-10-04",
+  "model": "sonnet",
+  "claude_code": "2.1.270 (Claude Code)",
+  "reps": 3,
+  "label": "before",
+  "only": [
+    "stale-unmarked"
+  ],
+  "crbro": {
+    "version": "2.8.0",
+    "commit": "cab8283828ba4f0d7111fae2b9a88bb1de260967",
+    "dirty": false,
+    "dist": "C:\\Users\\Usuario\\Desktop\\proyectos\\Desarrollo IDEAS\\crbro-staleness-before\\build-2.8.0\\dist"
+  },
+  "aggregate": {
+    "baseline": {
+      "stale-unmarked": {
+        "n": 12,
+        "correct": 6,
+        "stale": 0,
+        "hedged": 0,
+        "abstain": 6,
+        "wrong": 0,
+        "cost_usd": 0.11260740000000001,
+        "turns": 28
+      }
+    },
+    "crbro": {
+      "stale-unmarked": {
+        "n": 12,
+        "correct": 0,
+        "stale": 12,
+        "hedged": 0,
+        "abstain": 0,
+        "wrong": 0,
+        "cost_usd": 0.31555060000000007,
+        "turns": 43
+      }
+    }
+  },
+  "verdict": null,
+  "verdict_unmarked": {
+    "checks": [
+      {
+        "id": "U1",
+        "rule": "crbro correct on stale-unmarked >= 75%",
+        "value": 0,
+        "pass": false
+      },
+      {
+        "id": "U2",
+        "rule": "crbro gives the old value unflagged in <= 10% of stale-unmarked",
+        "value": 100,
+        "pass": false
+      },
+      {
+        "id": "U3",
+        "rule": "crbro correct >= baseline correct on stale-unmarked",
+        "value": [
+          0,
+          6
+        ],
+        "pass": false
+      },
+      {
+        "id": "U4",
+        "rule": "fewer unflagged old values than the before build (same model, same n)",
+        "value": null,
+        "pass": null
+      },
+      {
+        "id": "U5",
+        "rule": "the four original thresholds still hold in this run",
+        "value": null,
+        "pass": null
+      }
+    ],
+    "enough_reps": true,
+    "claim_allowed": false
+  },
+  "cells": [
+    {
+      "rep": 0,
+      "arm": "baseline",
+      "id": "u2",
+      "kind": "stale-unmarked",
+      "outcome": "abstain",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0050082,
+      "turns": 1,
+      "tool_calls": [],
+      "leaks": []
+    },
+    {
+      "rep": 0,
+      "arm": "baseline",
+      "id": "u3",
+      "kind": "stale-unmarked",
+      "outcome": "abstain",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0050162,
+      "turns": 1,
+      "tool_calls": [],
+      "leaks": []
+    },
+    {
+      "rep": 0,
+      "arm": "baseline",
+      "id": "u1",
+      "kind": "stale-unmarked",
+      "outcome": "correct",
+      "answer": "postgres:17",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0139276,
+      "turns": 4,
+      "tool_calls": [
+        {
+          "name": "Glob",
+          "target": "**/*"
+        },
+        {
+          "name": "Read",
+          "target": "C:\\Users\\Usuario\\AppData\\Local\\Temp\\crbro-agentic-OCNzQS\\cells\\baseline-u1-0\\cwd\\docker-compose.yml"
+        },
+        {
+          "name": "Read",
+          "target": "C:\\Users\\Usuario\\AppData\\Local\\Temp\\crbro-agentic-OCNzQS\\cells\\baseline-u1-0\\cwd\\README.md"
+        }
+      ],
+      "leaks": []
+    },
+    {
+      "rep": 0,
+      "arm": "baseline",
+      "id": "u4",
+      "kind": "stale-unmarked",
+      "outcome": "correct",
+      "answer": "Marcos Elizalde",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.013015800000000001,
+      "turns": 3,
+      "tool_calls": [
+        {
+          "name": "Glob",
+          "target": "**/*"
+        },
+        {
+          "name": "Grep",
+          "target": "C:\\Users\\Usuario\\AppData\\Local\\Temp\\crbro-agentic-OCNzQS\\cells\\baseline-u4-0\\cwd"
+        }
+      ],
+      "leaks": []
+    },
+    {
+      "rep": 0,
+      "arm": "crbro",
+      "id": "u1",
+      "kind": "stale-unmarked",
+      "outcome": "stale",
+      "answer": "PostgreSQL 14",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0224628,
+      "turns": 3,
+      "tool_calls": [
+        {
+          "name": "mcp__crbro__crbro_boot",
+          "target": ""
+        },
+        {
+          "name": "mcp__crbro__crbro_recall",
+          "target": ""
+        }
+      ],
+      "leaks": []
+    },
+    {
+      "rep": 0,
+      "arm": "crbro",
+      "id": "u2",
+      "kind": "stale-unmarked",
+      "outcome": "stale",
+      "answer": "29 euros al mes",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.022471,
+      "turns": 3,
+      "tool_calls": [
+        {
+          "name": "mcp__crbro__crbro_boot",
+          "target": ""
+        },
+        {
+          "name": "mcp__crbro__crbro_recall",
+          "target": ""
+        }
+      ],
+      "leaks": []
+    },
+    {
+      "rep": 0,
+      "arm": "crbro",
+      "id": "u3",
+      "kind": "stale-unmarked",
+      "outcome": "stale",
+      "answer": "9090",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.029063600000000002,
+      "turns": 4,
+      "tool_calls": [
+        {
+          "name": "mcp__crbro__crbro_boot",
+          "target": ""
+        },
+        {
+          "name": "mcp__crbro__crbro_recall",
+          "target": ""
+        },
+        {
+          "name": "mcp__crbro__crbro_consolidate",
+          "target": ""
+        }
+      ],
+      "leaks": []
+    },
+    {
+      "rep": 1,
+      "arm": "baseline",
+      "id": "u2",
+      "kind": "stale-unmarked",
+      "outcome": "abstain",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0050202,
+      "turns": 1,
+      "tool_calls": [],
+      "leaks": []
+    },
+    {
+      "rep": 0,
+      "arm": "crbro",
+      "id": "u4",
+      "kind": "stale-unmarked",
+      "outcome": "stale",
+      "answer": "Irene Zubiaurre es la responsable del soporte de Pelícano (dato ya registrado en memoria).",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.028948800000000004,
+      "turns": 4,
+      "tool_calls": [
+        {
+          "name": "mcp__crbro__crbro_boot",
+          "target": ""
+        },
+        {
+          "name": "mcp__crbro__crbro_recall",
+          "target": ""
+        },
+        {
+          "name": "mcp__crbro__crbro_consolidate",
+          "target": ""
+        }
+      ],
+      "leaks": []
+    },
+    {
+      "rep": 1,
+      "arm": "baseline",
+      "id": "u1",
+      "kind": "stale-unmarked",
+      "outcome": "correct",
+      "answer": "postgres:17",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.013961400000000002,
+      "turns": 4,
+      "tool_calls": [
+        {
+          "name": "Glob",
+          "target": "**/*"
+        },
+        {
+          "name": "Read",
+          "target": "C:\\Users\\Usuario\\AppData\\Local\\Temp\\crbro-agentic-OCNzQS\\cells\\baseline-u1-1\\cwd\\docker-compose.yml"
+        },
+        {
+          "name": "Read",
+          "target": "C:\\Users\\Usuario\\AppData\\Local\\Temp\\crbro-agentic-OCNzQS\\cells\\baseline-u1-1\\cwd\\README.md"
+        }
+      ],
+      "leaks": []
+    },
+    {
+      "rep": 1,
+      "arm": "baseline",
+      "id": "u3",
+      "kind": "stale-unmarked",
+      "outcome": "abstain",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0050202,
+      "turns": 1,
+      "tool_calls": [],
+      "leaks": []
+    },
+    {
+      "rep": 1,
+      "arm": "crbro",
+      "id": "u1",
+      "kind": "stale-unmarked",
+      "outcome": "stale",
+      "answer": "PostgreSQL 14",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.023237400000000002,
+      "turns": 3,
+      "tool_calls": [
+        {
+          "name": "mcp__crbro__crbro_boot",
+          "target": ""
+        },
+        {
+          "name": "mcp__crbro__crbro_recall",
+          "target": ""
+        }
+      ],
+      "leaks": []
+    },
+    {
+      "rep": 1,
+      "arm": "crbro",
+      "id": "u2",
+      "kind": "stale-unmarked",
+      "outcome": "stale",
+      "answer": "29 euros al mes.",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.022536999999999998,
+      "turns": 3,
+      "tool_calls": [
+        {
+          "name": "mcp__crbro__crbro_boot",
+          "target": ""
+        },
+        {
+          "name": "mcp__crbro__crbro_recall",
+          "target": ""
+        }
+      ],
+      "leaks": []
+    },
+    {
+      "rep": 1,
+      "arm": "baseline",
+      "id": "u4",
+      "kind": "stale-unmarked",
+      "outcome": "correct",
+      "answer": "Marcos Elizalde",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0137754,
+      "turns": 4,
+      "tool_calls": [
+        {
+          "name": "Glob",
+          "target": "**/*"
+        },
+        {
+          "name": "Read",
+          "target": "C:\\Users\\Usuario\\AppData\\Local\\Temp\\crbro-agentic-OCNzQS\\cells\\baseline-u4-1\\cwd\\EQUIPO.md"
+        },
+        {
+          "name": "Read",
+          "target": "C:\\Users\\Usuario\\AppData\\Local\\Temp\\crbro-agentic-OCNzQS\\cells\\baseline-u4-1\\cwd\\README.md"
+        }
+      ],
+      "leaks": []
+    },
+    {
+      "rep": 1,
+      "arm": "crbro",
+      "id": "u3",
+      "kind": "stale-unmarked",
+      "outcome": "stale",
+      "answer": "9090",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0290226,
+      "turns": 4,
+      "tool_calls": [
+        {
+          "name": "mcp__crbro__crbro_boot",
+          "target": ""
+        },
+        {
+          "name": "mcp__crbro__crbro_recall",
+          "target": ""
+        },
+        {
+          "name": "mcp__crbro__crbro_consolidate",
+          "target": ""
+        }
+      ],
+      "leaks": []
+    },
+    {
+      "rep": 2,
+      "arm": "baseline",
+      "id": "u2",
+      "kind": "stale-unmarked",
+      "outcome": "abstain",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0050282,
+      "turns": 1,
+      "tool_calls": [],
+      "leaks": []
+    },
+    {
+      "rep": 1,
+      "arm": "crbro",
+      "id": "u4",
+      "kind": "stale-unmarked",
+      "outcome": "stale",
+      "answer": "Irene Zubiaurre",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.029992800000000003,
+      "turns": 4,
+      "tool_calls": [
+        {
+          "name": "mcp__crbro__crbro_boot",
+          "target": ""
+        },
+        {
+          "name": "mcp__crbro__crbro_recall",
+          "target": ""
+        },
+        {
+          "name": "mcp__crbro__crbro_consolidate",
+          "target": ""
+        }
+      ],
+      "leaks": []
+    },
+    {
+      "rep": 2,
+      "arm": "baseline",
+      "id": "u1",
+      "kind": "stale-unmarked",
+      "outcome": "correct",
+      "answer": "17",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0126774,
+      "turns": 3,
+      "tool_calls": [
+        {
+          "name": "Glob",
+          "target": "**/*"
+        },
+        {
+          "name": "Grep",
+          "target": "C:\\Users\\Usuario\\AppData\\Local\\Temp\\crbro-agentic-OCNzQS\\cells\\baseline-u1-2\\cwd"
+        }
+      ],
+      "leaks": []
+    },
+    {
+      "rep": 2,
+      "arm": "baseline",
+      "id": "u3",
+      "kind": "stale-unmarked",
+      "outcome": "abstain",
+      "answer": "NO_LO_SE",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0050162,
+      "turns": 1,
+      "tool_calls": [],
+      "leaks": []
+    },
+    {
+      "rep": 2,
+      "arm": "crbro",
+      "id": "u1",
+      "kind": "stale-unmarked",
+      "outcome": "stale",
+      "answer": "PostgreSQL 14",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0217594,
+      "turns": 3,
+      "tool_calls": [
+        {
+          "name": "mcp__crbro__crbro_boot",
+          "target": ""
+        },
+        {
+          "name": "mcp__crbro__crbro_recall",
+          "target": ""
+        }
+      ],
+      "leaks": []
+    },
+    {
+      "rep": 2,
+      "arm": "baseline",
+      "id": "u4",
+      "kind": "stale-unmarked",
+      "outcome": "correct",
+      "answer": "Marcos Elizalde",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.015140599999999999,
+      "turns": 4,
+      "tool_calls": [
+        {
+          "name": "Grep",
+          "target": "C:\\Users\\Usuario\\AppData\\Local\\Temp\\crbro-agentic-OCNzQS\\cells\\baseline-u4-2\\cwd"
+        },
+        {
+          "name": "Read",
+          "target": "C:\\Users\\Usuario\\AppData\\Local\\Temp\\crbro-agentic-OCNzQS\\cells\\baseline-u4-2\\cwd\\EQUIPO.md"
+        },
+        {
+          "name": "Read",
+          "target": "C:\\Users\\Usuario\\AppData\\Local\\Temp\\crbro-agentic-OCNzQS\\cells\\baseline-u4-2\\cwd\\README.md"
+        }
+      ],
+      "leaks": []
+    },
+    {
+      "rep": 2,
+      "arm": "crbro",
+      "id": "u2",
+      "kind": "stale-unmarked",
+      "outcome": "stale",
+      "answer": "29 euros al mes.",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.029157000000000002,
+      "turns": 4,
+      "tool_calls": [
+        {
+          "name": "mcp__crbro__crbro_boot",
+          "target": ""
+        },
+        {
+          "name": "mcp__crbro__crbro_recall",
+          "target": ""
+        },
+        {
+          "name": "mcp__crbro__crbro_consolidate",
+          "target": ""
+        }
+      ],
+      "leaks": []
+    },
+    {
+      "rep": 2,
+      "arm": "crbro",
+      "id": "u3",
+      "kind": "stale-unmarked",
+      "outcome": "stale",
+      "answer": "9090",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0283106,
+      "turns": 4,
+      "tool_calls": [
+        {
+          "name": "mcp__crbro__crbro_boot",
+          "target": ""
+        },
+        {
+          "name": "mcp__crbro__crbro_recall",
+          "target": ""
+        },
+        {
+          "name": "mcp__crbro__crbro_consolidate",
+          "target": ""
+        }
+      ],
+      "leaks": []
+    },
+    {
+      "rep": 2,
+      "arm": "crbro",
+      "id": "u4",
+      "kind": "stale-unmarked",
+      "outcome": "stale",
+      "answer": "Irene Zubiaurre",
+      "error": null,
+      "retried_after": null,
+      "cost_usd": 0.0285876,
+      "turns": 4,
+      "tool_calls": [
+        {
+          "name": "mcp__crbro__crbro_boot",
+          "target": ""
+        },
+        {
+          "name": "mcp__crbro__crbro_recall",
+          "target": ""
+        },
+        {
+          "name": "mcp__crbro__crbro_consolidate",
+          "target": ""
+        }
+      ],
+      "leaks": []
+    }
+  ]
+}
