@@ -3,7 +3,7 @@
 // ─── CRBRO CLI ───────────────────────────────────────────────────
 // Command-line interface for CRBRO memory system
 // Supports: init, status, secret, mine, setup-miner, miner-status, usage, postmortem,
-//           remove-miner, and MCP server mode (default)
+//           remove-miner, install-hooks, install-mod, and MCP server mode (default)
 
 import { platform, homedir } from 'os';
 import { join, dirname } from 'path';
@@ -669,15 +669,22 @@ if (command === 'init') {
   // SHA-256 of each copy in ~/.claude/crbro-hooks/ against hooks/ here, and
   // whether every CRBRO hook settings.json runs exists. Read-only. Exit 1 on
   // any difference, so it can gate a script.
-  import('../dist/engine/hookverify.js').then(({ verifyHooks, formatVerify }) => {
+  // The Claude Code mod is checked too (install-mod): a copy in the home
+  // folder that runs in every session, so the same question applies.
+  Promise.all([import('../dist/engine/hookverify.js'), import('../dist/engine/modinstall.js')]).then(([
+    { verifyHooks, formatVerify },
+    { verifyMod, formatModVerify },
+  ]) => {
     const here = dirname(fileURLToPath(import.meta.url));
     const r = verifyHooks({
       packageDir: join(here, '..', 'hooks'),
       installedDir: join(homedir(), '.claude', 'crbro-hooks'),
       settingsPath: join(homedir(), '.claude', 'settings.json'),
     });
-    console.log(args.includes('--json') ? JSON.stringify(r, null, 2) : formatVerify(r));
-    if (!r.ok) process.exitCode = 1;
+    const m = verifyMod({ packageDir: join(here, '..', 'mods', 'crbro-pending'), home: homedir() });
+    if (args.includes('--json')) console.log(JSON.stringify({ ...r, mod: m }, null, 2));
+    else console.log(formatVerify(r) + formatModVerify(m));
+    if (!r.ok || !m.ok) process.exitCode = 1;
   }).catch(err => {
     console.error('  ❌ ' + (err && err.code === 'ERR_MODULE_NOT_FOUND' ? 'Build required. Run: npm run build' : err.message));
     process.exit(1);
@@ -968,6 +975,56 @@ if (command === 'init') {
       console.log('     harm in small ones). Re-run with --inject to enable it.');
     }
   }).catch(console.error);
+
+} else if (command === 'install-mod' && process.argv.includes('--verify')) {
+  // ─── Is the installed mod the one this package ships? ──────────
+  // SHA-256 of every file in ~/.claude/crbro-mods/crbro-pending against
+  // mods/crbro-pending here, and whether settings.json lists it. Read-only;
+  // exit 1 on any difference.
+  import('../dist/engine/modinstall.js').then(({ verifyMod, formatModVerify }) => {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const m = verifyMod({ packageDir: join(here, '..', 'mods', 'crbro-pending'), home: homedir() });
+    console.log(args.includes('--json') ? JSON.stringify(m, null, 2) : formatModVerify(m));
+    if (!m.ok) process.exitCode = 1;
+  }).catch(err => {
+    console.error('  ❌ ' + (err && err.code === 'ERR_MODULE_NOT_FOUND' ? 'Build required. Run: npm run build' : err.message));
+    process.exit(1);
+  });
+
+} else if (command === 'install-mod' || command === 'uninstall-mod') {
+  // ─── The open-items band for Claude Code (opt-in) ──────────────
+  //
+  // mods/crbro-pending is a Claude Code mod: CRBRO's open items above the
+  // prompt and /pending (alias /pendientes) with all of them as cards. It is
+  // copied to ~/.claude/crbro-mods/crbro-pending and that folder is added to
+  // env.CLAUDE_CODE_PLUGIN_DIRS in ~/.claude/settings.json (";" on Windows,
+  // ":" elsewhere), once. Nothing else in settings.json is touched, except the
+  // mod's own language when --lang en|es is given. An earlier local copy
+  // (crbro-pendientes) in that list is replaced. Same care as install-hooks:
+  // BOM read, unparseable settings left alone, atomic write, idempotent.
+  import('../dist/engine/modinstall.js').then(({ installMod, uninstallMod }) => {
+    const here = dirname(fileURLToPath(import.meta.url));
+    let lang;
+    const at = args.findIndex(a => a === '--lang' || a.startsWith('--lang='));
+    if (at !== -1) {
+      lang = args[at].includes('=') ? args[at].split('=')[1] : args[at + 1];
+      if (!['auto', 'en', 'es'].includes(lang)) {
+        console.error('  ❌ --lang takes auto, en or es.');
+        process.exit(1);
+      }
+    }
+    const r = command === 'uninstall-mod'
+      ? uninstallMod({ home: homedir() })
+      : installMod({ packageDir: join(here, '..', 'mods', 'crbro-pending'), home: homedir(), lang });
+    if (!r.ok) {
+      console.error(`  ❌ ${r.error}`);
+      process.exit(1);
+    }
+    for (const line of r.lines) console.log(line);
+  }).catch(err => {
+    console.error('  ❌ ' + (err && err.code === 'ERR_MODULE_NOT_FOUND' ? 'Build required. Run: npm run build' : err.message));
+    process.exit(1);
+  });
 
 } else if (command === 'install-boot') {
   // ─── The step that made the memory look broken ─────────────────
@@ -1327,7 +1384,10 @@ if (command === 'init') {
   console.log('  Compact without losing the thread (opt-in, Claude Code):');
   console.log('    npx crbro-memory install-hooks --compact     PreCompact checkpoint + SessionStart that picks it back up');
   console.log('    npx crbro-memory uninstall-hooks --compact   Remove both and put back what was replaced');
-  console.log('    npx crbro-memory install-hooks --verify      SHA-256 of the installed hooks against this package (read-only)');
+  console.log('    npx crbro-memory install-hooks --verify      SHA-256 of the installed hooks and mod against this package (read-only)');
+  console.log('    npx crbro-memory install-mod [--lang en|es|auto]  Claude Code band + /pending with the open items (Claude Code 2.1.286+)');
+  console.log('    npx crbro-memory uninstall-mod                Remove the mod and its CLAUDE_CODE_PLUGIN_DIRS entry');
+  console.log('    npx crbro-memory install-mod --verify         SHA-256 of the installed mod against this package (read-only)');
   console.log('');
   console.log('  Looking back at Claude Code sessions (read-only; last 7 days unless --days N, 0 = all):');
   console.log('    npx crbro-memory usage [--session ID] [--project DIR] [--json]   Tokens per model and session, subagents apart');
