@@ -2,7 +2,7 @@
 
 All notable changes to CRBRO.
 
-## [Unreleased]
+## [2.9.1] — 2026-10-04
 
 Shelf life, less noise: what 2.9.0 flagged on a real brain was mostly not a
 value that may have changed. Design and measurements in
