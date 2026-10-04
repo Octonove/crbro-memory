@@ -1,0 +1,6 @@
+# The npm package ships only what Claude Code loads: the manifest, the hooks
+# module and its types. Tests and editor config stay in the repository.
+test/
+tsconfig.json
+.gitignore
+.claude-plugin/types/
