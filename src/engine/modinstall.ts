@@ -181,6 +181,8 @@ export interface InstallModResult {
   alreadyListed: boolean;
   /** Folders taken out of the list because they held another copy of this mod. */
   replaced: { dir: string; name: string }[];
+  /** Copies in ~/.claude/mods, reported and left alone. */
+  elsewhere: string[];
   lang?: ModLang;
   /** What the CLI prints, one line each. */
   lines: string[];
@@ -196,7 +198,7 @@ export function installMod(opts: ModOptions & { lang?: ModLang }): InstallModRes
   const platform = opts.platform ?? process.platform;
   const { claudeDir, settingsPath, installedDir } = modPaths(opts.home);
   const base: InstallModResult = {
-    ok: false, installedDir, settingsPath, files: [], changed: false, alreadyListed: false, replaced: [], lines: [],
+    ok: false, installedDir, settingsPath, files: [], changed: false, alreadyListed: false, replaced: [], elsewhere: [], lines: [],
   };
 
   if (!existsSync(path.join(opts.packageDir, '.claude-plugin', 'plugin.json'))) {
@@ -267,6 +269,18 @@ export function installMod(opts: ModOptions & { lang?: ModLang }): InstallModRes
   } else if (!alreadyListed) {
     lines.push(`  ✅ Added to ${PLUGIN_DIRS_VAR} in ${settingsPath}`);
   }
+  // A copy in ~/.claude/mods is loaded by Claude Code on its own, outside the
+  // list: it is not ours to delete, but two bands would be confusing.
+  const modsFolder = path.join(claudeDir, 'mods');
+  const elsewhere = existsSync(modsFolder)
+    ? readdirSync(modsFolder)
+      .map(name => path.join(modsFolder, name))
+      .filter(dir => { const n = pluginNameAt(dir, opts.home); return n !== null && REPLACED_NAMES.includes(n); })
+    : [];
+  for (const dir of elsewhere) {
+    lines.push(`  ⚠️  Another copy is in ${dir}, which Claude Code may load on its own.`);
+    lines.push('     Remove or move it if you see two bands; this command does not touch it.');
+  }
   if (opts.lang === 'en' || opts.lang === 'es') {
     lines.push(`     Language: ${opts.lang === 'es' ? 'Spanish' : 'English'} (pluginConfigs.${MOD_NAME}.options.language; /config changes it).`);
   } else if (opts.lang === 'auto') {
@@ -275,7 +289,7 @@ export function installMod(opts: ModOptions & { lang?: ModLang }): InstallModRes
   lines.push(...REQUIREMENT_LINES);
   lines.push('     Undo with: npx crbro-memory uninstall-mod');
 
-  return { ...base, ok: true, files, changed, alreadyListed, replaced, lang: opts.lang, lines };
+  return { ...base, ok: true, files, changed, alreadyListed, replaced, elsewhere, lang: opts.lang, lines };
 }
 
 /** Removes the language this installer set; true when something went. */

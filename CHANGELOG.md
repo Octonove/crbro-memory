@@ -34,7 +34,8 @@ Open items in sight, for whoever installs CRBRO, not only for its author.
   parse is left alone, the write is atomic, a second run changes nothing. A
   folder in that list holding a plugin named `crbro-pendientes` or
   `crbro-pending` — the hand-made copy — is replaced in place and named, and
-  its folder is left on disk. `uninstall-mod` removes the entry (and the
+  its folder is left on disk. A copy in `~/.claude/mods` is pointed out and
+  never touched. `uninstall-mod` removes the entry (and the
   variable when it ends up empty) and deletes its own folder, nothing else.
 - **Verified like the hooks.** `install-mod --verify`, and `install-hooks
   --verify` too, compare the installed copy with the package file by file by
@@ -44,7 +45,7 @@ Open items in sight, for whoever installs CRBRO, not only for its author.
   Cursor or the VS Code extension. A new session picks the mod up.
 - **Package.** `mods/` ships; the mod's tests, `tsconfig.json` and generated
   types do not (`mods/crbro-pending/.npmignore`). 18 tests for the mod under
-  `claude plugin test`, 27 for the installer in the vitest suite, which now
+  `claude plugin test`, 28 for the installer in the vitest suite, which now
   leaves `mods/` to the former.
 
 ## [2.7.2] — 2026-10-03
