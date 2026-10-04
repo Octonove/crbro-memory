@@ -7,7 +7,7 @@ All notable changes to CRBRO.
 Shelf life, less noise: what 2.9.0 flagged on a real brain was mostly not a
 value that may have changed. Design and measurements in
 [`docs/design/staleness.md`](docs/design/staleness.md) §15. Still 15 tools;
-no parameter or description changes.
+one parameter description changes (`crbro_forget` `facts`), no parameter does.
 
 - **The noise it answers.** Run read-only over one real personal brain, 2.9.0
   flagged 810 of 4,858 active entries (17 %) on the first day, every one an
@@ -63,6 +63,21 @@ no parameter or description changes.
   package on disk says another version, status adds `installed_version` and a
   `version_note` (restart the client to load it). The daemon's build id
   reads the same package.json through the same lookup.
+- **"clave" is an adjective too.** The labelled-password pattern read
+  "clave:" like "password:", so any eight-letter word after it was taken for
+  the value: "Decisión clave: mantener…" was stored as "Decisión clave:
+  [REDACTED: password]…" — three notes on the reference brain lost a word,
+  and an audit of it flagged sixteen more. After "clave" the value must now
+  look like a password (three of lower case, upper case, digit, symbol);
+  dates, words and shouted words are prose. "password:" and "contraseña:"
+  are unchanged, and the hook keeps the same pattern list.
+- **`crbro_forget` takes the id of every kind.** Facts were matched by id,
+  decisions, patterns, preferences, errors and debts only by their exact
+  text — so removing a credential from a preference meant pasting the
+  credential back into the conversation to name it. Now the id that
+  `crbro_inspect` and `crbro_recall` show works for all of them (a
+  decision's own id too), and the purge ops for shared spaces go out the
+  same way.
 
 ## [2.9.0] — 2026-10-04
 

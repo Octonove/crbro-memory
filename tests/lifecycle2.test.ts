@@ -601,3 +601,45 @@ describe('Maintenance: archive round trip, retired debts, dry run on the whole r
     expect(real.notes.join(' ')).toContain('obsolete global_map.json');
   }, 30_000);
 });
+
+// ═══════════════════════════════════════════════════════════════════
+// 2.9.1: crbro_forget took a fact by id, but every other kind only by its
+// exact text. Removing a credential from a preference meant pasting the
+// credential back into the conversation to name it.
+describe('Cortex.forget takes the id of every kind, not only of facts', () => {
+  it('removes a decision, pattern, preference, error and debt by entryId', async () => {
+    const events: any[] = [];
+    cortex.setEmitter((_id, change) => { events.push(change); });
+    const decision = 'Usamos colas para el correo saliente.';
+    const pattern = 'Validar en el servidor, siempre.';
+    const preference = 'Prefiere la API por su clave de servicio.';
+    const error = 'ERROR: indice olvidado. FIX: crearlo.';
+    const debt = 'DEFERRED: firmar los PDF. CEILING: cualquiera los baja. REVISIT WHEN: haya alta.';
+    const { neuron } = await cortex.learn('Por Id', 'decision', decision);
+    await cortex.learn('Por Id', 'pattern', pattern);
+    await cortex.learn('Por Id', 'preference', preference);
+    await cortex.learn('Por Id', 'error', error);
+    await cortex.learn('Por Id', 'debt', debt);
+    await cortex.learn('Por Id', 'pattern', 'Un patron que se queda.');
+    events.length = 0;
+
+    const ids = [decision, pattern, preference, error, debt].map(t => entryId(t).toUpperCase());
+    const r = await cortex.forget(neuron!.id, ids);
+    expect(r.removed).toBe(5);
+
+    const after = await readNeuron(neuron!.id);
+    expect(after.decisions).toEqual([]);
+    expect(after.preferences).toEqual([]);
+    expect(after.errors || []).toEqual([]);
+    expect(after.debts || []).toEqual([]);
+    expect(after.patterns).toEqual(['Un patron que se queda.']);
+    expect(events.map(e => e.kind).sort()).toEqual(['debt_purge', 'decision_purge', 'error_purge', 'pattern_purge']);
+  });
+
+  it('an id that names nothing removes nothing', async () => {
+    const { neuron } = await cortex.learn('Por Id Vacio', 'preference', 'Algo que se queda.');
+    const r = await cortex.forget(neuron!.id, ['0123456789ab']);
+    expect(r.removed).toBe(0);
+    expect((await readNeuron(neuron!.id)).preferences).toEqual(['Algo que se queda.']);
+  });
+});

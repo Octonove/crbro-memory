@@ -1318,7 +1318,7 @@ export function createServer(shared?: Engines): McpServer {
   // ═══════════════════════════════════════════════════════════════
   const forgetSchema = z.object({
     neuron: z.string().optional().describe('Neuron id or name the mode acts on. Required for every mode except session. restore needs the exact neuron id.'),
-    facts: z.array(z.string()).optional().describe('Mode facts: fact ids, or the exact text of a fact, decision, pattern, preference, error or debt; the exact full text of the map removes the map. Deleted for good after a quarantine copy; decision/pattern removals travel to shared spaces like errors and debts.'),
+    facts: z.array(z.string()).optional().describe('Mode facts: the ids crbro_inspect and crbro_recall show, or the exact text, of facts, decisions, patterns, preferences, errors or debts; the exact full text of the map removes the map. Deleted for good after a quarantine copy; decision/pattern removals travel to shared spaces like errors and debts.'),
     entire: z.boolean().optional().describe('Mode entire: delete the whole neuron and its synapses. Without confirm_token it is a dry run — { neuron_id, dry_run:true, counts, shared_in, confirm_token }. Refused (no token) while the neuron is shared: crbro_share unshare first.'),
     confirm_token: z.string().optional().describe('Only with entire:true — the token from the dry run. Derived from the neuron\'s counts, so it goes stale (and is refused) when the neuron changed in between.'),
     restore: z.boolean().optional().describe('Mode restore: bring back the newest quarantine copy of `neuron` (exact id). If the neuron exists again, the copy is merged into it (merged_into_existing:true, moved counts). The quarantine file stays, so restore is repeatable.'),

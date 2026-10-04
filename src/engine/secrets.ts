@@ -75,7 +75,18 @@ const PATTERNS: Pattern[] = [
   // requiring the value to mix classes so plain words do not match.
   {
     kind: 'password',
-    re: /\b(?:password|passwd|contrase[nñ]a|clave)\s*(?:es|is)?\s*[:=]\s*["'`]?([^\s"'`,;]{8,})/gi,
+    re: /\b(?:password|passwd|contrase[nñ]a)\s*(?:es|is)?\s*[:=]\s*["'`]?([^\s"'`,;]{8,})/gi,
+  },
+  {
+    // "clave" is also the Spanish adjective "key/important": "Decisión clave:
+    // mantener…", "Dato clave: …". With "clave" in the pattern above, every
+    // such heading lost its first word to [REDACTED: password] — 3 notes on
+    // the reference brain, and the audit flagged 16 more. So after "clave"
+    // the value must look like a password: three of lower case, upper case,
+    // digit and symbol. Dates ("4-oct-2026"), words and SHOUTED words do not.
+    // No /i flag: it would erase the case classes the value check counts.
+    kind: 'password',
+    re: /\b(?:[Cc]lave|CLAVE)\s*(?:es|is|ES|IS)?\s*[:=]\s*["'`]?((?:(?=[^\s"'`,;]*[a-z])(?=[^\s"'`,;]*[A-Z])(?=[^\s"'`,;]*[0-9])|(?=[^\s"'`,;]*[a-z])(?=[^\s"'`,;]*[A-Z])(?=[^\s"'`,;]*[!@#$%^&*_+=?~])|(?=[^\s"'`,;]*[a-z])(?=[^\s"'`,;]*[0-9])(?=[^\s"'`,;]*[!@#$%^&*_+=?~])|(?=[^\s"'`,;]*[A-Z])(?=[^\s"'`,;]*[0-9])(?=[^\s"'`,;]*[!@#$%^&*_+=?~]))[^\s"'`,;]{8,})/g,
   },
   {
     // The value must mix a letter AND a digit — that is what separates a
