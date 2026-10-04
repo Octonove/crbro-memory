@@ -731,7 +731,11 @@ repository.
    `shelf_reason: "miner"`. An imported note is a copy of something written
    elsewhere, at some other time; it was never this memory's claim about the
    present. An explicit `shelf_life` still wins, and the same text learned by
-   a session is judged by its content as before.
+   a session is judged by its content as before. Once a session has said a
+   miner line too — learn's duplicate branch sets `verified`, or adds a
+   second confirmation — it is no longer only an imported note and is judged
+   by its text from then on (`source` stays `"miner"`; the decision reads
+   `verified` and `confirmations`, which already travel in a team's log).
 2. **A dated record of something done is history.** An unmarked fact whose
    head reads as one is `permanent`, inferred, `shelf_reason: "history"`. The
    rule, in full in `src/engine/shelf.ts` (`isDatedRecord`), works on the
@@ -752,22 +756,47 @@ repository.
      deadline (will, planned, previsto, programado, pendiente, caduca,
      expires, vence, renews, next, "para el <date>", "by <date>" — "tarea
      programada" and "scheduled task" name a kind of job and do not count);
-     a word of the present (actualmente, currently, ahora, now, todavía,
-     still, vigente, último, last, latest); or a verb of state *before* the
-     first finished-action word ("la API corre en el puerto 8443, desplegada
-     el 2026-06-18" is a port that also says when it went up).
+     a word of the present (actualmente, currently, current, actual, ahora,
+     now, todavía, still, vigente, último, last, latest); or a verb of state
+     *before* the first finished-action word ("la API corre en el puerto
+     8443, desplegada el 2026-06-18" is a port that also says when it went
+     up);
+   - and, when the head carries a changeable value (a volatile rule fires on
+     it once its dates are blanked), nothing in it says that the value holds
+     (added after review, below): a verb of state anywhere in the head, or
+     pasa a, queda, sigue, devuelve, responde, abierto, becomes, returns —
+     quoted titles and asides in parentheses aside; a check (verificado,
+     comprobado, confirmado, probado, medido, detectado, verified, checked…)
+     with a value other than a bare domain *before* it ("Puerto 9443
+     verificado el …", "Plan: $499/año (confirmado …)"); a move (migrado,
+     desplegado, instalado, migrated, deployed…) followed within four words
+     by a/al/en/to/into/on/at and a port, host, URL or path ("se migró el
+     panel al puerto 9443", "Deployed to https://…"); or a schedule ("diaria
+     03:00", "cada lunes", "every day").
 
    Words that bring a new current value without telling an event —
    actualizado, cambiado, configurado, renovado, updated, changed, set — are
-   deliberately not finished-action words. A line without a date is never
-   history, however past its verbs: it cannot show its age.
+   deliberately not finished-action words. Cerrado, aprobado, completo (as an
+   adjective outside a kind of work: "FASE 4 COMPLETA" and "Auditoría
+   completa" are events), medida, closed, approved and complete also describe
+   a state, so they count only in a head with no changeable value: "Tanda
+   CERRADA el 21-sep-2026" is a record, "Presupuesto aprobado (…): 1.200 € al
+   mes" and "Lista completa de precios (…)" are not. A line without a date is
+   never history, however past its verbs: it cannot show its age. A numeric
+   date glued to a word or a path ("/api/v1/12/24") is not a date, nor is
+   the English modal "may" after a number ("Node 18 may be removed"); an
+   abbreviated month with a period ("jun. 2026", "Sept. 18") does not end
+   the head.
 
    Both sides are pinned in `tests/staleness.noise.test.ts` with invented
    examples: records that become history, and dated statements of state
    that stay volatile ("Desde el 18-sep el panel escucha en el puerto 9443",
-   "A 4-oct el precio es 35 €", "Comprobado a 4-oct-2026: cuesta 35 €",
-   "Since 2026-09-18 … port 9443 (migrated)", "… renovado el 2026-01-03;
-   caduca el 2027-01-03", "Último despliegue: v2.2.0, publicado el …").
+   "A 4-oct el precio es 35 €", "Comprobado el 4-oct-2026: cuesta 35 €",
+   "2026-06-18: VERIFICADO que el puerto es 9443", "Migrado el panel al
+   puerto 9443 (18-sep-2026)", "Fix (4-oct-2026): el webhook apunta a
+   https://…", "Since 2026-09-18 … port 9443 (migrated)", "… renovado el
+   2026-01-03; caduca el 2027-01-03", "Último despliegue: v2.2.0, publicado
+   el …"). `recordVerdict` returns the rule that decided, for diagnosis.
 3. **Legacy brains: inferred-volatile facts get the grace too.**
    `StalenessContext.legacy` is true when the brain predates shelf life:
    its manifest is not stamped yet, its `created` cannot be read, or the
@@ -778,7 +807,7 @@ repository.
    up to half a window (45 days) before the stamp, by the same fixed share
    of its text hash as every other graced line: on upgrade day nothing
    volatile is past its window, and the old lines come due spread over days
-   46–90. A fact **marked** volatile by hand gets no grace, and neither does
+   46–91. A fact **marked** volatile by hand gets no grace, and neither does
    any line in a brain born stamped (a seeded, synced or imported old line
    there still warns at once — the agentic benchmark's seeded brains keep
    their 2.9.0 behaviour). Nothing new is stored: the decision is read from
@@ -793,7 +822,9 @@ repository.
    `initialize` reports is the running one too.
 
 No tool, parameter or description changes; `shelf_reason` gains two values
-(`history`, `miner`) in the learn response and in recall's staleness view.
+(`history`, `miner`), visible in the `crbro_learn` response. Recall does not
+show them: a permanent fact is never in `possibly_stale`, and its rows carry
+no `shelf_reason`.
 
 ### Measured after the change
 
@@ -806,8 +837,18 @@ of the run. The brain had changed by a few lines since the first pass.
 | 2.9.0 | 806 of 4,860 | — | — |
 | fix 2 alone (no legacy grace) | 695 | — | — |
 | 2.9.1 (fixes 1–3) | 0 | 289 | 1,318 |
+| fix 2 alone, after review | 701 | — | — |
+| 2.9.1 after review | 0 | 302 | 1,353 |
 
-851 facts now read as history. **The grace postpones; it does not reduce.**
+851 facts read as history before the review, **816 after it**: the review's
+state vetoes moved 43 lines back to a volatile class and its other changes
+(the "es" of a domain is no longer a verb, an abbreviated month no longer
+ends the head) moved 8 in. Read one by one, about 38 of the 43 are
+statements of state ("… ya sirve la versión nueva", "los sitemaps devuelven
+404", "la confirmación de email YA ESTÁ ACTIVADA", "solo queda publicada …
+en https://…") and about 5 are records with a side clause, which now warn
+(Limits). Of the 806 lines 2.9.0 flagged on the stamp day, 105 never warn
+again (all history) and 701 are postponed by the grace. **The grace postpones; it does not reduce.**
 Every inferred-volatile line comes due within one volatile window of the
 stamp, as designed, and by then more lines have crossed 90 days than on
 upgrade day. Of what is left, the largest group is still the imported
@@ -819,9 +860,16 @@ checklists; neither is in this change, which keeps to the source the miner
 writes.
 
 On this repository's own texts — the retrieval fixtures and haystacks and
-the agentic tasks, 2,425 strings — the history rule fires once (a migration
+the agentic tasks, 2,425 strings (2,579 counted after review, the same
+files read more widely; still one change, and none between the reviewed
+and the final rule) — the history rule fires once (a migration
 record in the retrieval set, `normal` before, so none of the volatile counts reported
-for 2.9.0 moves), and no agentic task changes class.
+for 2.9.0 moves), and no agentic task changes class. A model-free probe that seeds the agentic
+benchmark's two unmarked blocks as `benchmarks/agentic/run.mjs` does (same
+ageing, same T0) and runs each task's recall gives byte-identical output on
+2.9.0 and on 2.9.1 after review: the same class for every fact and the same
+11 rows in `possibly_stale`. Those brains are born stamped and their aged
+lines carry `verified`, so the legacy grace does not reach them either.
 
 The precision of fix 2 was checked by reading a random sample of the lines
 it classifies on that brain: they were records (published posts, finished
@@ -836,10 +884,23 @@ where 2.9.0 put it.
   judged, and the record's own date is what tells the reader how old that
   host is. Equally, a head that is a statement of state is not rescued by a
   record later in the line.
-- **A verification is a record.** "2026-06-18: VERIFICADO que el puerto es
-  9443" is history by this rule: it says what held on that day, dated. A
-  value meant to warn should be stored as a statement of state, not as a
-  dated check.
+- **A dated check of a value is the value.** "2026-06-18: VERIFICADO que el
+  puerto es 9443" and "Puerto 9443 verificado el 2026-09-18" keep warning; a
+  dated check with no changeable value in its head ("2026-08-11: VERIFICADO
+  que la copia restaura sin errores") is history. A bare domain before the
+  check does not count as the value: it is usually the site that was
+  checked, so "Auditoría de garza.example.com verificada el …" is history.
+- **A version is not a place.** "Instalado Node 20.11.0 en el servidor
+  (3-oct-2026)" and "Migrado a PostgreSQL 16 el 3-oct-2026" are records of
+  an upgrade and do not warn; a move to a port, host, URL or path does.
+- **The state vetoes cost some records.** A record whose head also states
+  something in a side clause ("FIX … (16-jun-2026): … los elementos son …")
+  warns: on the brain below about 5 of the 43 lines the review fixes moved
+  back to a state class were records of this kind. The miss is in the safe
+  direction.
+- **Lines the miner imports from project documents never warn**, READMEs with
+  ports and URLs included, until a session says the same line. That is what
+  fix 1 asks for; it is a limit for anyone who mines living documentation.
 - Spanish and English only, like the rest of the detector. The word lists
   are short on purpose; a record they miss stays where 2.9.0 put it.
 - Lines imported before the miner stamped its source are not recognised
