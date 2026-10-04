@@ -21,3 +21,8 @@ const sandbox = path.join(os.tmpdir(), `crbro-test-home-${process.pid}`);
 process.env.CRBRO_PATH ??= path.join(sandbox, '.crbro');
 process.env.HOME = sandbox;
 process.env.USERPROFILE = sandbox;
+
+// Claude Code hands its settings.json env to the shells it opens, so a
+// CLAUDE_CODE_PLUGIN_DIRS of the person running the suite would leak into
+// the install-mod tests, which read the process environment too.
+delete process.env.CLAUDE_CODE_PLUGIN_DIRS;

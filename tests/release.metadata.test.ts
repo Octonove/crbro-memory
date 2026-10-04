@@ -9,6 +9,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync, existsSync } from 'node:fs';
 import path from 'node:path';
+import { modFiles } from '../src/engine/modinstall.js';
 
 const root = path.resolve(__dirname, '..');
 const read = (f: string) => readFileSync(path.join(root, f), 'utf8');
@@ -61,9 +62,17 @@ describe('release metadata', () => {
   it('the mod install-mod copies exists and ships', () => {
     const bin = read('bin/crbro.mjs');
     expect(bin).toMatch(/'mods',\s*'crbro-pending'/);
-    for (const f of ['.claude-plugin/plugin.json', 'hooks/hooks.json', 'hooks/register.tsx', 'types/index.d.ts']) {
-      expect(existsSync(path.join(root, 'mods', 'crbro-pending', f)), f).toBe(true);
+    // Every file install-mod copies, so a new one (strings.ts was the first)
+    // cannot be left out of the tarball while the suite stays green.
+    const modDir = path.join(root, 'mods', 'crbro-pending');
+    const copied = modFiles(modDir);
+    const ignored = read('mods/crbro-pending/.npmignore').split(/\r?\n/).map(l => l.trim()).filter(l => l && !l.startsWith('#'));
+    for (const f of ['.claude-plugin/plugin.json', 'hooks/hooks.json', 'hooks/register.tsx', 'hooks/strings.ts', 'types/index.d.ts']) {
+      expect(copied, f).toContain(f);
+    }
+    for (const f of copied) {
       expect(shipped(`mods/crbro-pending/${f}`), f).toBe(true);
+      expect(ignored.some(rule => (rule.endsWith('/') ? f.startsWith(rule) : f === rule)), `.npmignore drops ${f}`).toBe(false);
     }
   });
 

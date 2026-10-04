@@ -1,5 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, readdirSync, statSync } from 'node:fs';
+import {
+  mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, readdirSync, statSync, lstatSync, chmodSync,
+  symlinkSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -178,12 +181,89 @@ describe('install-mod', () => {
     expect(snapshot(join(paths.claudeDir, 'mods'))).toBe(before);
   });
 
-  it('replaces another crbro-pending folder too, and never lists itself twice', () => {
+  it('keeps another crbro-pending folder (a checkout), points it out, and never lists itself twice', () => {
     const checkout = pluginAt(join(home, 'src', 'crbro-memory', 'mods', 'crbro-pending'), 'crbro-pending');
-    writeSettings({ env: { [PLUGIN_DIRS_VAR]: [paths.installedDir, checkout].join(';') } });
+    const list = [paths.installedDir, checkout].join(';');
+    writeSettings({ env: { [PLUGIN_DIRS_VAR]: list } });
     const r = installMod({ packageDir: PKG, home, ...win });
-    expect(r.replaced.map(x => x.dir)).toEqual([checkout]);
+    expect(r.replaced).toEqual([]);
+    expect(r.elsewhere).toEqual([checkout]);
+    expect(r.changed).toBe(false);
+    expect(settings().env[PLUGIN_DIRS_VAR]).toBe(list);
+    expect(r.lines.join('\n')).toContain(`Another copy is in ${checkout}`);
+  });
+
+  it('recognises its folder written between quotes', () => {
+    writeSettings({ env: { [PLUGIN_DIRS_VAR]: `"${paths.installedDir}";C:\\plugins\\one` } });
+    const r = installMod({ packageDir: PKG, home, ...win });
+    expect(r.alreadyListed).toBe(true);
+    expect(r.changed).toBe(false);
+    expect(verifyMod({ packageDir: PKG, home, ...win }).listed).toBe(true);
+  });
+
+  it('refuses a pluginConfigs entry of its own that is not an object, before copying anything', () => {
+    writeSettings({ pluginConfigs: { 'crbro-pending': 'x' } });
+    const r = installMod({ packageDir: PKG, home, lang: 'es', ...win });
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(/pluginConfigs\["crbro-pending"\] .* not touching it/);
+    expect(existsSync(paths.installedDir)).toBe(false);
+
+    writeSettings({ pluginConfigs: { 'crbro-pending': { options: 'ab' } } });
+    const r2 = installMod({ packageDir: PKG, home, lang: 'es', ...win });
+    expect(r2.ok).toBe(false);
+    expect(r2.error).toMatch(/\.options .* not touching it/);
+    expect(settings()).toEqual({ pluginConfigs: { 'crbro-pending': { options: 'ab' } } });
+  });
+
+  it('--lang writes the "@inline" key too when Claude Code keeps one, and uninstall drops both', () => {
+    writeSettings({ pluginConfigs: { 'crbro-pending@inline': { options: { language: 'en' } } } });
+    installMod({ packageDir: PKG, home, lang: 'es', ...win });
+    expect(settings().pluginConfigs).toEqual({
+      'crbro-pending': { options: { language: 'es' } },
+      'crbro-pending@inline': { options: { language: 'es' } },
+    });
+    uninstallMod({ home, ...win });
+    expect(settings().pluginConfigs).toBeUndefined();
+  });
+
+  it('warns about folders only the process environment lists, and does not merge them', () => {
+    const r = installMod({ packageDir: PKG, home, envDirs: `C:\\from\\shell;${paths.installedDir}`, ...win });
+    expect(r.envOnly).toEqual(['C:\\from\\shell']);
+    expect(r.lines.join('\n')).toMatch(/also set in this shell's environment/);
+    expect(r.lines.join('\n')).toContain('C:\\from\\shell');
     expect(settings().env[PLUGIN_DIRS_VAR]).toBe(paths.installedDir);
+    // Nothing to say when settings.json already holds them.
+    writeSettings({ env: { [PLUGIN_DIRS_VAR]: 'C:\\from\\shell' } });
+    expect(installMod({ packageDir: PKG, home, envDirs: 'C:\\from\\shell', ...win }).envOnly).toEqual([]);
+  });
+
+  it('keeps the indentation settings.json had', () => {
+    writeFileSync(paths.settingsPath, '{\n\t"theme": "dark"\n}\n');
+    installMod({ packageDir: PKG, home, ...win });
+    const raw = readFileSync(paths.settingsPath, 'utf8');
+    expect(raw).toMatch(/\n\t"env": \{\n\t\t"CLAUDE_CODE_PLUGIN_DIRS"/);
+    expect(existsSync(`${paths.settingsPath}.${process.pid}.tmp`)).toBe(false);
+  });
+
+  it.skipIf(process.platform === 'win32')('keeps the permission bits and writes through a symlink', () => {
+    const real = join(home, 'dotfiles', 'settings.json');
+    mkdirSync(join(home, 'dotfiles'), { recursive: true });
+    writeFileSync(real, JSON.stringify({ theme: 'dark' }), { mode: 0o600 });
+    chmodSync(real, 0o600);
+    symlinkSync(real, paths.settingsPath);
+    installMod({ packageDir: PKG, home, platform: 'linux' });
+    expect(lstatSync(paths.settingsPath).isSymbolicLink()).toBe(true);
+    expect(statSync(real).mode & 0o777).toBe(0o600);
+    expect(JSON.parse(readFileSync(real, 'utf8')).env[PLUGIN_DIRS_VAR]).toBe(paths.installedDir);
+  });
+
+  it('clears a staging folder a failed run left behind', () => {
+    const stale = join(paths.modsDir, 'crbro-pending.99999.tmp');
+    mkdirSync(join(stale, 'hooks'), { recursive: true });
+    writeFileSync(join(stale, 'hooks', 'half.ts'), '//');
+    installMod({ packageDir: PKG, home, ...win });
+    expect(existsSync(stale)).toBe(false);
+    expect(readdirSync(paths.modsDir)).toEqual(['crbro-pending']);
   });
 
   it('--lang en|es stores the mod\'s language; auto takes it out again', () => {
@@ -254,6 +334,41 @@ describe('uninstall-mod', () => {
     expect(settings()).toEqual({ env: { FOO: 'bar' } });
   });
 
+  it('leaves settings.json and ~/.claude as install-mod found them', () => {
+    writeSettings({ theme: 'dark' });
+    installMod({ packageDir: PKG, home, lang: 'en', ...win });
+    uninstallMod({ home, ...win });
+    expect(settings()).toEqual({ theme: 'dark' });
+    expect(existsSync(paths.modsDir)).toBe(false);
+  });
+
+  it('puts the crbro-pendientes copy it replaced back where it was', () => {
+    const legacy = pluginAt(join(home, 'my-mods', 'crbro-pendientes'), 'crbro-pendientes');
+    const list = ['C:\\plugins\\one', legacy, 'C:\\plugins\\two'].join(';');
+    writeSettings({ env: { [PLUGIN_DIRS_VAR]: list } });
+    installMod({ packageDir: PKG, home, ...win });
+    expect(settings().env[PLUGIN_DIRS_VAR]).toBe(['C:\\plugins\\one', paths.installedDir, 'C:\\plugins\\two'].join(';'));
+    // A second install has nothing to replace and keeps the record.
+    installMod({ packageDir: PKG, home, ...win });
+
+    const r = uninstallMod({ home, ...win });
+    expect(r.restored).toEqual([legacy]);
+    expect(settings().env[PLUGIN_DIRS_VAR]).toBe(list);
+    expect(r.lines.join('\n')).toContain(`Put your earlier copy back in ${PLUGIN_DIRS_VAR}: ${legacy}`);
+    expect(existsSync(paths.replacedPath)).toBe(false);
+  });
+
+  it('does not put back a replaced copy that is gone', () => {
+    const legacy = pluginAt(join(home, 'my-mods', 'crbro-pendientes'), 'crbro-pendientes');
+    writeSettings({ env: { [PLUGIN_DIRS_VAR]: legacy } });
+    installMod({ packageDir: PKG, home, ...win });
+    rmSync(legacy, { recursive: true });
+    const r = uninstallMod({ home, ...win });
+    expect(r.restored).toEqual([]);
+    expect(settings()).toEqual({});
+    expect(r.lines.join('\n')).toMatch(/no longer there, so it was not put back/);
+  });
+
   // A Windows home has a drive colon, so a ":" list cannot hold it there.
   it.skipIf(process.platform === 'win32')('keeps the rest of a ":" list outside Windows', () => {
     writeSettings({ env: { [PLUGIN_DIRS_VAR]: `/opt/a:${paths.installedDir}:/opt/b` } });
@@ -317,6 +432,51 @@ describe('install-mod --verify', () => {
     expect(snapshot(home)).toBe(before);
   });
 
+  it('files the package never ships (node_modules, test, tsconfig, generated types) count as foreign', () => {
+    installMod({ packageDir: PKG, home, ...win });
+    const add = (rel: string) => {
+      const target = join(paths.installedDir, ...rel.split('/'));
+      mkdirSync(join(target, '..'), { recursive: true });
+      writeFileSync(target, 'export {}');
+    };
+    for (const rel of ['node_modules/claude-code/index.js', 'test/x.test.tsx', 'tsconfig.json', '.claude-plugin/types/x.d.ts']) add(rel);
+    const r = verifyMod({ packageDir: PKG, home, ...win });
+    expect(r.ok).toBe(false);
+    expect(r.files.filter(f => f.status === 'unknown').map(f => f.name).sort()).toEqual([
+      '.claude-plugin/types/x.d.ts', 'node_modules/claude-code/index.js', 'test/x.test.tsx', 'tsconfig.json',
+    ]);
+  });
+
+  it('another copy Claude Code would load beside it fails the check', () => {
+    installMod({ packageDir: PKG, home, ...win });
+    const local = pluginAt(join(paths.claudeDir, 'mods', 'crbro-pendientes'), 'crbro-pendientes');
+    const r = verifyMod({ packageDir: PKG, home, ...win });
+    expect(r.duplicates).toEqual([local]);
+    expect(r.ok).toBe(false);
+    expect(formatModVerify(r)).toContain(`Another copy is in ${local}`);
+    expect(formatModVerify(r)).toContain('not the only copy');
+
+    const checkout = pluginAt(join(home, 'src', 'crbro-pending'), 'crbro-pending');
+    writeSettings({ env: { [PLUGIN_DIRS_VAR]: [paths.installedDir, checkout].join(';') } });
+    expect(verifyMod({ packageDir: PKG, home, ...win }).duplicates).toEqual([checkout, local]);
+  });
+
+  it('a copy of its own is no failure while this mod is not installed', () => {
+    pluginAt(join(paths.claudeDir, 'mods', 'crbro-pendientes'), 'crbro-pendientes');
+    const r = verifyMod({ packageDir: PKG, home, ...win });
+    expect(r.ok).toBe(true);
+    expect(r.duplicates).toEqual([]);
+  });
+
+  it('a list that only the process environment holds counts as listed', () => {
+    installMod({ packageDir: PKG, home, ...win });
+    writeSettings({});
+    expect(verifyMod({ packageDir: PKG, home, envDirs: paths.installedDir, ...win }).listed).toBe(true);
+    // settings.json's own value wins over the environment.
+    writeSettings({ env: { [PLUGIN_DIRS_VAR]: 'C:\\plugins\\one' } });
+    expect(verifyMod({ packageDir: PKG, home, envDirs: paths.installedDir, ...win }).listed).toBe(false);
+  });
+
   it('CRLF against LF is line endings only', () => {
     installMod({ packageDir: PKG, home, ...win });
     const target = join(paths.installedDir, 'hooks', 'hooks.json');
@@ -377,7 +537,7 @@ describe.skipIf(!BUILT)('the CLI', () => {
     const un = run('uninstall-mod');
     expect(un.status).toBe(0);
     expect(existsSync(paths.installedDir)).toBe(false);
-    expect(settings().env[PLUGIN_DIRS_VAR]).toBeUndefined();
+    expect(settings().env?.[PLUGIN_DIRS_VAR]).toBeUndefined();
   });
 
   it('rejects an unknown --lang and a broken settings.json with exit 1', () => {

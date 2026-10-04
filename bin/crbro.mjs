@@ -1000,7 +1000,8 @@ if (command === 'init') {
   // env.CLAUDE_CODE_PLUGIN_DIRS in ~/.claude/settings.json (";" on Windows,
   // ":" elsewhere), once. Nothing else in settings.json is touched, except the
   // mod's own language when --lang en|es is given. An earlier local copy
-  // (crbro-pendientes) in that list is replaced. Same care as install-hooks:
+  // (crbro-pendientes) in that list is replaced, and uninstall-mod puts it
+  // back. Same care as install-hooks:
   // BOM read, unparseable settings left alone, atomic write, idempotent.
   import('../dist/engine/modinstall.js').then(({ installMod, uninstallMod }) => {
     const here = dirname(fileURLToPath(import.meta.url));
