@@ -3,6 +3,9 @@ import type { PendingLang } from '../types'
 // Every word the mod shows, in one table per language. Nothing user-facing is
 // written anywhere else: a new language is one more entry here.
 
+/** A message ends here: the period it may carry already is not doubled. */
+const bare = (reason: string) => reason.trim().replace(/\.+$/, '')
+
 export type Strings = {
   /** Short month names for «3 Oct» / «3-oct». */
   months: readonly string[]
@@ -29,6 +32,7 @@ export type Strings = {
   fresh: (n: number) => string
   recent: (n: number) => string
   old: (n: number) => string
+  /** reason: the engine's or the parser's own message, in its own words. */
   readError: (reason: string) => string
   filterPlaceholder: string
   matches: (shown: number, total: number, query: string) => string
@@ -43,6 +47,8 @@ export type Strings = {
   discard: string
   recentlyClosed: (isOpen: boolean, n: number) => string
   closedOn: (date: string, id: string) => string
+  more: (n: number) => string
+  paneNoRoom: string
   help: string
   reload: string
   showBand: string
@@ -51,6 +57,7 @@ export type Strings = {
   fromServer: (server: string) => string
   fromFile: (path: string) => string
 
+  /** id is '' for an item stored without one (a v1 entry): the wording leaves it out. */
   workPrompt: (id: string, text: string) => string
   cannotFill: string
   stillOpen: (id: string) => string
@@ -87,7 +94,7 @@ const en: Strings = {
   fresh: n => `● ${n} from the last 3 days`,
   recent: n => `● ${n} up to 2 weeks old`,
   old: n => `● ${n} older than 2 weeks`,
-  readError: reason => `Could not read the CRBRO brain: ${reason}. Press Reload once it is available.`,
+  readError: reason => `Could not read the CRBRO brain: ${bare(reason)}. Press Reload once it is available.`,
   filterPlaceholder: 'Filter: a project, a word…',
   matches: (shown, total, query) => `${shown} of ${total} match "${query}"`,
   none: 'No open items in CRBRO.',
@@ -100,7 +107,9 @@ const en: Strings = {
   done: 'Done',
   discard: 'Discard',
   recentlyClosed: (isOpen, n) => `${isOpen ? '▾' : '▸'} Recently closed (${n})`,
-  closedOn: (date, id) => `✓ closed ${date} · ${id}`,
+  closedOn: (date, id) => ['✓ closed' + (date ? ` ${date}` : ''), id].filter(Boolean).join(' · '),
+  more: n => `${n} more: filter to narrow the list.`,
+  paneNoRoom: 'CRBRO: there is no room for the list here; widen the window.',
   help: '"Done" closes it in CRBRO and keeps it under "recently closed"; "Discard" removes it without recording it.',
   reload: 'Reload',
   showBand: 'Show band',
@@ -109,11 +118,11 @@ const en: Strings = {
   fromServer: server => `Read from the CRBRO server (${server}).`,
   fromFile: path => `Read from ${path}: the CRBRO server is not reachable in this session.`,
 
-  workPrompt: (id, text) => `Let's work on this CRBRO open item (${id}): ${text}`,
+  workPrompt: (id, text) => `Let's work on this CRBRO open item${id ? ` (${id})` : ''}: ${text}`,
   cannotFill: 'Cannot write in the prompt right now.',
-  stillOpen: id => `CRBRO answered, but ${id} is still open.`,
-  resolved: id => `${id} closed in CRBRO.`,
-  discarded: id => `${id} discarded in CRBRO.`,
+  stillOpen: id => `CRBRO answered, but ${id || 'the item'} is still open.`,
+  resolved: id => (id ? `${id} closed in CRBRO.` : 'Closed in CRBRO.'),
+  discarded: id => (id ? `${id} discarded in CRBRO.` : 'Discarded in CRBRO.'),
   closeFailed: reason => `CRBRO could not close it: ${reason}`,
   noServer: 'the CRBRO MCP server is not connected in this session',
   noDetail: 'error with no detail',
@@ -145,7 +154,7 @@ const es: Strings = {
   fresh: n => `● ${n} de los últimos 3 días`,
   recent: n => `● ${n} de hasta 2 semanas`,
   old: n => `● ${n} con más de 2 semanas`,
-  readError: reason => `No he podido leer el cerebro de CRBRO: ${reason}. Pulsa Recargar cuando esté disponible.`,
+  readError: reason => `No he podido leer el cerebro de CRBRO: ${bare(reason)}. Pulsa Recargar cuando esté disponible.`,
   filterPlaceholder: 'Filtrar: un proyecto, una palabra…',
   matches: (shown, total, query) => `${shown} de ${total} coinciden con «${query}»`,
   none: 'No hay pendientes abiertos en CRBRO.',
@@ -158,7 +167,9 @@ const es: Strings = {
   done: 'Hecho',
   discard: 'Descartar',
   recentlyClosed: (isOpen, n) => `${isOpen ? '▾' : '▸'} Cerrados hace poco (${n})`,
-  closedOn: (date, id) => `✓ cerrado el ${date} · ${id}`,
+  closedOn: (date, id) => [date ? `✓ cerrado el ${date}` : '✓ cerrado', id].filter(Boolean).join(' · '),
+  more: n => `${n} más: filtra para acotar la lista.`,
+  paneNoRoom: 'CRBRO: aquí no hay sitio para la lista; ensancha la ventana.',
   help: '«Hecho» lo cierra en CRBRO y queda en «cerrados hace poco»; «Descartar» lo quita sin registrarlo.',
   reload: 'Recargar',
   showBand: 'Mostrar banda',
@@ -167,11 +178,11 @@ const es: Strings = {
   fromServer: server => `Leído del servidor de CRBRO (${server}).`,
   fromFile: path => `Leído de ${path}: el servidor de CRBRO no está accesible en esta sesión.`,
 
-  workPrompt: (id, text) => `Vamos con este pendiente de CRBRO (${id}): ${text}`,
+  workPrompt: (id, text) => `Vamos con este pendiente de CRBRO${id ? ` (${id})` : ''}: ${text}`,
   cannotFill: 'Ahora mismo no puedo escribir en el prompt.',
-  stillOpen: id => `CRBRO respondió, pero ${id} sigue abierto.`,
-  resolved: id => `${id} cerrado en CRBRO.`,
-  discarded: id => `${id} descartado en CRBRO.`,
+  stillOpen: id => `CRBRO respondió, pero ${id || 'el pendiente'} sigue abierto.`,
+  resolved: id => (id ? `${id} cerrado en CRBRO.` : 'Cerrado en CRBRO.'),
+  discarded: id => (id ? `${id} descartado en CRBRO.` : 'Descartado en CRBRO.'),
   closeFailed: reason => `CRBRO no ha podido cerrarlo: ${reason}`,
   noServer: 'el servidor MCP de CRBRO no está conectado en esta sesión',
   noDetail: 'error sin detalle',

@@ -24,6 +24,14 @@ const CONTEXT_TOOL = 'crbro_context'
 const REFRESH_MS = 60_000
 const DAY_MS = 86_400_000
 const MAX_CLOSED = 10
+/**
+ * The engine unmounts a drawing past its bounds (20,000 nodes, 100,000
+ * characters): the pane draws this many cards, the filter finds the rest.
+ */
+const MAX_CARDS = 40
+const MAX_LINE = 2_000
+/** How long a CRBRO tool call waits for the band to catch up before going on. */
+const CATCH_UP_MS = 1_500
 
 /** Age colors, raw so they read the same in light and dark themes. */
 const FRESH = '#16A34A'
@@ -80,13 +88,15 @@ function shortDate(t: Strings, iso: string): string {
 /**
  * «Fiverr: when…» reads better as the label «Fiverr» and the rest. Only when
  * the head (without parentheses) is short: «Decide the official domain of…: …»
- * is not a label.
+ * is not a label. The colon has to end a word (a space or the end after it),
+ * so a drive letter, a URL or a time («C:/…», «https://…», «10:30») is never
+ * cut, and one letter alone («C: …») is no label either.
  */
 export function split(text: string): { label: string | null; body: string } {
-  const colon = text.indexOf(':')
+  const colon = /:(?=\s|$)/.exec(text)?.index ?? -1
   if (colon > 0) {
     const head = text.slice(0, colon).replace(/\s*\([^)]*\)/g, '').trim()
-    if (head.length > 0 && head.length <= 40 && head.split(/\s+/).length <= 6) {
+    if (head.length > 1 && head.length <= 40 && head.split(/\s+/).length <= 6) {
       return { label: head, body: text.slice(colon + 1).trim() }
     }
   }
@@ -99,6 +109,11 @@ export function lines(body: string): string[] {
     .split(/\s+(?=\(\d{1,2}\)\s)/)
     .map(line => line.trim())
     .filter(line => line.length > 0)
+}
+
+/** One line cut to MAX_LINE characters, so a huge item cannot blow a drawing's bounds. */
+export function clip(line: string): string {
+  return line.length > MAX_LINE ? `${line.slice(0, MAX_LINE - 1)}…` : line
 }
 
 /** Lower case without accents, so «campana» finds «campaña». */
@@ -186,7 +201,9 @@ async function resolveLang($: EngineInterface): Promise<PendingLang> {
   return 'en'
 }
 
+/** An explicit language applies as soon as the module loads; only auto waits for session.start. */
 async function words($: EngineInterface): Promise<Strings> {
+  if (configured === 'en' || configured === 'es') return STRINGS[configured]
   return STRINGS[await read($, lang)]
 }
 
@@ -259,7 +276,9 @@ async function load($: EngineInterface): Promise<void> {
 
 async function openList($: EngineInterface): Promise<void> {
   const t = await words($)
-  await $.ui.open({ id: PANE, title: t.paneTitle })
+  const opened = await $.ui.open({ id: PANE, title: t.paneTitle })
+  // A terminal too narrow for a pane keeps it waiting, undrawn: say so.
+  if (!opened.isPlaced) $.ui.toast(t.paneNoRoom)
 }
 
 async function showAll($: EngineInterface): Promise<{ text: string }> {
@@ -271,10 +290,17 @@ async function showAll($: EngineInterface): Promise<{ text: string }> {
   return { text: (await words($)).commandAnswer(count) }
 }
 
-/** Leaves the item written in the prompt, for the person to finish and send. */
+/**
+ * Leaves the item written in the prompt, for the person to finish and send.
+ * What they had typed stays: the item goes after it on a line of its own.
+ */
 async function workOn($: EngineInterface, p: PendingItem): Promise<void> {
   const t = await words($)
-  const filled = await $.prompt.fill({ text: t.workPrompt(p.id || '-', p.text) })
+  const text = t.workPrompt(p.id, p.text)
+  const { text: draft } = await $.prompt.read()
+  const filled = draft.trim() === ''
+    ? await $.prompt.fill({ text })
+    : await $.prompt.fill({ text: `\n${text}`, mode: 'append' })
   if (!filled.isFilled) $.ui.toast(t.cannotFill)
 }
 
@@ -304,8 +330,8 @@ async function closeItem($: EngineInterface, p: PendingItem, action: PendingActi
     if (result.isError) throw new Error(textOf(result).slice(0, 160) || t.noDetail)
     await load($)
     const still = (await read($, items)).some(item => handle(item) === id)
-    if (still) $.ui.toast(t.stillOpen(p.id || '-'))
-    else $.ui.toast(action === 'resolve' ? t.resolved(p.id || '-') : t.discarded(p.id || '-'))
+    if (still) $.ui.toast(t.stillOpen(p.id))
+    else $.ui.toast(action === 'resolve' ? t.resolved(p.id) : t.discarded(p.id))
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
     $.ui.toast(t.closeFailed(message))
@@ -336,14 +362,19 @@ export const register: Register = (on, options) => {
 
   // What CRBRO does (crbro_context, crbro_consolidate…) can open or close
   // items: after each of its tools the list is read again. The call also
-  // names the server, so a server that connected late is found here.
-  on('tool.call', async ($, e, next) => {
+  // names the server, so a server that connected late is found here. Only
+  // CRBRO's own tools come through this hook.
+  on('tool.call', { tool: /^mcp__.+__crbro_[a-z_]+$/ }, async ($, e, next) => {
     const ran = await next(e)
     const name = serverOf(e.tool)
     if (name !== null) {
       if ((await read($, server)) === null) await update($, server, () => name)
-      // Awaited: one local read, and the band is right before the turn goes on.
-      await load($)
+      // The band catches up before the turn goes on, but a slow server never
+      // holds the turn past CATCH_UP_MS: the minute's refresh covers the rest.
+      await Promise.race([
+        load($),
+        $.clock.sleep(CATCH_UP_MS, { signal: next.signal }).catch(() => undefined),
+      ])
     }
 
     return ran
@@ -396,7 +427,7 @@ export const register: Register = (on, options) => {
         {compact ? (
           <Text wrap="truncate-end">
             {label !== null && <Text bold>{label}: </Text>}
-            {body}
+            {clip(body)}
           </Text>
         ) : (
           <Box flexDirection="column" paddingLeft={2}>
@@ -406,7 +437,7 @@ export const register: Register = (on, options) => {
               </Text>
             )}
             {lines(body).map(line => (
-              <Text wrap="wrap">{line}</Text>
+              <Text wrap="wrap">{clip(line)}</Text>
             ))}
           </Box>
         )}
@@ -465,7 +496,7 @@ export const register: Register = (on, options) => {
         {needle.length > 0 && <Text dimColor>{t.matches(shown.length, list.length, query.trim())}</Text>}
         {list.length === 0 && problem === null && <Text dimColor>{t.none}</Text>}
 
-        {shown.map((p, i) => {
+        {shown.slice(0, MAX_CARDS).map((p, i) => {
           const { label, body } = split(p.text)
           const color = ageColor(p.added, now)
           const id = handle(p)
@@ -483,13 +514,10 @@ export const register: Register = (on, options) => {
                 <Text color={color} bold>
                   {age(t, p.added, now)}
                 </Text>
-                <Text dimColor>
-                  {shortDate(t, p.added)}
-                  {p.id ? ` · ${p.id}` : ''}
-                </Text>
+                <Text dimColor>{[shortDate(t, p.added), p.id].filter(Boolean).join(' · ')}</Text>
               </Box>
               {lines(body).map(line => (
-                <Text wrap="wrap">{line}</Text>
+                <Text wrap="wrap">{clip(line)}</Text>
               ))}
               {working === id ? (
                 <Text dimColor>{t.closing}</Text>
@@ -511,6 +539,7 @@ export const register: Register = (on, options) => {
             </Box>
           )
         })}
+        {shown.length > MAX_CARDS && <Text dimColor>{t.more(shown.length - MAX_CARDS)}</Text>}
 
         {done.length > 0 && (
           <Button
@@ -525,7 +554,7 @@ export const register: Register = (on, options) => {
             <Box key={`c-${p.id || `n${i}`}`} flexDirection="column" paddingLeft={2}>
               <Text color={FRESH}>{t.closedOn(shortDate(t, p.closed), p.id)}</Text>
               <Text dimColor wrap="wrap">
-                {p.text}
+                {clip(p.text)}
               </Text>
             </Box>
           ))}

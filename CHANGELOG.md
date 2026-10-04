@@ -27,6 +27,13 @@ Open items in sight, for whoever installs CRBRO, not only for its author.
   string in one table. `install-mod --lang en|es` stores the choice in the
   mod's own setting (a row in `/config` too); `auto` follows `CRBRO_LANG`,
   then `LC_ALL` / `LC_MESSAGES` / `LANG`, then the system locale.
+- **Sturdy with any brain, not only its author's.** A colon makes a label only
+  when it ends a word, so a path, a URL or a time stays whole; an item with
+  no id reads without a dangling one; the pane draws 40 cards at most and
+  cuts a line at 2,000 characters, so a large brain never gets it unmounted;
+  *Work on this* adds to what was typed instead of replacing it; a CRBRO tool
+  call waits at most 1.5 s for the band to catch up; a language picked in
+  `/config` applies on reload; a terminal too narrow for the pane says so.
 - **Installed with the same care as the hooks.** The mod is copied to
   `~/.claude/crbro-mods/crbro-pending` and that folder is added once to
   `env.CLAUDE_CODE_PLUGIN_DIRS` in `~/.claude/settings.json`, with `;` on
