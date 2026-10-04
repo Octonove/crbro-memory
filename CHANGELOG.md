@@ -6,6 +6,26 @@ All notable changes to CRBRO.
 
 Open items in sight, for whoever installs CRBRO, not only for its author.
 
+- **On by default where Claude Code is, and said out loud.** `crbro_boot`
+  installs the mod on its own, once per server process (once per daemon),
+  when `~/.claude` exists: the same install as `install-mod` with the
+  language on auto. The boot that does it carries `mod_notice`, a sentence the
+  assistant passes on once — what was installed, that it shows up in *new*
+  Claude Code sessions, and how to remove it. After an update of CRBRO, a boot
+  that finds the installed files different from the package (SHA-256)
+  refreshes them without touching `settings.json`, and says so once; an older
+  CRBRO on the same machine never takes back a newer one's files. The way
+  out is easy and final: `uninstall-mod` leaves a mark in
+  `~/.claude/crbro-mods/state.json` and the mod is never put back on its own
+  (`install-mod` lifts it); taking the folder out of
+  `CLAUDE_CODE_PLUGIN_DIRS` by hand counts as a no too; `CRBRO_MOD=0` turns
+  the automatic part off. It never fails or holds up the boot (1.5 s at most,
+  every error caught), leaves a `settings.json` that does not parse untouched
+  and does not retry the same failure until that file or the package
+  changes, or a day goes by, installs nothing beside another `crbro-pending`
+  already in the list, and two sessions starting at once take turns through
+  an exclusive lock file, checked after writing: every key kept, the path
+  listed once.
 - **The open items above the prompt.** `npx crbro-memory install-mod` adds
   `crbro-pending`, a Claude Code mod: the newest open item of the brain drawn
   whole above the prompt — a short `Label:` apart, `(1) … (2) …` steps one per
