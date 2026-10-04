@@ -107,11 +107,33 @@ change is a parameter or a field on an existing one.
   `CRBRO_SHELF_DAYS` are part of the configuration fingerprint (only when they
   differ from the defaults, so existing fingerprints do not move): a client
   that switched the feature off is never served by a daemon that has it on.
-- **The agentic benchmark.** A new pre-registered case, `stale-unmarked`
-  (fifth amendment of `benchmarks/agentic/PREREGISTRO.md`): four values that
-  changed in the world and that nobody retired, two marked volatile and two
-  left to the detector. Its thresholds were fixed before any run; no result
-  is claimed here until it has been measured.
+- **The agentic benchmark: measured, and not met.** A new pre-registered
+  case, `stale-unmarked` (fifth amendment of
+  `benchmarks/agentic/PREREGISTRO.md`): four values that changed in the world
+  and that nobody retired, two marked volatile and two left to the detector,
+  with the current value in a file both arms can read. Measured on
+  2026-10-04 with Claude Code 2.1.270, n=3, the 2.8.0 build (`before`) against
+  this branch (`after`, two runs per model: the four new tasks alone, then
+  all 16). With CRBRO the agent answers **0 of 12** correctly in every run,
+  before and after, in haiku and in sonnet. Old value given without a
+  warning: haiku 11 before, 9 and 10 after; sonnet 12 before, 11 and 12 after;
+  one sonnet answer gave it with a warning (`hedged`). Without memory the
+  agent reads the file and gets 3 and 6 (before) and 1-6 (after) of 12.
+  U1, U2 and U3 fail in every `after` run; U4 passes in three of four by one
+  or two cells, which is noise at n=12; U5 passes (the 12 original tasks
+  keep 4/4 thresholds: 24/24, 0 retired values, controls 6/6). The claim
+  "CRBRO warns and the agent checks" is **not** made. Why, from the cells:
+  recall flags all four rows correctly (checked without a model on the same
+  brain), but in 48 `after` cells no agent with CRBRO opened a file — the
+  warning arrives and does not change what the agent does on these tasks.
+  No cell tried `crbro_revise` or `crbro_learn`. Cost per CRBRO cell on these
+  tasks: haiku $0.0121 → $0.0149 / $0.0151 at the same turns (3.1 → 3.0),
+  sonnet $0.0263 → $0.0270 / $0.0274 with fewer turns (3.6 → 3.1). Canaries
+  clean, no leaks, no API errors. Before the `after` runs, a dated note in
+  the pre-registration recorded that `before` ran after the implementation
+  commit (in separate clones of 2.8.0 and of the frozen harness), the
+  `CRBRO_MOD=0` deviation and the review changes. Results:
+  `benchmarks/results/agentic-2026-10-04-*.json`.
 
 ## [2.8.0] — 2026-10-04
 

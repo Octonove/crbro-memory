@@ -360,3 +360,49 @@ reconoce sus propios ejemplos, no si generaliza; y en `after` el `hint` pide
 partir de `tool_calls`. Para la próxima enmienda, pre-registrada antes de
 medirla: controles de dato viejo pero cierto, una consulta mixta con una fila
 vieja ajena y tareas sin marca redactadas por otra persona.
+
+#### Tandas `after` (2026-10-04): no se cumple
+
+Build `ad7675f` (`dirty: false`), `CRBRO_MOD=0` como en `before`, Claude Code
+2.1.270, n=3. Las cuatro tandas `after` corrieron con canarios y canarios de
+lectura limpios, sin fugas ni errores de API, y sin tocar el producto entre
+ellas. `--compare` comprobado a mano: los dos `before` son `cab8283`,
+`label: before`, `only: ["stale-unmarked"]`, mismo modelo, `n = 3`.
+
+| `crbro` en `stale-unmarked` (12 celdas) | haiku before | haiku after (solo u) | haiku after (completa) | sonnet before | sonnet after (solo u) | sonnet after (completa) |
+|---|--:|--:|--:|--:|--:|--:|
+| acierta (valor actual) | 0 | 0 | 0 | 0 | 0 | 0 |
+| valor viejo **sin aviso** | 11 | 9 | 10 | 12 | 11 | 12 |
+| valor viejo con aviso (`hedged`) | 0 | 0 | 0 | 0 | 1 | 0 |
+| se abstiene | 1 | 3 | 2 | 0 | 0 | 0 |
+| celdas que abrieron un fichero | 1 | 0 | 0 | 0 | 0 | 0 |
+| `baseline` acierta (la vara de U3) | 3 | 1 | 4 | 6 | 6 | 4 |
+| coste medio por celda `crbro` (USD) | 0,0121 | 0,0149 | 0,0151 | 0,0263 | 0,0270 | 0,0274 |
+| turnos medios por celda `crbro` | 3,1 | 3,0 | 3,0 | 3,6 | 3,1 | 3,1 |
+
+| umbral | haiku solo u | haiku completa | sonnet solo u | sonnet completa |
+|---|---|---|---|---|
+| U1 ≥ 75 % | 0 % ✗ | 0 % ✗ | 0 % ✗ | 0 % ✗ |
+| U2 ≤ 10 % | 75 % ✗ | 83,3 % ✗ | 91,7 % ✗ | 100 % ✗ |
+| U3 crbro ≥ baseline | 0 vs 1 ✗ | 0 vs 4 ✗ | 0 vs 6 ✗ | 0 vs 4 ✗ |
+| U4 menos que before | 9 < 11 ✓ | 10 < 11 ✓ | 11 < 12 ✓ | 12 = 12 ✗ |
+| U5 originales | — (null) | 4/4 ✓ | — (null) | 4/4 ✓ |
+
+`claim_allowed: false` en todas. La frase **no se escribe**. U4 en verde en
+tres de cuatro no cambia nada: con 12 celdas, una o dos de diferencia caben en
+el ruido, y en las tres el valor viejo sigue siendo la respuesta mayoritaria.
+
+Por qué falla, según las celdas: recall marca bien las cuatro filas (probado
+sin modelo sobre el mismo cerebro: las cuatro en `possibly_stale`, 200 días,
+con el `hint`), pero ningún agente con CRBRO abrió un fichero en las 48 celdas
+`after`. Todos se quedaron en `crbro_boot` + `crbro_recall` y contestaron con
+lo que había, se abstuvieron, o una vez (sonnet, u4) dieron el valor viejo
+avisando. Ninguno intentó `crbro_revise` ni `crbro_learn`, así que el coste
+extra no son escrituras denegadas. El aviso llega; no cambia lo que hace el
+agente en estas tareas. La tanda corta y la completa dicen lo mismo, así que
+no hay muestra que elegir.
+
+No se ha gastado la enmienda permitida: el fallo es del producto, no del
+arnés, y una segunda `after` con otro texto del servidor sobre estas mismas
+tareas dejaría de ser ciega. Lo que se pruebe a partir de aquí irá en una
+enmienda nueva, fechada antes de medirla.
