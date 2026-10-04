@@ -17,8 +17,10 @@ no parameter or description changes.
   minority among them.
 - **A miner line never warns.** A fact with `source: "miner"` and no explicit
   `shelf_life` is `permanent`, inferred, `shelf_reason: "miner"`. An explicit
-  `shelf_life` still wins. Lines mined before the miner stamped its source
-  (1.5.x) are stored with `source: "session"` and are not reached by this.
+  `shelf_life` still wins, and once a session says the same line (it gets
+  `verified` or a second confirmation) it is judged by its text again. Lines
+  mined before the miner stamped its source (1.5.x) are stored with
+  `source: "session"` and are not reached by this.
 - **A dated record of something done is history.** An unmarked fact whose
   first sentence names a date (2026-06-18, 18/06/2026, 18-jun-2026, jun 2026,
   June 18, 2026…) and a finished action (completado, desplegado, publicado,
@@ -28,10 +30,17 @@ no parameter or description changes.
   Not when that sentence opens a period with its date ("desde el 18-sep",
   "since", "as of", "a partir de", "a 4-oct"), looks ahead (will, planned,
   programado, pendiente, caduca, expires, renews, "para el <date>"), speaks of
-  the present (actualmente, currently, ahora, último, last, latest), or states
-  something before the action ("la API corre en el puerto 8443, desplegada el
-  …"). Actualizado, cambiado, configurado, updated, changed and set are not
-  finished actions: they bring a new current value. A line with no date is
+  the present (actualmente, currently, current, ahora, último, last, latest),
+  or states something before the action ("la API corre en el puerto 8443,
+  desplegada el …"). And when that sentence carries a changeable value, not
+  when it also says the value holds: a verb of state anywhere in it ("Fix
+  (…): el webhook apunta a https://…"), a dated check of the value
+  ("Comprobado el 4-oct-2026: cuesta 35 €", "Puerto 9443 verificado el …"),
+  a move to a place ("Migrado el panel al puerto 9443 (18-sep-2026)",
+  "Deployed to https://… on …") or a schedule ("diaria 03:00"). Actualizado,
+  cambiado, configurado, updated, changed and set are not finished actions:
+  they bring a new current value; cerrado, aprobado, completo, closed and
+  approved count only with no value in the sentence. A line with no date is
   never history. Only the first sentence is judged; that and the other
   limits are in the design doc.
 - **The legacy grace reaches inferred-volatile facts.** In a brain that
@@ -40,18 +49,20 @@ no parameter or description changes.
   infers volatile and recorded before the stamp starts counting up to 45 days
   before the stamp, staggered by its text hash like every other graced line:
   nothing volatile is flagged on upgrade day, and those lines come due spread
-  over days 46–90. A fact marked volatile by hand gets no grace, and in a
+  over days 46–91. A fact marked volatile by hand gets no grace, and in a
   brain born with shelf life (created and stamped together) nothing changes.
   Read from `created` and `staleness_since`; nothing new is stored.
   **Measured on the same brain:** 806 flagged on the stamp day with 2.9.0,
-  695 with the history rule alone, 0 with all of 2.9.1; 289 at +60 days and
-  1,318 at +91. The grace postpones, it does not reduce: the imported
-  checklists that fix 1 cannot see are still the largest group.
+  701 with the history rule alone, 0 with all of 2.9.1; 302 at +60 days and
+  1,353 at +91. 816 lines read as history; 105 of the 806 never warn again
+  and the rest are postponed. The grace postpones, it does not reduce: the
+  imported checklists that fix 1 cannot see are still the largest group.
 - **`view=status` says the version that runs.** `crbro_version` is read once,
   when the server loads, not from disk on every call: a process whose files
   npx replaced reported the new version while it ran the old code. When the
   package on disk says another version, status adds `installed_version` and a
-  `version_note` (restart the client to load it).
+  `version_note` (restart the client to load it). The daemon's build id
+  reads the same package.json through the same lookup.
 
 ## [2.9.0] — 2026-10-04
 
