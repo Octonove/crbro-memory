@@ -22,7 +22,7 @@ export function scoreAnswer(task, answer) {
   if (!text) return 'wrong';
   const has = (src) => new RegExp(src, 'i').test(text);
   if (task.stale && has(task.stale) && !(task.expect && has(task.expect))) {
-    return task.kind === 'stale-unmarked' && HEDGE.test(text) ? 'hedged' : 'stale';
+    return isUnmarkedKind(task.kind) && HEDGE.test(text) ? 'hedged' : 'stale';
   }
   // Both values in one answer ("was 39, now 49") is correct only if the
   // current one is there; hedging with the old one alone is stale, above.
@@ -68,6 +68,17 @@ export function verdict(agg, reps) {
 }
 
 export const UNMARKED = 'stale-unmarked';
+/** Sixth amendment (2026-10-04): the second stale-unmarked case, judged on its own. */
+export const UNMARKED_B = 'stale-unmarked-b';
+
+/**
+ * Every stale-unmarked kind scores `hedged` the same way: the first case, the
+ * second one, and the second one's secondary prompts without the suffix
+ * (stale-unmarked-b-free). The original `stale` tasks never do.
+ */
+export function isUnmarkedKind(kind) {
+  return typeof kind === 'string' && (kind === UNMARKED || kind.startsWith(`${UNMARKED}-`));
+}
 
 /**
  * The five checks pre-registered for stale-unmarked (amendment of 2026-10-04).
@@ -76,13 +87,16 @@ export const UNMARKED = 'stale-unmarked';
  * life — and `original` is this run's verdict() when the full task set ran.
  * A check that needs what was not given has pass: null, and null never
  * allows the claim: a missing comparison is not a passed one.
+ * `kind` picks the case (sixth amendment): the same five checks, with the
+ * same numbers, judge stale-unmarked-b on its own; the rule texts keep the
+ * first case's name because the rules are the same.
  */
-export function verdictUnmarked(agg, reps, { before = null, original = null } = {}) {
+export function verdictUnmarked(agg, reps, { before = null, original = null, kind = UNMARKED } = {}) {
   const pct = (a, b) => (b > 0 ? (100 * a) / b : 0);
   const z = { n: 0, correct: 0, stale: 0, hedged: 0, abstain: 0, wrong: 0 };
-  const cu = (agg.crbro || {})[UNMARKED] || z;
-  const bu = (agg.baseline || {})[UNMARKED] || z;
-  const pre = before ? ((before.crbro || {})[UNMARKED] || z) : null;
+  const cu = (agg.crbro || {})[kind] || z;
+  const bu = (agg.baseline || {})[kind] || z;
+  const pre = before ? ((before.crbro || {})[kind] || z) : null;
   const u1 = pct(cu.correct, cu.n);
   const u2 = pct(cu.stale, cu.n);
   const checks = [
@@ -95,5 +109,5 @@ export function verdictUnmarked(agg, reps, { before = null, original = null } = 
       pass: original ? original.checks.every(c => c.pass) : null },
   ];
   const enough = reps >= 3;
-  return { checks, enough_reps: enough, claim_allowed: enough && checks.every(c => c.pass === true) };
+  return { kind, checks, enough_reps: enough, claim_allowed: enough && checks.every(c => c.pass === true) };
 }

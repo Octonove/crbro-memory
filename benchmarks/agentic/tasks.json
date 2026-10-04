@@ -29,7 +29,17 @@
     { "id": "u1", "kind": "stale-unmarked", "prompt": "¿Qué versión de PostgreSQL usa Pelícano?", "expect": "\\b17\\b", "stale": "\\b14\\b" },
     { "id": "u2", "kind": "stale-unmarked", "prompt": "¿Cuánto cuesta al mes el plan Equipo de Pelícano?", "expect": "\\b35\\b", "stale": "\\b29\\b" },
     { "id": "u3", "kind": "stale-unmarked", "prompt": "¿En qué puerto escucha el panel de administración de Pelícano?", "expect": "\\b9443\\b", "stale": "\\b9090\\b" },
-    { "id": "u4", "kind": "stale-unmarked", "prompt": "¿Quién es la persona responsable del soporte de Pelícano?", "expect": "marcos\\s+elizalde", "stale": "zubiaurre" }
+    { "id": "u4", "kind": "stale-unmarked", "prompt": "¿Quién es la persona responsable del soporte de Pelícano?", "expect": "marcos\\s+elizalde", "stale": "zubiaurre" },
+    { "id": "w1", "kind": "stale-unmarked-b", "prompt": "¿Qué proveedor usa Tramuntana para enviar los SMS de confirmación de reserva?", "expect": "message\\s?bird", "stale": "twilio" },
+    { "id": "w2", "kind": "stale-unmarked-b", "prompt": "¿Cuánto cuesta el curso de iniciación de Tramuntana?", "expect": "\\b265\\b", "stale": "\\b240\\b" },
+    { "id": "w3", "kind": "stale-unmarked-b", "prompt": "¿Quién autoriza en Tramuntana los cambios de reserva fuera de plazo?", "expect": "sarasola", "stale": "iturbe" },
+    { "id": "w4", "kind": "stale-unmarked-b", "prompt": "¿En qué dominio está la API de producción de Tramuntana?", "expect": "reservas\\.tramuntana", "stale": "api\\.tramuntana" },
+    { "id": "w5", "kind": "stale-unmarked-b", "prompt": "¿A qué hora zarpan las salidas de la mañana de Tramuntana?", "expect": "\\b0?9\\s?[:.h]\\s?30\\b", "stale": "\\b10\\s?[:.h]\\s?00\\b|\\b10\\s?h\\b|\\blas 10\\b" },
+    { "id": "w6", "kind": "stale-unmarked-b", "prompt": "¿Hasta cuántas horas antes de la salida se puede cancelar gratis una reserva en Tramuntana?", "expect": "\\b24\\b", "stale": "\\b48\\b" },
+    { "id": "w2f", "kind": "stale-unmarked-b-free", "suffix": false, "prompt": "¿Cuánto cuesta el curso de iniciación de Tramuntana?", "expect": "\\b265\\b", "stale": "\\b240\\b" },
+    { "id": "w3f", "kind": "stale-unmarked-b-free", "suffix": false, "prompt": "¿Quién autoriza en Tramuntana los cambios de reserva fuera de plazo?", "expect": "sarasola", "stale": "iturbe" },
+    { "id": "k1", "kind": "old-true-b", "prompt": "¿Con qué pasarela de pago se cobran las reservas de Tramuntana?", "expect": "redsys" },
+    { "id": "k2", "kind": "old-true-b", "prompt": "¿Cuánto cuesta el bautismo de mar de Tramuntana?", "expect": "\\b55\\b" }
   ],
   "unmarked": {
     "frozen": "2026-10-04",
@@ -51,6 +61,32 @@
     "read_canary": {
       "file": "canario.txt",
       "prompt": "Lee el fichero canario.txt del directorio de trabajo y responde solo con su contenido, sin nada más."
+    }
+  },
+  "unmarked_b": {
+    "frozen": "2026-10-04",
+    "kinds": ["stale-unmarked-b", "stale-unmarked-b-free", "old-true-b"],
+    "why": "Sixth amendment: a second stale-unmarked case on a new fictitious project (Tramuntana, a sailing school's booking app), written by someone who has not read the shelf-life detector. Old facts are phrased as an agent would store them: some name their source, some do not; some carry the shelf_life an agent following crbro_learn's description would give (two volatile, one normal), three carry none. Ages vary between 130 and 300 days. w1-w6 are judged with U1-U5; w2f/w3f repeat w2/w3 without the suffix (secondary); k1/k2 are old facts that still hold (secondary). Same read canary as the first case.",
+    "seed": [
+      { "topic": "Tramuntana", "domain": "apps", "type": "fact", "text": "Los SMS de confirmación de reserva de Tramuntana salen por Twilio; lo vi en config/notificaciones.yml.", "age_days": 230 },
+      { "topic": "Tramuntana", "domain": "apps", "type": "fact", "text": "El curso de iniciación de Tramuntana (5 días) cuesta 240 euros.", "age_days": 160, "shelf_life": "volatile" },
+      { "topic": "Tramuntana", "domain": "apps", "type": "fact", "text": "Si alguien quiere cambiar una reserva fuera de plazo, quien lo autoriza en Tramuntana es Olatz Iturbe, de recepción.", "age_days": 270 },
+      { "topic": "Tramuntana", "domain": "apps", "type": "fact", "text": "La API de producción de Tramuntana está en api.tramuntana.cat (lo dijo Antonio en la reunión de arranque).", "age_days": 300, "shelf_life": "volatile" },
+      { "topic": "Tramuntana", "domain": "apps", "type": "fact", "text": "Las salidas de la mañana de Tramuntana zarpan del pantalán a las 10:00.", "age_days": 130 },
+      { "topic": "Tramuntana", "domain": "apps", "type": "fact", "text": "En Tramuntana una reserva se puede cancelar gratis hasta 48 horas antes de la salida, según las condiciones publicadas en la web.", "age_days": 200, "shelf_life": "normal" },
+      { "topic": "Tramuntana", "domain": "apps", "type": "fact", "text": "Las reservas de Tramuntana se cobran con Redsys, el TPV virtual del banco de la escuela.", "age_days": 250 },
+      { "topic": "Tramuntana", "domain": "apps", "type": "fact", "text": "El bautismo de mar de Tramuntana cuesta 55 euros por persona.", "age_days": 180, "shelf_life": "volatile" },
+      { "topic": "Tramuntana", "domain": "apps", "type": "fact", "text": "Tramuntana es la app de reservas de la escuela de vela Tramuntana, en Cadaqués: backend en Django y app móvil en Flutter.", "age_days": 0 }
+    ],
+    "world": {
+      "README.md": "# Tramuntana\n\nApp de reservas de la escuela de vela Tramuntana (Cadaqués).\n\n- `backend/`: Django. `app/`: Flutter.\n- Configuración: `config/` y `.env.production`.\n- Tarifas: `tarifas.csv`. Horarios: `horarios.json`.\n- Condiciones de reserva: `CONDICIONES.md`. Recepción: `docs/recepcion.md`.\n",
+      "config/notificaciones.yml": "sms:\n  proveedor: messagebird\n  remitente: TRAMUNTANA\nemail:\n  proveedor: postmark\n  desde: reservas@tramuntana.cat\n",
+      "config/pagos.yml": "pasarela: redsys\nmoneda: EUR\nmodo: produccion\n",
+      ".env.production": "API_BASE_URL=https://reservas.tramuntana.cat/api\nDJANGO_SETTINGS_MODULE=tramuntana.settings.prod\n",
+      "tarifas.csv": "curso,dias,precio_eur\niniciacion,5,265\nperfeccionamiento,5,310\nbautismo,1,55\n",
+      "horarios.json": "{\n  \"temporada\": \"2026\",\n  \"salidas\": {\n    \"manana\": \"09:30\",\n    \"tarde\": \"16:00\"\n  }\n}\n",
+      "CONDICIONES.md": "# Condiciones de reserva\n\n- Cancelación gratuita hasta 24 horas antes de la salida.\n- Después se cobra el 50 % del importe.\n- Si la salida se suspende por viento, se devuelve el importe completo.\n",
+      "docs/recepcion.md": "# Recepción\n\nLos cambios de reserva fuera de plazo los autoriza Jon Ander Sarasola.\n"
     }
   },
   "canary": {

@@ -12,6 +12,11 @@
 //   --label before|after           appended to the results file name
 //   --compare <results.json>       a "before" run of the same model and n, for check U4
 //
+// Sixth amendment (2026-10-04): a second case, stale-unmarked-b (project
+// Tramuntana), in tasks.json `unmarked_b`, with its own brain copy and its own
+// world. --only takes its kinds like any other; a task with "suffix": false is
+// asked without the answer-format suffix (secondary analysis).
+//
 // Never touches credentials: if `claude` is not logged in it says so and
 // stops. Never touches the user's brain: every cell gets its own copy of a
 // brain seeded from tasks.json in a temporary folder.
@@ -22,7 +27,7 @@ import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawn, spawnSync } from 'node:child_process';
-import { scoreAnswer, aggregate, verdict, verdictUnmarked, UNMARKED } from './score.mjs';
+import { scoreAnswer, aggregate, verdict, verdictUnmarked, UNMARKED, UNMARKED_B } from './score.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = join(HERE, '..', '..');
@@ -37,7 +42,17 @@ const ONLY = arg('only', '') ? new Set(arg('only', '').split(',').map(s => s.tri
 const COMPARE = arg('compare', '');
 const spec = JSON.parse(readFileSync(join(HERE, 'tasks.json'), 'utf8'));
 const TASKS = spec.tasks.filter(t => !ONLY || ONLY.has(t.kind));
-const WANTS_UNMARKED = TASKS.some(t => t.kind === UNMARKED);
+// The world-and-old-memory cases. Each has its own seed, its own world and its
+// own brain copy; the first case (Pelícano) is the frozen `unmarked` block,
+// unchanged, and owns the kind stale-unmarked.
+const BLOCKS = [
+  { key: 'unmarked', kinds: [UNMARKED], ...spec.unmarked },
+  ...(spec.unmarked_b ? [{ key: 'unmarked_b', ...spec.unmarked_b }] : []),
+];
+const blockOf = (kind) => BLOCKS.find(b => b.kinds.includes(kind)) || null;
+const BLOCKS_RUN = BLOCKS.filter(b => TASKS.some(t => b.kinds.includes(t.kind)));
+const WANTS_UNMARKED = BLOCKS_RUN.length > 0;
+const promptOf = (task) => (task.suffix === false ? task.prompt : `${task.prompt} ${spec.suffix}`);
 
 if (!existsSync(join(DIST, 'index.js'))) { console.error(`${DIST} has no index.js: npm run build first.`); process.exit(1); }
 if (TASKS.length === 0) { console.error(`--only ${[...ONLY].join(',')} matches no task kind.`); process.exit(1); }
@@ -52,12 +67,12 @@ const T0 = Date.now();
 
 const work = mkdtempSync(join(tmpdir(), 'crbro-agentic-'));
 const seeded = join(work, 'seed', 'brain');
-// The stale-unmarked brain is a second copy: the original seed plus the aged
-// Pelícano facts. The twelve original tasks keep running on a brain that is
-// byte-for-byte the one they were frozen with.
-const seededUnmarked = join(work, 'seed-unmarked', 'brain');
+// Each stale-unmarked brain is another copy: the original seed plus that
+// case's aged facts. The twelve original tasks keep running on a brain that
+// is byte-for-byte the one they were frozen with.
+const seededOf = (block) => join(work, `seed-${block.key}`, 'brain');
 
-async function seedBrain(dir, { unmarked = false } = {}) {
+async function seedBrain(dir, { block = null } = {}) {
   mkdirSync(dir, { recursive: true });
   const brain = new Brain(dir);
   await brain.initialize();
@@ -70,9 +85,9 @@ async function seedBrain(dir, { unmarked = false } = {}) {
     // A retired value is the trap: the old telling stays in the file, superseded.
     if (s.retired_by) await cortex.learn(s.topic, 'fact', s.retired_by, { domain: s.domain, supersedes: [s.text] });
   }
-  if (unmarked) {
+  if (block) {
     const neurons = new Set();
-    for (const s of spec.unmarked.seed) {
+    for (const s of block.seed) {
       const r = await cortex.learn(s.topic, s.type, s.text, { domain: s.domain });
       neurons.add(r.neuron.id);
     }
@@ -83,7 +98,7 @@ async function seedBrain(dir, { unmarked = false } = {}) {
     for (const id of neurons) {
       const file = brain.paths.neuron(id);
       const n = JSON.parse(readFileSync(file, 'utf8'));
-      for (const s of spec.unmarked.seed.filter(x => x.age_days > 0 || x.shelf_life)) {
+      for (const s of block.seed.filter(x => x.age_days > 0 || x.shelf_life)) {
         const f = n.facts.find(x => x.text === s.text);
         if (!f) continue;
         if (s.age_days > 0) {
@@ -109,16 +124,16 @@ async function seedBrain(dir, { unmarked = false } = {}) {
     if (hits.some(h => h.matching_content === s.text)) { console.error(`seed error: retired fact still surfaces in recall: ${s.text}`); process.exit(1); }
   }
 }
-if (WANTS_UNMARKED) {
-  const engine = await seedBrain(seededUnmarked, { unmarked: true });
+for (const block of BLOCKS_RUN) {
+  const engine = await seedBrain(seededOf(block), { block });
   // The opposite trap: the old value must be LIVE, findable and old. The check
   // reads the whole answer as text, so it holds whatever shape a later build
   // gives recall (a possibly_stale block included).
-  for (const s of spec.unmarked.seed.filter(x => x.age_days > 0)) {
+  for (const s of block.seed.filter(x => x.age_days > 0)) {
     const said = JSON.stringify(await engine.search(s.text, { limit: 5 }));
     const day = new Date(T0 - s.age_days * DAY).toISOString().slice(0, 10);
     if (!said.includes(JSON.stringify(s.text).slice(1, -1)) || !said.includes(day)) {
-      console.error(`seed error: aged fact not served by recall with its old date (${day}): ${s.text}`); process.exit(1);
+      console.error(`seed error (${block.key}): aged fact not served by recall with its old date (${day}): ${s.text}`); process.exit(1);
     }
   }
 }
@@ -129,15 +144,20 @@ const READ_TOOLS = 'mcp__crbro__crbro_boot,mcp__crbro__crbro_recall,mcp__crbro__
 // it. Nothing that writes, nothing that runs a command.
 const FILE_TOOLS = 'Read,Glob,Grep';
 
-function cellDir(arm, id, { unmarked = false } = {}) {
+function cellDir(arm, id, { block = null } = {}) {
   const dir = join(work, 'cells', `${arm}-${id}`);
   mkdirSync(join(dir, 'cwd'), { recursive: true });
   let servers = {};
   if (arm === 'crbro') {
-    cpSync(unmarked ? seededUnmarked : seeded, join(dir, 'brain'), { recursive: true });
+    cpSync(block ? seededOf(block) : seeded, join(dir, 'brain'), { recursive: true });
     servers = { crbro: { command: process.execPath, args: [join(DIST, 'index.js')], env: { CRBRO_PATH: join(dir, 'brain'), CRBRO_SEMANTIC: '0', CRBRO_AUTOBACKUP: '0' } } };
   }
-  if (unmarked) for (const [name, body] of Object.entries(spec.unmarked.world)) writeFileSync(join(dir, 'cwd', name), body);
+  // A world file may sit in a subfolder (config/…, docs/…): still inside cwd.
+  if (block) for (const [name, body] of Object.entries(block.world)) {
+    const file = join(dir, 'cwd', name);
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, body);
+  }
   writeFileSync(join(dir, 'mcp.json'), JSON.stringify({ mcpServers: servers }));
   return dir;
 }
@@ -241,12 +261,16 @@ function buildInfo() {
 if (DRY) {
   const dir = cellDir('crbro', 'dry');
   console.log(`seeded brain ok · ${spec.seed.length} entries · ${spec.seed.filter(s => s.retired_by).length} retired values armed and absent from recall`);
-  if (WANTS_UNMARKED) {
-    const u = spec.unmarked.seed;
-    console.log(`stale-unmarked brain ok · +${u.length} entries · ${u.filter(s => s.age_days > 0).length} aged facts live in recall with their old date · world: ${Object.keys(spec.unmarked.world).join(', ')}`);
-    const ud = cellDir('crbro', 'dry-u', { unmarked: true });
-    console.log(`would run (stale-unmarked): claude ${claudeArgs(ud, 'crbro', { tools: true, files: true }).map(a => (a.includes(' ') || a === '' ? JSON.stringify(a) : a)).join(' ')}  < prompt`);
+  for (const block of BLOCKS_RUN) {
+    const u = block.seed;
+    console.log(`${block.key} brain ok · kinds ${block.kinds.join(', ')} · +${u.length} entries · ${u.filter(s => s.age_days > 0).length} aged facts live in recall with their old date · world: ${Object.keys(block.world).join(', ')}`);
+    const ud = cellDir('crbro', `dry-${block.key}`, { block });
+    for (const name of Object.keys(block.world)) if (!existsSync(join(ud, 'cwd', name))) { console.error(`world file not written: ${name}`); process.exit(1); }
+    console.log(`would run (${block.key}): claude ${claudeArgs(ud, 'crbro', { tools: true, files: true }).map(a => (a.includes(' ') || a === '' ? JSON.stringify(a) : a)).join(' ')}  < prompt`);
   }
+  const free = TASKS.filter(t => t.suffix === false);
+  if (free.length) console.log(`without the suffix: ${free.map(t => t.id).join(', ')} · e.g. "${promptOf(free[0])}"`);
+  console.log(`task ids: ${TASKS.map(t => t.id).join(', ')}`);
   console.log(`tasks: ${TASKS.length} · arms: ${ARMS.join(', ')} · reps: ${REPS} → ${TASKS.length * ARMS.length * REPS} sessions + ${ARMS.length} canaries${WANTS_UNMARKED ? ` + ${ARMS.length} read canaries` : ''}`);
   console.log(`would run: claude ${claudeArgs(dir, 'crbro', { tools: true }).map(a => (a.includes(' ') || a === '' ? JSON.stringify(a) : a)).join(' ')}  < prompt`);
   console.log(`build under test: ${JSON.stringify(buildInfo())}`);
@@ -305,14 +329,15 @@ let next = 0;
 await Promise.all(Array.from({ length: Math.max(1, PARALLEL) }, async () => {
   while (next < jobs.length) {
     const { rep, arm, task } = jobs[next++];
-    const unmarked = task.kind === UNMARKED;
+    const block = blockOf(task.kind);
+    const unmarked = !!block;
     const opts = { tools: true, files: unmarked };
-    let r = await ask(cellDir(arm, `${task.id}-${rep}`, { unmarked }), arm, `${task.prompt} ${spec.suffix}`, opts);
+    let r = await ask(cellDir(arm, `${task.id}-${rep}`, { block }), arm, promptOf(task), opts);
     // An API error is not an answer: one retry on a fresh cell (amendment 3,
     // 2026-10-03). A second error still counts as wrong, and both are kept.
     let retried = null;
     let leaks = r.leaks || [];
-    if (r.error) { retried = r.error; r = await ask(cellDir(arm, `${task.id}-${rep}-retry`, { unmarked }), arm, `${task.prompt} ${spec.suffix}`, opts); leaks = [...leaks, ...(r.leaks || [])]; }
+    if (r.error) { retried = r.error; r = await ask(cellDir(arm, `${task.id}-${rep}-retry`, { block }), arm, promptOf(task), opts); leaks = [...leaks, ...(r.leaks || [])]; }
     const outcome = r.error ? 'wrong' : scoreAnswer(task, r.answer);
     cells.push({ rep, arm, id: task.id, kind: task.kind, outcome, answer: r.answer.slice(0, 200), error: r.error, retried_after: retried, cost_usd: r.cost_usd, turns: r.turns,
       ...(unmarked ? { tool_calls: r.tool_calls, leaks } : {}) });
@@ -335,10 +360,13 @@ const ORIGINAL = ['memory', 'stale', 'control-prompt', 'control-absent'];
 // original kinds; a partial run says nothing about them.
 const v = ORIGINAL.every(k => kindsRun.has(k)) ? verdict(agg, REPS) : null;
 const vu = kindsRun.has(UNMARKED) ? verdictUnmarked(agg, REPS, { before: compareAgg, original: v }) : null;
+// Sixth amendment: the same five checks judge the second case on its own.
+// stale-unmarked-b-free and old-true-b are secondary: reported, never judged.
+const vub = kindsRun.has(UNMARKED_B) ? verdictUnmarked(agg, REPS, { before: compareAgg, original: v, kind: UNMARKED_B }) : null;
 const version = (spawnSync('claude', ['--version'], { shell: process.platform === 'win32', encoding: 'utf8' }).stdout || '').trim();
 const result = { date: new Date().toISOString().slice(0, 10), model: MODEL, claude_code: version, reps: REPS, label: LABEL || undefined,
   only: ONLY ? [...ONLY] : undefined, crbro: buildInfo(), compared_with: COMPARE || undefined,
-  aggregate: agg, verdict: v, verdict_unmarked: vu, cells };
+  aggregate: agg, verdict: v, verdict_unmarked: vu, verdict_unmarked_b: vub || undefined, cells };
 mkdirSync(join(HERE, '..', 'results'), { recursive: true });
 const file = join(HERE, '..', 'results', `agentic-${result.date}-${MODEL}${LABEL ? `-${LABEL}` : ''}.json`);
 writeFileSync(file, JSON.stringify(result, null, 2) + '\n');
@@ -351,9 +379,9 @@ if (v) {
   for (const c of v.checks) console.log(`  [${c.pass ? 'pass' : 'FAIL'}] ${c.rule}: ${JSON.stringify(c.value)}`);
   console.log(`  claim allowed: ${v.claim_allowed}${v.enough_reps ? '' : ' (needs reps >= 3)'}`);
 }
-if (vu) {
-  for (const c of vu.checks) console.log(`  [${c.pass === null ? 'n/a ' : c.pass ? 'pass' : 'FAIL'}] ${c.id} ${c.rule}: ${JSON.stringify(c.value)}`);
-  console.log(`  stale-unmarked claim allowed: ${vu.claim_allowed}${vu.enough_reps ? '' : ' (needs reps >= 3)'}`);
+for (const x of [vu, vub].filter(Boolean)) {
+  for (const c of x.checks) console.log(`  [${c.pass === null ? 'n/a ' : c.pass ? 'pass' : 'FAIL'}] ${x.kind} ${c.id} ${c.rule}: ${JSON.stringify(c.value)}`);
+  console.log(`  ${x.kind} claim allowed: ${x.claim_allowed}${x.enough_reps ? '' : ' (needs reps >= 3)'}`);
 }
 console.log(`  ${file}`);
 cleanup();
