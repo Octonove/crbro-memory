@@ -212,20 +212,42 @@ const NAME_THEN_ROLE = new RegExp(`${NAME}\\s+(?:is|es)\\s+(?:(?:now|ahora)\\s+)
 //        programado, pendiente, caduca, expires, vence, renews, next,
 //        próximo, "para el <date>", "by <date>", "antes del <date>" ("tarea
 //        programada" and "scheduled task" name a kind of job and do not count);
-//      - a word of the present: actualmente, currently, ahora, now, todavía,
-//        still, vigente, último, last, latest;
+//      - a word of the present: actualmente, currently, current, actual,
+//        ahora, now, todavía, still, vigente, último, last, latest;
 //      - a verb of state BEFORE the first finished-action word: "la API
 //        corre en el puerto 8443, desplegada el 2026-06-18" is a port that
-//        also says when it went up, so it stays volatile.
+//        also says when it went up, so it stays volatile;
+//   4. and, when the head carries a changeable value (a volatile rule fires
+//      on it with its dates blanked), none of these says the value holds:
+//      - a verb of state anywhere in it, or pasa a, queda, sigue, devuelve,
+//        responde, abierto, becomes, returns ("Fix (4-oct-2026): el webhook
+//        apunta a https://…", "La release 2.3 usa el puerto 8443 (jun 2026)");
+//      - a check — verificado, comprobado, confirmado, probado, medido,
+//        detectado, verified, checked… — with the value before it ("Puerto
+//        9443 verificado el 2026-09-18", "Plan: $499/año (confirmado …)"): a
+//        dated check of a value is that value, with the day it was seen;
+//      - a move to a place: migrado, desplegado, instalado, migrated,
+//        deployed… followed within four words by a/al/en/to/into/on/at and a
+//        port, host, URL or path ("se migró el panel al puerto 9443",
+//        "Deployed to https://app.example.com on 2026-06-18");
+//      - a schedule: a cycle word with a time of day ("ejecución diaria 03:00
+//        en /var/backups") or cada/every with a unit ("cada lunes");
+//      - a word that also describes a state — cerrado, aprobado, completo,
+//        medida, closed, approved, complete — when it is the only
+//        finished-action word ("Presupuesto aprobado (…): 1.200 € al mes").
+//   Quoted titles and asides in parentheses are not read for the verbs.
 // Words that introduce a new current value without telling an event —
 // actualizado, cambiado, configurado, updated, changed, set, renovado — are
-// deliberately not finished-action words. A line with no date is never
-// history, however past its verbs are: it cannot show its age.
+// deliberately not finished-action words. The adjective "completa" counts
+// fully only after a kind of work ("FASE 4 completa"). A line with no date
+// is never history, however past its verbs are: it cannot show its age.
 //
 // Limits, said once: the head decides, so "Migrado a Hetzner (3-oct-2026).
 // El host es 10.0.0.5." is history whole; the line's own date is what tells
 // the reader how old that host is. Only Spanish and English. A record without
-// a date ("Publicado el artículo en https://…") is not history.
+// a date ("Publicado el artículo en https://…") is not history. A version is
+// not a place: "Instalado Node 20.11.0 en el servidor (3-oct-2026)" and
+// "Migrado a PostgreSQL 16 el 3-oct-2026" are records of an upgrade.
 
 /** Month names and the abbreviations people write, es/en, longest first. */
 const MONTH = '(?:enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|setiembre|octubre|noviembre|diciembre|'
@@ -233,25 +255,36 @@ const MONTH = '(?:enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|s
   + 'ene|feb|mar|abr|may|jun|jul|ago|sept|sep|oct|nov|dic|jan|apr|aug|dec)\\.?(?![a-z])';
 /** A calendar date as people write it, on folded text. Year optional only after a day and a month name. */
 const DATE = '(?:'
-  + '(?<![\\d./-])20\\d{2}[-/]\\d{1,2}[-/]\\d{1,2}(?![\\d])'                     // 2026-06-18
-  + '|(?<![\\d./-])\\d{1,2}/\\d{1,2}/(?:20)?\\d{2}(?![\\d./])'                    // 18/06/2026
-  + '|(?<![\\d./-])\\d{1,2}-\\d{1,2}-(?:20)?\\d{2}(?![\\d./-])'                   // 18-06-2026
-  + '|(?<![\\d./-])\\d{1,2}\\.\\d{1,2}\\.20\\d{2}(?![\\d.])'                       // 18.06.2026 (not a version)
-  + `|(?<!\\d)\\d{1,2}º?(?:\\s+de\\s+|[\\s-]+)${MONTH}(?:(?:\\s+de\\s+|,?\\s+|-)20\\d{2}(?!\\d))?`  // 18-jun(-2026), 18 de junio de 2026
+  // A numeric date is not glued to a word, a version or a path: in "/api/v1/12/24" there is no day.
+  + '(?<![\\w./-])20\\d{2}[-/]\\d{1,2}[-/]\\d{1,2}(?![\\d])'                     // 2026-06-18
+  + '|(?<![\\w./-])\\d{1,2}/\\d{1,2}/(?:20)?\\d{2}(?![\\d./])'                    // 18/06/2026
+  + '|(?<![\\w./-])\\d{1,2}-\\d{1,2}-(?:20)?\\d{2}(?![\\d./-])'                   // 18-06-2026
+  + '|(?<![\\w./-])\\d{1,2}\\.\\d{1,2}\\.20\\d{2}(?![\\d.])'                       // 18.06.2026 (not a version)
+  // Day + month. A bare "may" followed by another word is the English modal ("Node 18 may be removed"), not May.
+  + `|(?<!\\d)\\d{1,2}º?(?:\\s+de\\s+|[\\s-]+)(?!may\\s+(?!de\\s+20)[a-z])${MONTH}(?:(?:\\s+de\\s+|,?\\s+|-)20\\d{2}(?!\\d))?`  // 18-jun(-2026), 18 de junio de 2026
   + `|(?<![a-z])${MONTH}(?:\\s+de\\s+|\\s+|-)20\\d{2}(?!\\d)`                     // jun 2026, junio de 2026
   + `|(?<![a-z])${MONTH}\\s+\\d{1,2}(?:st|nd|rd|th)?,?\\s+20\\d{2}(?!\\d)`         // June 18, 2026
   + ')';
 const DATE_RE = new RegExp(DATE);
+const DATE_ALL = new RegExp(DATE, 'g');
 
 /** Not part of a path, a branch name or an identifier: "fix-newsletter/", "hotfix/login" are not events. */
 const W0 = '(?<![a-z0-9_/.\\-])';
 const W1 = '(?![a-z0-9_/\\-])';
+/** Kinds of work that can be "complete": "FASE 4 COMPLETA", "Auditoría SEO completa". Not a list or a configuration. */
+const WORK = '(?:fase|fases|etapa|auditoria|migracion|tarea|tareas|revision|repaso|implementacion|instalacion|ejecucion'
+  + '|integracion|prueba|pruebas|limpieza|sesion|sprint|refactor|refactorizacion|traduccion|importacion|indexacion|copia|backup)';
 const DONE = new RegExp(W0 + '(?:'
-  // Spanish participles, any gender and number; "complet-" also covers the adjective ("Auditoría completa").
-  + '(?:completad|complet|implementad|resuelt|desplegad|publicad|verificad|comprobad|confirmad|corregid|migrad|cread'
-  + '|anadid|rechazad|denegad|arreglad|terminad|finalizad|lanzad|instalad|eliminad|borrad|cerrad|aprobad|enviad|entregad'
+  // Spanish participles, any gender and number. Cerrado and aprobado are in STATIVE below: they also
+  // describe a state ("puerto 22 cerrado", "presupuesto aprobado: 1.200 €/mes").
+  + '(?:completad|implementad|resuelt|desplegad|publicad|verificad|comprobad|confirmad|corregid|migrad|cread'
+  + '|anadid|rechazad|denegad|arreglad|terminad|finalizad|lanzad|instalad|eliminad|borrad|enviad|entregad'
   + '|auditad|integrad|solucionad|probad|testead|validad|detectad|reparad|restaurad|revertid|fusionad|renombrad|retirad'
-  + '|descartad|construid|realizad|ejecutad|aplicad|cancelad|abortad|medid|reescrit|rehech)(?:o|a|os|as)'
+  + '|descartad|construid|realizad|ejecutad|aplicad|cancelad|abortad|reescrit|rehech)(?:o|a|os|as)'
+  // The adjective "completa" only after a kind of work: "Lista completa de precios" is not an event.
+  + `|(?<=(?:^|[^a-z])${WORK}(?:\\s+\\S+){0,3}\\s+)complet(?:o|a|os|as)`
+  // "medido"; "medida" only when it is not the noun ("a medida", "medida de seguridad").
+  + '|medid(?:o|os)|(?<!(?:^|[^a-z])(?:a|la|las|una|unas|de|del|sus?) )medidas?(?! de(?![a-z]))'
   // Spanish preterites that are not also a common noun, adjective or present tense.
   + '|desplego|desplegue|migro|migre|corrigio|corregi|resolvio|resolvi|rechace|arregle|verifique|verifico|finalizo'
   + '|finalice|elimino|elimine|aprobo|publique|implemente|implemento|hizo|hice|hicimos'
@@ -262,10 +295,18 @@ const DONE = new RegExp(W0 + '(?:'
   + '|fix|hotfix|bugfix|rechazo|incidente|incidencia|incident|outage|caida|post-?mortem|release|lanzamiento|ejecucion'
   // English past forms.
   + '|fixed|deployed|released|completed|implemented|resolved|published|verified|confirmed|migrated|created|added'
-  + '|rejected|shipped|merged|launched|installed|removed|deleted|done|finished|approved|sent|closed|audited|tested'
+  + '|rejected|shipped|merged|launched|installed|removed|deleted|done|finished|sent|audited|tested'
   + '|validated|detected|repaired|restored|reverted|solved|delivered|submitted|renamed|built|rolled back|refactored|applied'
   + '|checked|measured|executed|uploaded|posted|cancell?ed|aborted'
   + ')' + W1);
+/**
+ * Words that tell an event or describe a state: "FASE 0 APROBADA el 2-sep",
+ * "Tanda CERRADA el 21-sep", "DIAGNÓSTICO COMPLETO (21-08-2026)" are records,
+ * "Puerto 22 cerrado (…): SSH en el 65002", "Presupuesto aprobado (…): 1.200 €
+ * al mes", "Lista completa de precios (…)" are states. They count as a
+ * finished action only in a head that carries no changeable value.
+ */
+const STATIVE = new RegExp(W0 + '(?:(?:cerrad|aprobad|complet)(?:o|a|os|as)|(?<!(?:^|[^a-z])(?:a|la|las|una|unas|de|del|sus?) )medidas?|closed|approved|complete)' + W1);
 /** A date that opens a period, or a moment that does: the line states what holds from then on. */
 const OPENS_PERIOD = new RegExp(
   `(?<![a-z])(?:desde|since|a partir del?|as of|as from|from|effective(?: from)?|con efecto(?: desde)?|a fecha de|hasta|until|till|a|al)\\s+`
@@ -279,14 +320,80 @@ const FUTURE = new RegExp(
   + '|renuevan?|renews?|renewal|next|proxim[oa]s?|siguientes?)(?![a-z])'
   + `|(?<![a-z])(?:para el|para|by|antes del?|before|no later than)\\s+(?:(?:el|la|the)\\s+)?${DATE}`);
 /** The present: the line says what holds now, whatever else it records. */
-const PRESENT = /(?<![a-z])(?:actualmente|currently|ahora|now|todavia|aun|still|hoy en dia|a dia de hoy|vigente|en vigor|in force|ultim[oa]s?|last|latest)(?![a-z])/;
-/** Verbs that state how something is. Before the first finished-action word they make the line a statement of state. */
-const STATE_VERB = /(?<![a-z])(?:es|son|esta|estan|is|are|corre|corren|runs?|usa|usan|uses?|tiene|tienen|cuesta|cuestan|costs?|vale|valen|apunta|apuntan|points?|escucha|escuchan|listens?|requiere|requieren|requires?|sirve|sirven|serves?|vive|viven|lives?|funciona|funcionan|works?|contiene|contienen|contains?|ocupa|ocupan)(?![a-z])/;
+const PRESENT = /(?<![a-z])(?:actualmente|currently|current|actual|actuales|ahora|now|todavia|aun|still|hoy en dia|a dia de hoy|vigente|en vigor|in force|ultim[oa]s?|last|latest)(?![a-z])/;
+/**
+ * Verbs that state how something is. Before the first finished-action word
+ * they make the line a statement of state. Not inside a domain or a path:
+ * the "es" of "garza.es" is not a verb.
+ */
+const STATE_WORDS = 'es|son|is|are|corre|corren|runs?|usa|usan|uses?|tiene|tienen|cuesta|cuestan|costs?|vale|valen|apunta|apuntan'
+  + '|points?|escucha|escuchan|listens?|requiere|requieren|requires?|sirve|sirven|serves?|vive|viven|lives?|funciona|funcionan'
+  + '|works?|contiene|contienen|contains?|ocupa|ocupan';
+const STATE_VERB = new RegExp(`(?<![a-z0-9_./-])(?:${STATE_WORDS}|esta|estan)(?![a-z])`);
+/**
+ * The same verbs and a few more that say what holds (pasa a, queda, sigue,
+ * devuelve, responde, abierto, becomes, returns…), looked for anywhere in a
+ * head that carries a changeable value: "Desplegado el 18-jun-2026: la API
+ * corre en el puerto 8443" is a port, whatever came first. "Esta" counts only
+ * as the verb ("está en", "está caído"), not as "this" ("esta web").
+ */
+const STATE_AFTER = new RegExp(
+  '(?<![a-z0-9_./-])(?:'
+  + STATE_WORDS
+  + '|estan?(?= (?:en|a|al|ahora|caid|activ|disponible|abiert|operativ|online|offline|rot|vaci|llen|list|apuntando|corriendo|usando|sirviendo))'
+  + '|pasan? a|quedan?|siguen?|devuelven?|returns?|responden?|responds?|becomes?|abiert[oa]s?|open'
+  + ')(?![a-z])');
+/** A check of something: dated, it tells what held that day, and what held is the value. */
+const CHECK = /^(?:verificad|comprobad|confirmad|probad|testead|validad|detectad|medid|verifique|verifico|se verifico|se comprobo|se midio|verified|confirmed|checked|tested|validated|measured|detected)/;
+/** A move to a place: "migrado al puerto 9443", "deployed to https://…" says where the thing lives now. */
+const MOVE = /^(?:migrad|desplegad|instalad|trasladad|movid|migro|migre|desplego|desplegue|se migro|se desplego|se instalo|migrated|deployed|installed|moved)/;
+/** What follows a move, up to four words later, when it names the destination. */
+const TO_PLACE = /^[^\s]*(?:\s+[^\s]+){0,4}?\s+(?:a|al|en|hacia|to|into|on|at)\s+(.*)$/;
+/**
+ * Something done on a cycle is a schedule, not an event: "ejecución diaria
+ * 03:00 en /var/backups". A cycle word alone is not enough — "Ejecución
+ * diaria del 31-ago-2026: publicados…" is one run of a daily job, a record —
+ * so it takes a time of day right after it, or cada/every with a unit.
+ */
+const RECURRING = new RegExp('(?<![a-z])(?:'
+  + '(?:diari[oa]s?|diariamente|semanal(?:es|mente)?|mensual(?:es|mente)?|daily|nightly|weekly|monthly|hourly)'
+  + '(?:\\s+(?:a las|at))?\\s+\\d{1,2}[:h]\\d{2}'
+  + '|(?:cada|every)\\s+(?:\\d+\\s+)?(?:dia|dias|hora|horas|semana|semanas|mes|meses|minutos?|lunes|martes|miercoles|jueves|viernes|sabado|domingo'
+  + '|day|days|hour|hours|week|weeks|month|months|minutes?|monday|tuesday|wednesday|thursday|friday|saturday|sunday|night|noche)'
+  + ')(?![a-z0-9])');
+
+/** Month abbreviations a period may follow without ending the sentence: "jun. 2026", "Sept. 18". */
+const MONTH_ABBR_DOT = /(?<![a-z])(?:ene|feb|mar|abr|may|jun|jul|ago|sept|sep|oct|nov|dic|jan|apr|aug|dec)$/;
 
 /** The head of a line: up to the first sentence end or line break. */
 function headOf(folded: string): string {
-  const m = /[.!?](?=\s|$)|\n/.exec(folded);
-  return m ? folded.slice(0, m.index) : folded;
+  const re = /[.!?](?=\s|$)|\n/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(folded))) {
+    if (m[0] === '.' && MONTH_ABBR_DOT.test(folded.slice(0, m.index))) continue;
+    return folded.slice(0, m.index);
+  }
+  return folded;
+}
+
+/**
+ * Which volatile rule fires on a piece of a line, with its dates blanked out
+ * (a date is not a value). `raw` and `folded` are the same piece; folding is
+ * length-preserving for Latin text, so a date found in one is blanked in both.
+ */
+function valueIn(raw: string, folded: string): ShelfReason | undefined {
+  let r0 = raw, f0 = folded;
+  if (r0.length === f0.length) {
+    for (const m of folded.matchAll(DATE_ALL)) {
+      const a = m.index ?? 0, b = a + m[0].length, gap = ' '.repeat(b - a);
+      r0 = r0.slice(0, a) + gap + r0.slice(b);
+      f0 = f0.slice(0, a) + gap + f0.slice(b);
+    }
+  } else {
+    r0 = f0 = folded.replace(DATE_ALL, ' ');
+  }
+  for (const r of RULES) if (r.test(r0, f0)) return r.reason;
+  return undefined;
 }
 
 /**
@@ -294,15 +401,59 @@ function headOf(folded: string): string {
  * rule above). Exported for the tests and the design doc's examples.
  */
 export function isDatedRecord(text: string): boolean {
+  return recordVerdict(text).record;
+}
+
+/** Quoted titles say nothing about state: «… que siguen trabajando …» is a headline. Blanked, length kept. */
+const QUOTED = /«[^»\n]*»|"[^"\n]*"|“[^”\n]*”/g;
+/** Nor does an aside in parentheses: "publicado en npm (no es repo git)" is a record with a remark. */
+const ASIDE = /\([^()\n]*\)/g;
+const blankAsides = (s: string) => s.replace(QUOTED, m => ' '.repeat(m.length)).replace(ASIDE, m => ' '.repeat(m.length));
+
+/**
+ * The same decision with the rule that made it, for the tests and for
+ * diagnosing a real brain: 'record', or the first rule that said no.
+ */
+export function recordVerdict(text: string): { record: boolean; why: string } {
+  const no = (why: string) => ({ record: false, why });
   const raw = String(text || '');
-  if (!raw.trim()) return false;
-  const head = headOf(fold(raw));
-  if (!DATE_RE.test(head)) return false;
-  const done = DONE.exec(head);
-  if (!done) return false;
-  if (OPENS_PERIOD.test(head) || FUTURE.test(head) || PRESENT.test(head)) return false;
-  if (STATE_VERB.test(head.slice(0, done.index))) return false;
-  return true;
+  if (!raw.trim()) return no('empty');
+  const folded = fold(raw);
+  const head = headOf(folded);
+  if (!DATE_RE.test(head)) return no('no-date');
+  const strict = DONE.exec(head);
+  const done = strict ?? STATIVE.exec(head);
+  if (!done) return no('no-done');
+  if (OPENS_PERIOD.test(head)) return no('opens-period');
+  if (FUTURE.test(head)) return no('future');
+  if (PRESENT.test(head)) return no('present');
+  if (STATE_VERB.test(head.slice(0, done.index))) return no('state-before');
+  // Rule 4: only a head that carries a changeable value can state it as current.
+  const rawHead = raw.length === folded.length ? raw.slice(0, head.length) : head;
+  if (!valueIn(rawHead, head)) return { record: true, why: 'record' };
+  if (!strict) return no(`stative-with-value:${done[0]}`);
+  const plain = blankAsides(head);
+  const after = STATE_AFTER.exec(plain);
+  if (after) return no(`state-after:${after[0]}`);
+  if (RECURRING.test(plain)) return no('recurring');
+  const word = done[0];
+  if (CHECK.test(word)) {
+    const before = valueIn(rawHead.slice(0, done.index), head.slice(0, done.index));
+    // A bare domain before a check is usually the site being checked, not the value.
+    if (before && before !== 'host') return no('check-of-value');
+  }
+  if (MOVE.test(word)) {
+    const end = done.index + word.length;
+    const to = TO_PLACE.exec(head.slice(end));
+    if (to) {
+      const start = head.length - to[1].length;
+      // The destination is the few words after the preposition, not the rest of the line.
+      const object = /^\S+(?:\s+\S+){0,2}/.exec(to[1])?.[0] ?? '';
+      const where = valueIn(rawHead.slice(start, start + object.length), object);
+      if (where === 'port' || where === 'host' || where === 'url' || where === 'path') return no('move-to-place');
+    }
+  }
+  return { record: true, why: 'record' };
 }
 
 /**
@@ -328,10 +479,17 @@ export function detectShelf(text: string): { shelf: 'volatile' | 'normal' | 'per
  * written elsewhere, at some other time, and was never a claim this memory
  * made about the present — warning on it is noise); else the one its text
  * implies.
+ *
+ * Once a session has said the same line too, it is no longer only an
+ * imported note: the duplicate branch of learn keeps `source: "miner"` but
+ * sets `verified` or adds a confirmation, and from then on the line is judged
+ * by its text like any other claim about the present.
  */
-export function shelfOfFact(f: Pick<Fact, 'text' | 'shelf_life'> & { source?: string }): { shelf: ShelfLife; inferred: boolean; reason?: ShelfReason } {
+export function shelfOfFact(
+  f: Pick<Fact, 'text' | 'shelf_life'> & { source?: string; verified?: string; confirmations?: number },
+): { shelf: ShelfLife; inferred: boolean; reason?: ShelfReason } {
   if (isShelfLife(f.shelf_life)) return { shelf: f.shelf_life, inferred: false };
-  if (f.source === 'miner') return { shelf: 'permanent', inferred: true, reason: 'miner' };
+  if (f.source === 'miner' && !f.verified && (f.confirmations ?? 1) <= 1) return { shelf: 'permanent', inferred: true, reason: 'miner' };
   const d = detectShelf(f.text);
   return { shelf: d.shelf, inferred: true, ...(d.reason ? { reason: d.reason } : {}) };
 }

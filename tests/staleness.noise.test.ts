@@ -21,11 +21,11 @@ import os from 'node:os';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import {
-  detectShelf, isDatedRecord, shelfOfFact, factStaleness, stalenessContext, stalenessContextOf, isLegacyBrain,
+  detectShelf, isDatedRecord, recordVerdict, shelfOfFact, factStaleness, stalenessContext, stalenessContextOf, isLegacyBrain,
   spreadOf, DEFAULT_SHELF_DAYS, type StalenessContext,
 } from '../src/engine/shelf.js';
 import { entryId } from '../src/sync/ops.js';
-import { readPackageVersion, versionStatus, RUNNING_VERSION, PACKAGE_JSON } from '../src/version.js';
+import { readPackageVersion, versionStatus, findPackageJson, RUNNING_VERSION, PACKAGE_JSON } from '../src/version.js';
 import type { Fact } from '../src/types/index.js';
 
 const DAY = 86_400_000;
@@ -52,6 +52,12 @@ describe('a line the miner imported never warns', () => {
   it('the same text from a session is still judged by its content', () => {
     expect(shelfOfFact(fact(MINED))).toEqual({ shelf: 'volatile', inferred: true, reason: 'url' });
     expect(factStaleness(fact(MINED, { added: ago(200) }), ctxOf({ since: ago(100) }))!.stale).toBe(true);
+  });
+
+  it('once a session has said the line too (verified, or a second witness), it is judged by its text', () => {
+    expect(shelfOfFact(fact(MINED, { source: 'miner', verified: ago(1) }))).toEqual({ shelf: 'volatile', inferred: true, reason: 'url' });
+    expect(shelfOfFact(fact(MINED, { source: 'miner', confirmations: 2 }))).toEqual({ shelf: 'volatile', inferred: true, reason: 'url' });
+    expect(shelfOfFact(fact(MINED, { source: 'miner', confirmations: 1 }))).toMatchObject({ shelf: 'permanent', reason: 'miner' });
   });
 
   it('an explicit shelf_life still wins over the source', () => {
@@ -81,6 +87,23 @@ describe('a dated record of something done is history', () => {
     'Ejecución de la tarea programada garza-boletin el 2026-09-02: no se envió nada desde garza.example.com.',
     'El 9 de septiembre de 2026 se publicó en garza.example.com la entrada 418.',
     'Checked on 2-sep-2026 in the Garza logs: the worker on port 8443 answered.',
+    // Review of 2.9.1: what must stay history after the state vetoes were added.
+    '2026-08-11: VERIFICADO que el formulario de Garza envía los avisos.',
+    'FASE 4 de Garza COMPLETA (jun 2026), con 12 pantallas en garza.example.com.',
+    'FASE 3 de Garza completada (jun. 2026)',
+    'Deployed Garza v2.3.1 on Sept. 18, 2026',
+    'Publicado en https://blog.ejemplo-garza.dev/precios/ (18-jun-2026).',
+    'Instalado Node 20.11.0 en el servidor de Garza (3-oct-2026).',
+    'Medido el 15-sep-2026 el tiempo de carga de la portada de Garza.',
+    'Publicado garza.es el 4-oct-2026.',
+    // Words that also describe a state are events in a head without a value.
+    'Tanda de 3 reels de Garza CERRADA el 21-sep-2026 de punta a punta.',
+    'FASE 0 de Garza APROBADA el 02-sep-2026.',
+    'Diagnóstico completo de Garza (21-08-2026).',
+    // One run of a daily job; a quoted headline and an aside are not statements of state.
+    'Ejecución diaria del boletín de Garza del 31-ago-2026: publicados 2 artículos en garza.example.com.',
+    '12-sep-2026: se publicó en garza.example.com la noticia «Los agentes que siguen trabajando».',
+    'Garza-cli 0.1.1 publicado en npm el 03-10-2026 (no es un repo git).',
   ];
   for (const text of records) {
     it(`history: ${text}`, () => {
@@ -118,6 +141,38 @@ describe('a dated statement of state is not history', () => {
     ['El despliegue de Garza debe estar terminado para el 2026-11-15 en garza.example.com.', 'host'],
     ['Reel de Garza creado y programado en Buffer para el 5-oct-2026 en garza.example.com.', 'host'],
     ['Plan Pro de Garza confirmado el 2026-09-01, pendiente de pagar 49 € al mes.', 'price'],
+    // Review of 2.9.1. A dated check of a value is the value.
+    ['Comprobado el 4-oct-2026: el plan Equipo de Garza cuesta 35 €.', 'price'],
+    ['Comprobado (4-oct-2026): el plan Equipo de Garza cuesta 35 €.', 'price'],
+    ['Verificado el 4-oct-2026: el panel de Garza escucha en el puerto 9443.', 'port'],
+    ['Confirmed 2026-10-04: the Garza API runs on port 9443.', 'port'],
+    ['Checked on 2026-10-04: the Garza Team plan costs $35/month.', 'price'],
+    ['2026-06-18: VERIFICADO que el puerto de Garza es 9443.', 'port'],
+    ['Plan Business de Garza: $499/año (confirmado 2026-06-18).', 'price'],
+    ['DiarioGarza en localhost:5833 (checked 2026-06-18).', 'port'],
+    ['Puerto 9443 de Garza verificado el 2026-09-18.', 'port'],
+    ['Bug detectado (3-oct-2026): https://garza.example.com/sitemap.xml devuelve 404.', 'url'],
+    ['verified on 2026-09-11: current Garza posts use https://img.ejemplo-garza.dev for images.', 'url'],
+    // A move to a place says where the thing lives now.
+    ['El 18-sep-2026 se migró el panel de Garza al puerto 9443.', 'port'],
+    ['Migrado el panel al puerto 9443 (18-sep-2026).', 'port'],
+    ['Migrated the Garza admin to port 9443 on 2026-09-18.', 'port'],
+    ['Deployed to https://app.ejemplo-garza.dev on 2026-06-18.', 'url'],
+    ['Desplegado en https://app.ejemplo-garza.dev (18-jun-2026).', 'url'],
+    // A record whose head also says what holds.
+    ['Cambio aplicado (4-oct-2026): el precio del plan Equipo de Garza pasa a 35 euros.', 'price'],
+    ['Fix (4-oct-2026): el webhook de Garza apunta a https://hooks.ejemplo-garza.dev/alta.', 'url'],
+    ['Desplegado el 18-jun-2026: la API de Garza corre en el puerto 8443.', 'port'],
+    ['La release 2.3 de Garza usa el puerto 8443 (jun 2026).', 'version'],
+    ['Incidencia abierta en el proveedor de Garza (3-oct-2026): el VPS 10.0.0.7 no responde.', 'host'],
+    ['Cron de Garza: ejecución diaria 03:00 en /var/backups/garza (alta 18-jun-2026).', 'path'],
+    // Adjectives and nouns that are not finished actions.
+    ['Lista completa de precios de Garza (4-oct-2026): plan Basic 35 €, plan Pro 49 €.', 'price'],
+    ['Configuración completa de Garza (2026-10-04): puerto 9443, host db.ejemplo-garza.dev.', 'port'],
+    ['Medida de seguridad en Garza (4-oct-2026): SSH en el puerto 65002.', 'port'],
+    ['Tarifa a medida para Garza (4-oct-2026): 1.200 € al mes.', 'price'],
+    ['Puerto 22 de Garza cerrado y SSH en el puerto 65002 (4-oct-2026).', 'port'],
+    ['Presupuesto de Garza aprobado (4-oct-2026): 1.200 € al mes.', 'price'],
   ];
   for (const [text, reason] of state) {
     it(`still volatile (${reason}): ${text}`, () => {
@@ -146,6 +201,30 @@ describe('a dated statement of state is not history', () => {
 
   it('a version that looks like a date is not one: "1.4.22"', () => {
     expect(isDatedRecord('Fixed in 1.4.22 of the Garza plugin.')).toBe(false);
+  });
+
+  it('recordVerdict names the rule that decided', () => {
+    expect(recordVerdict('FASE 2 de Garza completada (ago 2026).')).toEqual({ record: true, why: 'record' });
+    expect(recordVerdict('Garza sin fecha, desplegado.').why).toBe('no-date');
+    expect(recordVerdict('Desde el 18-sep-2026 Garza, migrado, escucha en el puerto 9443.').why).toBe('opens-period');
+    expect(recordVerdict('Migrado el panel de Garza al puerto 9443 (18-sep-2026).').why).toBe('move-to-place');
+    expect(recordVerdict('Puerto 9443 de Garza verificado el 2026-09-18.').why).toBe('check-of-value');
+    expect(recordVerdict('Presupuesto de Garza aprobado (4-oct-2026): 1.200 € al mes.').why).toBe('stative-with-value:aprobado');
+    expect(recordVerdict('Fix (4-oct-2026): el webhook de Garza apunta a https://hooks.ejemplo-garza.dev.').why).toBe('state-after:apunta');
+  });
+
+  it('neither is a path segment ("/api/v1/12/24") nor the English modal "may"', () => {
+    expect(isDatedRecord('Endpoint /api/v1/12/24 deployed, runs on port 8080.')).toBe(false);
+    expect(isDatedRecord('Node 18 may be removed from the Garza server.')).toBe(false);
+    expect(isDatedRecord('Garza 2 may have been deployed, the API is on port 8080.')).toBe(false);
+    // The month itself still reads as one.
+    expect(isDatedRecord('Garza desplegado el 18 may 2026.')).toBe(true);
+    expect(isDatedRecord('Garza desplegado el 18-may.')).toBe(true);
+  });
+
+  it('an abbreviated month with a period does not end the head: "jun. 2026", "Sept. 18"', () => {
+    expect(isDatedRecord('FASE 3 de Garza completada (jun. 2026). Siguiente paso, la fase 4.')).toBe(true);
+    expect(isDatedRecord('Garza v2.3.1 released on Sept. 18, 2026.')).toBe(true);
   });
 
   it('only the head decides: details after the first sentence are not judged', () => {
@@ -235,6 +314,21 @@ describe('the version view=status reports', () => {
     expect(readPackageVersion()).toBe(pkg.version);
   });
 
+  it('one lookup: the daemon build id reads the same package.json as status, also two levels up', async () => {
+    const { packageVersion } = await import('../src/daemon/endpoint.js');
+    expect(packageVersion()).toBe(RUNNING_VERSION);
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'crbro-pkg-'));
+    try {
+      await fs.mkdir(path.join(dir, 'dist', 'nested'), { recursive: true });
+      await fs.writeFile(path.join(dir, 'package.json'), JSON.stringify({ name: 'crbro-memory', version: '7.7.7' }));
+      await fs.writeFile(path.join(dir, 'dist', 'package.json'), JSON.stringify({ type: 'commonjs' }));
+      expect(findPackageJson(path.join(dir, 'dist', 'nested'))).toBe(path.join(dir, 'package.json'));
+      expect(readPackageVersion(findPackageJson(path.join(dir, 'dist')))).toBe('7.7.7');
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it('same version on disk: the running one alone, no note', () => {
     expect(versionStatus('2.9.1', '2.9.1')).toEqual({ crbro_version: '2.9.1' });
   });
@@ -254,6 +348,9 @@ describe('the version view=status reports', () => {
       expect(readPackageVersion(path.join(dir, 'package.json'))).toBe('unknown');
       await fs.writeFile(path.join(dir, 'package.json'), JSON.stringify({ name: 'crbro-memory', version: '9.9.9' }));
       expect(readPackageVersion(path.join(dir, 'package.json'))).toBe('9.9.9');
+      // Another package's package.json is not ours.
+      await fs.writeFile(path.join(dir, 'package.json'), JSON.stringify({ name: 'something-else', version: '1.0.0' }));
+      expect(readPackageVersion(path.join(dir, 'package.json'))).toBe('unknown');
       expect(versionStatus('2.9.0', 'unknown')).toEqual({ crbro_version: '2.9.0' });
     } finally {
       await fs.rm(dir, { recursive: true, force: true });
@@ -328,6 +425,15 @@ describe('through the MCP tools', () => {
 
     const state = await json('crbro_recall', { query: 'panel Garza escucha puerto' });
     expect(state.possibly_stale?.map((r: any) => r.last_known)).toContain(STATE);
+  });
+
+  it('a session that learns the miner line again takes it out of "miner": it is judged by its text', async () => {
+    const r = await json('crbro_learn', { topic: 'Garza', type: 'fact', content: MINED });
+    expect(r).toMatchObject({ shelf_life: 'volatile', shelf_inferred: true, shelf_reason: 'url' });
+    const neuron = JSON.parse(await fs.readFile(path.join(root, 'cortex', `${garza}.json`), 'utf8'));
+    const f = neuron.facts.find((x: any) => x.text === MINED);
+    expect(f.source).toBe('miner');
+    expect(f.verified).toBeTruthy();
   });
 
   it('view=status: the running version, no note when the disk agrees', async () => {
