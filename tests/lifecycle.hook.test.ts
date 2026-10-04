@@ -117,6 +117,8 @@ describe('the copies cannot drift from the package', () => {
       `token ${FAKE_GH} en medio de una frase`,
       'postgres://admin:hunter2pass@db.example.com:5432/app',
       'la clave es importante para el SEO',
+      'Decisión clave: mantener el plan gratuito',
+      'clave: Xk9mPq2zR7 y nada más',
       'nada que ver aquí',
     ];
     for (const t of corpus) expect(hook.redact(t), t).toBe(engineRedact(t).text);

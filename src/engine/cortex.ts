@@ -1731,6 +1731,16 @@ export class Cortex {
 
     let removed = 0;
     const wanted = targets.map(t => t.trim().toLowerCase());
+    // An entry goes when a target names its text or its id: the entryId the
+    // neuron index and recall show, or a decision's own id. Until 2.9.1 only
+    // facts matched by id, so taking a credential out of a preference meant
+    // pasting the credential back into the conversation to name it.
+    const matches = (text: string | undefined, ownId?: string): boolean => {
+      const t = (text || '').trim().toLowerCase();
+      if (!t) return false;
+      return wanted.includes(t) || wanted.includes(entryId(text!).toLowerCase())
+        || (!!ownId && wanted.includes(ownId.toLowerCase()));
+    };
 
     const after = await updateJSON<Neuron>(this.brain.paths.neuron(found.id), current => {
       if (!current) return null;
@@ -1749,26 +1759,16 @@ export class Cortex {
       });
       // Decisions, patterns and preferences too. A credential is no less
       // exposed for sitting in one of those, and nothing else could remove it.
-      current.decisions = current.decisions.filter(
-        d => !wanted.includes((d.text || '').trim().toLowerCase())
-      );
-      current.patterns = current.patterns.filter(
-        p => !wanted.includes((p || '').trim().toLowerCase())
-      );
-      current.preferences = current.preferences.filter(
-        p => !wanted.includes((p || '').trim().toLowerCase())
-      );
+      current.decisions = current.decisions.filter(d => !matches(d.text, d.id));
+      current.patterns = current.patterns.filter(p => !matches(p));
+      current.preferences = current.preferences.filter(p => !matches(p));
       const erroresAntes = (current.errors || []).length;
       if (current.errors) {
-        current.errors = current.errors.filter(
-          e => !wanted.includes((e || '').trim().toLowerCase())
-        );
+        current.errors = current.errors.filter(e => !matches(e));
       }
       const deudasAntes = (current.debts || []).length;
       if (current.debts) {
-        current.debts = current.debts.filter(
-          d => !wanted.includes((d || '').trim().toLowerCase())
-        );
+        current.debts = current.debts.filter(d => !matches(d));
       }
       let mapaBorrado = 0;
       if (current.map && wanted.includes(current.map.text.trim().toLowerCase())) {
@@ -1838,22 +1838,22 @@ export class Cortex {
         }
       }
       for (const d of found.decisions || []) {
-        if (wanted.includes((d.text || '').trim().toLowerCase())) {
+        if (matches(d.text, d.id)) {
           await this.emit(found.id, { kind: 'decision_purge', key: entryId(d.text), at: cuando });
         }
       }
       for (const p of found.patterns || []) {
-        if (wanted.includes((p || '').trim().toLowerCase())) {
+        if (matches(p)) {
           await this.emit(found.id, { kind: 'pattern_purge', key: entryId(p), at: cuando });
         }
       }
       for (const e of found.errors || []) {
-        if (wanted.includes((e || '').trim().toLowerCase())) {
+        if (matches(e)) {
           await this.emit(found.id, { kind: 'error_purge', key: entryId(e), at: cuando });
         }
       }
       for (const d of found.debts || []) {
-        if (wanted.includes((d || '').trim().toLowerCase())) {
+        if (matches(d)) {
           await this.emit(found.id, { kind: 'debt_purge', key: entryId(d), at: cuando });
         }
       }

@@ -79,3 +79,42 @@ describe('the four misses from the first security benchmark, now caught', () => 
     expect(secretKinds('auth token caducado desde marzo, renuévalo en el panel')).toEqual([]);
   });
 });
+
+// ─── 2.9.1: "clave" is also an adjective ─────────────────────────
+//
+// "Decisión clave: mantener…" was stored as "Decisión clave: [REDACTED:
+// password]…" on the reference brain: "clave" sat in the labelled-password
+// pattern next to password/contraseña, and any 8-character word after the
+// colon was taken for the value. After "clave" the value now has to look
+// like a password (three of lower, upper, digit, symbol).
+describe('clave: as an adjective is prose, not a label', () => {
+  it('keeps headings that use "clave" as "key/important"', () => {
+    for (const t of [
+      'Decisión clave: mantener el plan gratuito hasta enero',
+      'Dato clave: conversiones del 3,2 % en móvil',
+      'Fecha clave: 4-oct-2026, entrega al cliente',
+      'Métrica clave: PageSpeed por encima de 90',
+      'IDEA CLAVE: IMPORTANTE revisar antes de publicar',
+      'Aprendizaje clave = documentar antes de desplegar',
+    ]) {
+      expect(secretKinds(t), t).toEqual([]);
+      expect(redact(t).text, t).toBe(t);
+    }
+  });
+  it('still redacts a password written after "clave:"', () => {
+    for (const t of [
+      'clave: Xk9mPq2zR7',
+      'Clave = hunter#2pass',
+      'CLAVE: Reformas$2026',
+      'la clave es: aB3!cD4@eF',
+    ]) {
+      const r = redact(t);
+      expect(r.found, t).toContain('password');
+      expect(r.text, t).toMatch(/\[REDACTED: password\]$/);
+    }
+  });
+  it('leaves password: and contraseña: as they were', () => {
+    expect(secretKinds('password: correcthorsebattery')).toContain('password');
+    expect(secretKinds('contraseña: reformas2026')).toContain('password');
+  });
+});
