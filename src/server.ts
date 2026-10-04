@@ -32,7 +32,7 @@ import { semanticStatus } from './search/semantic.js';
 import { fitToBudget, DEFAULT_BUDGET_CHARS, type BudgetOptions } from './utils/budget.js';
 import { redact } from './engine/secrets.js';
 import { autoBackupIfDue, resolveBackupDir } from './engine/backup.js';
-import { modNoticeOnBoot } from './engine/modinstall.js';
+import { startModOnBoot } from './engine/modinstall.js';
 import { writeTriggerIndex, loadAllNeurons } from './engine/triggers.js';
 import { neuronId, inferNeuronType, techKeywordIn } from './utils/ids.js';
 
@@ -253,8 +253,9 @@ export function createServer(shared?: Engines): McpServer {
         // The Claude Code mod (open items above the prompt): installed or
         // refreshed on its own, once per process, on a short budget that
         // never fails or holds up the boot. Started first so it runs beside
-        // the brain's own work; its notice, if any, is said once.
-        const modNotice = modNoticeOnBoot();
+        // the brain's own work; its notice is taken only once this boot has
+        // an answer to carry it, so a boot that fails does not lose it.
+        const modNotice = startModOnBoot();
         const result = await brain.boot();
         // Initialize search engine
         await searchEngine.init();
@@ -385,7 +386,7 @@ export function createServer(shared?: Engines): McpServer {
 
         // Said once, the boot after the mod was installed or updated: what
         // changed on the user's machine and how to undo it.
-        const aviso = await modNotice;
+        const aviso = await modNotice();
         if (aviso) response.mod_notice = aviso;
 
         response.memory_discipline =
