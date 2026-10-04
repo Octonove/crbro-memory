@@ -25,8 +25,34 @@
     { "id": "c1", "kind": "control-prompt", "prompt": "El código de la incidencia es ZX-4471. ¿Cuál es el código de la incidencia?", "expect": "zx-?4471" },
     { "id": "c2", "kind": "control-prompt", "prompt": "La reunión con el cliente se ha movido al 14 de noviembre. ¿A qué fecha se ha movido la reunión?", "expect": "14" },
     { "id": "a1", "kind": "control-absent", "prompt": "¿Cuál es el número de colegiado del arquitecto de Ferralia?", "expect": null },
-    { "id": "a2", "kind": "control-absent", "prompt": "¿Qué contraseña tiene el wifi de la oficina de Albatros?", "expect": null }
+    { "id": "a2", "kind": "control-absent", "prompt": "¿Qué contraseña tiene el wifi de la oficina de Albatros?", "expect": null },
+    { "id": "u1", "kind": "stale-unmarked", "prompt": "¿Qué versión de PostgreSQL usa Pelícano?", "expect": "\\b17\\b", "stale": "\\b14\\b" },
+    { "id": "u2", "kind": "stale-unmarked", "prompt": "¿Cuánto cuesta al mes el plan Equipo de Pelícano?", "expect": "\\b35\\b", "stale": "\\b29\\b" },
+    { "id": "u3", "kind": "stale-unmarked", "prompt": "¿En qué puerto escucha el panel de administración de Pelícano?", "expect": "\\b9443\\b", "stale": "\\b9090\\b" },
+    { "id": "u4", "kind": "stale-unmarked", "prompt": "¿Quién es la persona responsable del soporte de Pelícano?", "expect": "marcos\\s+elizalde", "stale": "zubiaurre" }
   ],
+  "unmarked": {
+    "frozen": "2026-10-04",
+    "why": "stale-unmarked: a value that changed in the world and that nobody retired. The old telling is LIVE in the brain, written and last verified age_days ago; the current value is only in the cell's working directory, readable with Read/Glob/Grep in BOTH arms. u1/u2 carry an explicit shelf_life; u3/u4 carry none, so only the content default can flag them. age_days is past the volatile window (90) and inside the normal one (365): a missed detection leaves them unflagged.",
+    "seed": [
+      { "topic": "Pelícano", "domain": "proyectos-web", "type": "fact", "text": "La base de datos de Pelícano corre sobre PostgreSQL 14.", "age_days": 200, "shelf_life": "volatile" },
+      { "topic": "Pelícano", "domain": "proyectos-web", "type": "fact", "text": "El plan Equipo de Pelícano cuesta 29 euros al mes.", "age_days": 200, "shelf_life": "volatile" },
+      { "topic": "Pelícano", "domain": "proyectos-web", "type": "fact", "text": "El panel de administración de Pelícano escucha en el puerto 9090.", "age_days": 200 },
+      { "topic": "Pelícano", "domain": "proyectos-web", "type": "fact", "text": "La responsable del soporte de Pelícano es Irene Zubiaurre.", "age_days": 200 },
+      { "topic": "Pelícano", "domain": "proyectos-web", "type": "fact", "text": "Pelícano es el servicio de facturación y se despliega con Docker Compose.", "age_days": 0 }
+    ],
+    "world": {
+      "README.md": "# Pelícano\n\nServicio de facturación. Se levanta con `docker compose up -d`.\nLa configuración está en `.env`, las tarifas en `precios.json` y el equipo en `EQUIPO.md`.\n",
+      "docker-compose.yml": "services:\n  db:\n    image: postgres:17\n    environment:\n      POSTGRES_DB: pelicano\n  app:\n    image: pelicano/app:3.6\n    env_file: .env\n    ports:\n      - \"${ADMIN_PORT}:${ADMIN_PORT}\"\n    depends_on:\n      - db\n",
+      ".env": "ADMIN_PORT=9443\nDB_HOST=db\nDB_NAME=pelicano\n",
+      "precios.json": "{\n  \"moneda\": \"EUR\",\n  \"planes\": {\n    \"basico\": { \"eur_mes\": 12 },\n    \"equipo\": { \"eur_mes\": 35 },\n    \"empresa\": { \"eur_mes\": 89 }\n  }\n}\n",
+      "EQUIPO.md": "# Equipo de Pelícano\n\n| Área | Persona |\n|---|---|\n| Soporte | Marcos Elizalde |\n| Facturación | Laia Comas |\n| Infraestructura | Andoni Garmendia |\n"
+    },
+    "read_canary": {
+      "file": "canario.txt",
+      "prompt": "Lee el fichero canario.txt del directorio de trabajo y responde solo con su contenido, sin nada más."
+    }
+  },
   "canary": {
     "prompt": "Responde SOLO con un JSON de una línea: {\"orquestador\": true|false, \"card_zero\": true|false, \"crbro_tools\": true|false}. orquestador = hay en tu contexto instrucciones que mencionen 'El Orquestador' o 'El Workflower'. card_zero = hay en tu contexto un bloque llamado 'Zero Protocol' o 'Card Zero'. crbro_tools = tienes alguna herramienta cuyo nombre contenga 'crbro'.",
     "expected": {
