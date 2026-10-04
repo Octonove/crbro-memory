@@ -2,6 +2,93 @@
 
 All notable changes to CRBRO.
 
+## [Unreleased]
+
+Shelf life: what may have changed since it was last checked comes apart.
+From community feedback (r/mcp); design in
+[`docs/design/staleness.md`](docs/design/staleness.md). Still 15 tools: every
+change is a parameter or a field on an existing one.
+
+- **The gap it closes.** A value that changed in the world and that nobody
+  retired from memory — a port, a price, a version, who holds a role — came
+  back from `crbro_recall` with `confidence: strong` and nothing else.
+  `confirmations` counted how many sessions said a line, never when one last
+  looked; `since` hides old lines, it does not warn; maintenance's
+  `expired_entries` only sees a line that names a day.
+- **A last verification per fact.** `Fact.verified` (ISO instant) and, for
+  decisions and patterns, the `entry_verified` sidecar keyed like
+  `entry_dates`. Two ways to set it, and only two: `crbro_revise
+  status=verified` (a fourth value of the existing enum; `facts` by id or exact
+  text, `entries` for decisions and patterns by text or entry id) when the
+  agent checked a line against its source and it still holds, and a session
+  learning the exact same fact again (`reconfirmed: true`). The miner never
+  reconfirms, a retired line is not verifiable (it comes back in `unmatched`
+  and `retired_targets`), and reading — recall, inspect — never touches it.
+- **A shelf life by kind of data.** `volatile` 90 days (versions, prices,
+  ports, hosts, paths and URLs, configuration values, people in roles),
+  `normal` 365, `durable` 730 (decisions and patterns), `permanent` never
+  (preferences, errors, debts, history). The windows are a policy choice, not
+  a measurement; `CRBRO_SHELF_DAYS="volatile=90,normal=365,durable=730"`
+  changes them per machine. `crbro_learn` takes `shelf_life` for facts (stored
+  only when given; a different value on the same text replaces it,
+  `updated_in_place`) and always returns the class that applies, with
+  `shelf_inferred` and `shelf_reason` when it was read from the text. An
+  unmarked fact is classified at read time by a small, conservative detector
+  (`src/engine/shelf.ts`, Spanish and English; every rule needs a number, a
+  path or URL shape, or a role-and-name pattern next to its trigger word), so
+  a better detector improves old facts too. Measured on the repository's
+  retrieval fixtures: it marks 25 of the 48 facts of the project fixture (a
+  brain of versions, prices and hosts) and 3, 3 and 0 of the 494 facts of each
+  personal-prose haystack.
+- **Recall that warns.** After the ranking — which does not change — a row
+  whose winning entry is past its shelf life since last verified moves, whole
+  and in rank order, to `possibly_stale`, with `age_days`, `last_verified`,
+  `shelf_life` and `shelf_inferred` (and `age_counted_from` when the legacy
+  grace applies). No backfill and no re-heading with an `also_matched` line;
+  an old `also_matched` preview keeps its place and carries `stale_days`. The
+  next step is said once, in `hint` (check it against its source; still true
+  → `crbro_revise status=verified`, changed → `crbro_learn` with
+  `supersedes`; if you cannot check, say how old it is), led by "Nothing
+  current matched" when every row moved. `total_results` counts current rows,
+  `returned` adds the stale ones, `possibly_stale_count` is there when the
+  block is. `since` still filters on when a line was recorded: a reconfirmed
+  old line is not new. Day logs are never partitioned, protocol neurons are
+  never judged. With the feature on, the deterministic retrieval benchmark
+  gives the numbers published for the keyword engine (recall@1 77%, recall@3
+  83%, MRR 0.806).
+- **No flood on upgrade.** The first boot of this version stamps
+  `manifest.staleness_since` (one field in a file boot already writes; no
+  neuron is touched). A fact never verified, with no explicit class, not
+  volatile and older than the stamp starts counting from it; decisions and
+  patterns likewise. Volatile facts get no grace: a port saved months ago is
+  exactly the case. A line with no parseable date is never flagged.
+  `CRBRO_STALENESS=0` turns everything off and recall answers as in 2.8.
+- **Everywhere else the same three facts.** `crbro_inspect view=neuron` shows
+  `verified`, an explicit `shelf_life` and `stale_days` per entry (index and
+  `entries=[ids]`); `view=status` reports `staleness: { enabled, windows,
+  since }`. `crbro_maintenance` reports `stale_entries` and `stale_sample` (the
+  ten most overdue), read-only; `repair` drops `entry_verified` keys whose
+  entry is gone. Boot's `memory_discipline` and the server instructions gain
+  one sentence each on what `possibly_stale` means.
+- **Team spaces.** A check travels as a new `verify` op (latest `at` wins,
+  order-independent); an explicit `shelf_life` travels as `shelf` on the fact
+  op (the most volatile explicit value wins, so lengthening a shared fact's
+  shelf life stays local). `OPS_VERSION` stays 1: a 2.8 client skips the new
+  kind and ignores the new field — the check does not reach it, nothing is
+  corrupted. `move_to`, `merge_into` and restore carry the stamps; `forget`
+  prunes them.
+- **Compatibility.** Every new field is optional; a 2.8 brain loads and
+  recalls as it is, and nothing is written to a neuron until a learn or a
+  revise touches it. No index change, no `INDEX_VERSION` bump: shelf life and
+  verification are read from the neuron file recall already loads for every
+  row. Tool descriptions stay under 1,000 characters (recall 964, learn 968,
+  revise 946).
+- **The agentic benchmark.** A new pre-registered case, `stale-unmarked`
+  (fifth amendment of `benchmarks/agentic/PREREGISTRO.md`): four values that
+  changed in the world and that nobody retired, two marked volatile and two
+  left to the detector. Its thresholds were fixed before any run; no result
+  is claimed here until it has been measured.
+
 ## [2.8.0] — 2026-10-04
 
 Open items in sight, for whoever installs CRBRO, not only for its author.
