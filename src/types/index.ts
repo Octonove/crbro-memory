@@ -42,7 +42,25 @@ export interface Fact {
    * re-reading the same file is not a second witness.
    */
   confirmations?: number;
+  /**
+   * ISO instant of the last time this line was checked against its source
+   * and still held (shelf life): crbro_revise status=verified, or the same text
+   * learned again by a session (never by the miner). Absent === never
+   * re-checked: the shelf-life clock runs from `added`. Reading is not
+   * checking — recall and inspect never touch it.
+   */
+  verified?: string;
+  /**
+   * How fast this kind of value goes stale, ONLY when someone said so (shelf life).
+   * Absent === inferred at read time from the text (src/engine/shelf.ts), so
+   * a better detector improves old facts too, and nothing is stored that was
+   * not decided by someone.
+   */
+  shelf_life?: ShelfLife;
 }
+
+/** volatile 90 d · normal 365 d · durable 730 d · permanent never (defaults; CRBRO_SHELF_DAYS changes them). */
+export type ShelfLife = 'volatile' | 'normal' | 'durable' | 'permanent';
 
 export interface Decision {
   text: string;
@@ -131,6 +149,13 @@ export interface Neuron {
    * is not the user's own, where a line came from.
    */
   entry_source?: Record<string, string>;
+  /**
+   * Last verification of decisions and patterns (shelf life), keyed by
+   * entryId(text) like the other sidecars: the arrays keep their element
+   * type and every reader keeps working. Absent key === never re-checked;
+   * the clock runs from the entry's date.
+   */
+  entry_verified?: Record<string, string>;
   /**
    * The living map of the system: where it lives, what serves what, which
    * pieces talk to each other, the traps. One document, replaced whole on
@@ -242,6 +267,13 @@ export interface Manifest {
   total_sessions: number;
   last_boot: string | null;
   last_consolidation: string | null;
+  /**
+   * First boot of a CRBRO that knows shelf life. Facts that were never
+   * verified, have no explicit shelf_life, are not volatile and predate it
+   * start their clock here instead, so an old brain does not turn "possibly
+   * stale" on upgrade day.
+   */
+  staleness_since?: string;
 }
 
 // ─── Boot Result ─────────────────────────────────────────────────
@@ -318,7 +350,22 @@ export interface SearchResult {
    * one neuron can answer with more than one line, and the line you need is
    * not always the one that scored highest.
    */
-  also_matched?: Array<{ entry_id?: string; kind: string; added: string; preview: string; chars: number; origin?: string; by?: string }>;
+  also_matched?: Array<{ entry_id?: string; kind: string; added: string; preview: string; chars: number; origin?: string; by?: string; stale_days?: number }>;
+  /**
+   * How the winning entry stands against its shelf life. Filled by the
+   * search engine when staleness is on; the server moves a row whose entry
+   * is past its window to `possibly_stale` and strips this field from every
+   * row, so it never reaches a client as such.
+   */
+  staleness?: {
+    stale: boolean;
+    age_days: number;
+    last_verified: string;
+    shelf_life: ShelfLife;
+    shelf_inferred: boolean;
+    shelf_reason?: string;
+    age_from?: string;
+  };
   /**
    * Where the matching entry came from, set ONLY when it is not the user's
    * own (2.7): 'team:<space>' for a line a teammate wrote, 'miner' for the

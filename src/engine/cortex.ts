@@ -7,8 +7,9 @@ import { neuronId, inferNeuronType, toSnakeCase, legacySnakeCase } from '../util
 import { factId } from '../utils/hash.js';
 import { entryId, normalizeText } from '../sync/ops.js';
 import { redact, secretKinds } from './secrets.js';
+import { shelfOfFact, mostVolatile, latestOf, isShelfLife, type ShelfReason } from './shelf.js';
 import type { Brain } from './brain.js';
-import type { Neuron, NeuronType, Fact, Decision, FactStatus, EntryStatus, EntryRetirement } from '../types/index.js';
+import type { Neuron, NeuronType, Fact, Decision, FactStatus, EntryStatus, EntryRetirement, ShelfLife } from '../types/index.js';
 
 const TYPE_PREFIX_RE = /^(project_|tech_|lang_|person_|domain_|process_|protocol_)/;
 
@@ -306,7 +307,7 @@ export type Indexer = (neuron: Neuron) => Promise<void> | void;
 export type Emitter = (
   neuronId: string,
   change:
-    | { kind: 'fact'; text: string; fid: string; conf: number; at: string; src?: string; keys?: string[] }
+    | { kind: 'fact'; text: string; fid: string; conf: number; at: string; src?: string; keys?: string[]; shelf?: ShelfLife }
     | { kind: 'status'; fid: string; to: 'superseded' | 'retracted'; at: string; why?: string }
     | { kind: 'decision'; text: string; why?: string; at: string }
     | { kind: 'pattern'; text: string; at: string }
@@ -317,6 +318,8 @@ export type Emitter = (
     | { kind: 'debt_purge'; key: string; at: string }
     | { kind: 'decision_purge'; key: string; at: string }
     | { kind: 'pattern_purge'; key: string; at: string }
+    /** A line was checked against its source and still holds (shelf life). `at` is the check. */
+    | { kind: 'verify'; eid: string; ekind: 'fact' | 'entry'; at: string }
 ) => Promise<void> | void;
 
 /**
@@ -407,6 +410,12 @@ export function unionNeuron(target: Neuron, source: Neuron): {
     if (conf > 1) hit.confirmations = conf;
     const keys = normalizeKeys([...(hit.keys || []), ...(sf.keys || [])]);
     if (keys.length) hit.keys = keys; else delete hit.keys;
+    // The later check is the newer evidence; the more volatile explicit class
+    // wins, as in a team space (a needless warning is cheaper than a missing one).
+    const verificado = latestOf(hit.verified, sf.verified);
+    if (verificado) hit.verified = verificado;
+    const vida = mostVolatile(hit.shelf_life, sf.shelf_life);
+    if (vida) hit.shelf_life = vida;
   }
 
   // ── Decisions: by normalised text, the target's rationale wins ──
@@ -477,6 +486,13 @@ export function unionNeuron(target: Neuron, source: Neuron): {
   for (const k of Object.keys(estados).sort()) if (vivos.has(k)) estadosVivos[k] = estados[k];
   if (Object.keys(estadosVivos).length) neuron.entry_status = estadosVivos;
   else delete neuron.entry_status;
+
+  const verificadas: Record<string, string> = { ...(source.entry_verified || {}) };
+  for (const [k, v] of Object.entries(target.entry_verified || {})) verificadas[k] = latestOf(verificadas[k], v) || v;
+  const verificadasVivas: Record<string, string> = {};
+  for (const k of Object.keys(verificadas).sort()) if (vivos.has(k)) verificadasVivas[k] = verificadas[k];
+  if (Object.keys(verificadasVivas).length) neuron.entry_verified = verificadasVivas;
+  else delete neuron.entry_verified;
 
   const origenes: Record<string, string> = { ...(source.entry_source || {}), ...(target.entry_source || {}) };
   const origenesVivos: Record<string, string> = {};
@@ -783,6 +799,12 @@ export class Cortex {
       /** Ids or verbatim texts of facts this one replaces. */
       supersedes?: string[];
       /**
+       * Facts only: how fast this value goes stale, when the caller says so.
+       * Stored only when given; absent, the class is inferred from the text at
+       * read time. On an exact duplicate a different value replaces the stored one.
+       */
+      shelfLife?: ShelfLife;
+      /**
        * Create the neuron when the topic is unknown. Default true.
        * The miner passes false: an automated pass guessing at topic names is
        * how a brain ends up with a thousand neurons called things like
@@ -820,6 +842,10 @@ export class Cortex {
     skipped_retired: { id: string; status: 'superseded' | 'retracted'; revised?: string; note?: string } | null;
     /** Exact-duplicate fact only: how many times the line has now been learned (2.7). */
     confirmations?: number;
+    /** Facts only: the shelf-life class that applies, and whether it was inferred from the text (and by which rule). */
+    shelf?: { shelf_life: ShelfLife; inferred: boolean; reason?: ShelfReason };
+    /** Exact-duplicate fact learned again by a session: its `verified` was stamped now. */
+    reconfirmed?: boolean;
   }> {
     // Credentials never make it to disk. The sentence around them survives, so
     // "the deploy token is [REDACTED: npm token]" still records that a token
@@ -861,6 +887,10 @@ export class Cortex {
     let duplicate = false;
     let updatedInPlace = false;
     let confirmations: number | undefined;
+    let shelf: { shelf_life: ShelfLife; inferred: boolean; reason?: ShelfReason } | undefined;
+    let reconfirmed = false;
+    let verificar: { eid: string; at: string } | null = null;
+    const vidaPedida: ShelfLife | undefined = isShelfLife(options?.shelfLife) ? options!.shelfLife : undefined;
     let skippedRetired: { id: string; status: 'superseded' | 'retracted'; revised?: string; note?: string } | null = null;
 
     // A retired decision, pattern, error or debt must not come back through
@@ -935,7 +965,19 @@ export class Cortex {
               }
               if (options?.source !== 'miner') vistos.add(testigo);
               confirmations = existente.confirmations ?? 1;
+              // Saying the same line again is a check (shelf life): the clock
+              // restarts. Not for the miner: re-reading an old transcript is
+              // not looking at the source.
+              if (options?.source !== 'miner') {
+                existente.verified = now();
+                reconfirmed = true;
+                verificar = { eid: existente.id || factId(existente.text), at: existente.verified };
+              }
               let cambiado = false;
+              if (vidaPedida && vidaPedida !== existente.shelf_life) {
+                existente.shelf_life = vidaPedida;
+                cambiado = true;
+              }
               if (options?.confidence !== undefined && options.confidence !== existente.confidence) {
                 existente.confidence = options.confidence;
                 cambiado = true;
@@ -960,8 +1002,11 @@ export class Cortex {
                 updatedInPlace = true;
                 this.tally.topics.add(n.id);
                 emitir = { kind: 'fact' as const, text: existente.text, fid: existente.id || id,
-                           conf: existente.confidence ?? 1, at: existente.added, src: existente.source, keys: existente.keys };
+                           conf: existente.confidence ?? 1, at: existente.added, src: existente.source, keys: existente.keys,
+                           ...(existente.shelf_life ? { shelf: existente.shelf_life } : {}) };
               }
+              const sv = shelfOfFact(existente);
+              shelf = { shelf_life: sv.shelf, inferred: sv.inferred, ...(sv.reason ? { reason: sv.reason } : {}) };
             }
             if (!isDuplicate) {
               if (options?.supersedes?.length) {
@@ -984,12 +1029,16 @@ export class Cortex {
               };
               if (options?.supersedes?.length) fact.supersedes = options.supersedes;
               if (keys.length) fact.keys = keys;
+              if (vidaPedida) fact.shelf_life = vidaPedida;
+              const sv = shelfOfFact(fact);
+              shelf = { shelf_life: sv.shelf, inferred: sv.inferred, ...(sv.reason ? { reason: sv.reason } : {}) };
               n.facts.push(fact);
               if (fact.source !== 'miner') (this.tally.witnessed ??= new Set<string>()).add(`${n.id}|${id}`);
               this.tally.facts++;
               this.tally.topics.add(n.id);
               emitir = { kind: 'fact' as const, text: content, fid: id,
-                         conf: fact.confidence, at: fact.added, src: fact.source, keys: fact.keys };
+                         conf: fact.confidence, at: fact.added, src: fact.source, keys: fact.keys,
+                         ...(fact.shelf_life ? { shelf: fact.shelf_life } : {}) };
             }
             break;
           }
@@ -1075,11 +1124,16 @@ export class Cortex {
     // Preferences are never emitted: they are the field most likely to hold a
     // key and the least likely to be worth sharing.
     if (emitir) await this.emit(final.id, emitir);
+    // A reconfirming re-learn reaches the team as a check: the latest wins.
+    const v = verificar as { eid: string; at: string } | null;
+    if (v) await this.emit(final.id, { kind: 'verify', eid: v.eid, ekind: 'fact', at: v.at });
     return {
       neuron: final, action, superseded, supersedes_unmatched: supersedesUnmatched,
       near_duplicates: nearDuplicates, redacted: limpio.found,
       duplicate, updated_in_place: updatedInPlace, skipped_retired: null,
       ...(confirmations !== undefined ? { confirmations } : {}),
+      ...(shelf ? { shelf } : {}),
+      ...(reconfirmed ? { reconfirmed } : {}),
     };
   }
 
@@ -1139,6 +1193,98 @@ export class Cortex {
     }
 
     return { neuron: (actualizada || neuron) as Neuron, revised, unmatched };
+  }
+
+  /**
+   * Reconfirm: the caller checked these lines against their source and they
+   * still hold, so their shelf-life clock restarts now.
+   *
+   * `facts` match ACTIVE facts by id or exact text (trimmed, case-insensitive);
+   * `entries` match live decisions and patterns by entry id or exact text —
+   * the two kinds whose class is durable. A retired fact or entry is not
+   * verifiable: it comes back in `retired` with its status (reactivate it with
+   * status active first, if it holds again), and in `unmatched` like any miss.
+   * Preferences, errors and debts never go stale, so there is nothing to
+   * reconfirm on them; they are unmatched.
+   *
+   * Each stamp is emitted as a verify op, so on a shared neuron a teammate's
+   * clock restarts too: the fact is shared, and so is the world it describes.
+   */
+  async verify(
+    neuronRef: string,
+    targets: { facts?: string[]; entries?: string[] }
+  ): Promise<{
+    neuron: Neuron | null;
+    verified: string[];
+    unmatched: string[];
+    retired: Array<{ target: string; id: string; status: 'superseded' | 'retracted' }>;
+  }> {
+    const facts = (targets.facts || []).filter(t => typeof t === 'string');
+    const entries = (targets.entries || []).filter(t => typeof t === 'string');
+    const neuron = (await this.peek(neuronRef)) || (await this.findByName(neuronRef));
+    if (!neuron) return { neuron: null, verified: [], unmatched: [...facts, ...entries], retired: [] };
+
+    const verified: string[] = [];
+    let unmatched: string[] = [];
+    let retired: Array<{ target: string; id: string; status: 'superseded' | 'retracted' }> = [];
+    const emitir: Array<{ eid: string; ekind: 'fact' | 'entry'; at: string }> = [];
+
+    const actualizada = await updateJSON<Neuron>(this.brain.paths.neuron(neuron.id), current => {
+      const n = current || neuron;
+      const cuando = now();
+      verified.length = 0; unmatched = []; retired = []; emitir.length = 0;
+
+      for (const t of facts) {
+        const w = t.trim().toLowerCase();
+        const hits = n.facts.filter(f => (f.id || factId(f.text)).toLowerCase() === w || f.text.trim().toLowerCase() === w);
+        const vivos = hits.filter(f => f.status !== 'superseded' && f.status !== 'retracted');
+        if (vivos.length === 0) {
+          const r = hits.find(f => f.status === 'superseded' || f.status === 'retracted');
+          if (r) retired.push({ target: t, id: r.id || factId(r.text), status: r.status as 'superseded' | 'retracted' });
+          unmatched.push(t);
+          continue;
+        }
+        for (const f of vivos) {
+          f.id = f.id || factId(f.text);
+          f.verified = cuando;
+          if (!verified.includes(f.id)) verified.push(f.id);
+          emitir.push({ eid: f.id, ekind: 'fact', at: cuando });
+        }
+      }
+
+      const candidatas = [
+        ...n.decisions.map(d => ({ text: d.text || '', ids: [entryId(d.text || ''), ...(d.id ? [d.id] : [])] })),
+        ...n.patterns.map(p => ({ text: p, ids: [entryId(p)] })),
+      ];
+      for (const t of entries) {
+        const w = normalizeText(t).toLowerCase();
+        const hits = candidatas.filter(c => c.ids.some(i => i.toLowerCase() === w) || normalizeText(c.text).toLowerCase() === w);
+        const vivas = hits.filter(c => !n.entry_status?.[entryId(c.text)]);
+        if (vivas.length === 0) {
+          const r = hits[0];
+          const est = r ? n.entry_status?.[entryId(r.text)] : undefined;
+          if (r && est) retired.push({ target: t, id: entryId(r.text), status: est.status });
+          unmatched.push(t);
+          continue;
+        }
+        for (const c of vivas) {
+          const k = entryId(c.text);
+          (n.entry_verified ||= {})[k] = cuando;
+          if (!verified.includes(k)) verified.push(k);
+          emitir.push({ eid: k, ekind: 'entry', at: cuando });
+        }
+      }
+
+      if (verified.length === 0) return null;
+      n.last_accessed = cuando;
+      return n;
+    });
+
+    const final = (actualizada || neuron) as Neuron;
+    // No reindex: neither the text nor the indexed date changed. `since`
+    // filters on when a line was recorded, not on when it was last checked.
+    for (const e of emitir) await this.emit(final.id, { kind: 'verify', ...e });
+    return { neuron: final, verified: [...verified], unmatched, retired };
   }
 
   /**
@@ -1633,6 +1779,14 @@ export class Cortex {
         }
         if (Object.keys(current.entry_status).length === 0) delete current.entry_status;
       }
+      // Verifications go with their entry too.
+      if (current.entry_verified) {
+        const vivos = liveEntryKeys(current);
+        for (const k of Object.keys(current.entry_verified)) {
+          if (!vivos.has(k)) delete current.entry_verified[k];
+        }
+        if (Object.keys(current.entry_verified).length === 0) delete current.entry_verified;
+      }
       // And for provenance: a forgotten teammate line that comes back through
       // a sync replay must be labelled by that replay, not by a stale key.
       if (current.entry_source) {
@@ -1844,7 +1998,9 @@ export class Cortex {
     for (const f of final.facts) {
       const fid = f.id || factId(f.text);
       if (teniaFact.has(fid)) continue;
-      await this.emit(final.id, { kind: 'fact', text: f.text, fid, conf: f.confidence ?? 1, at: f.added, src: f.source, keys: f.keys });
+      await this.emit(final.id, { kind: 'fact', text: f.text, fid, conf: f.confidence ?? 1, at: f.added, src: f.source, keys: f.keys,
+        ...(f.shelf_life ? { shelf: f.shelf_life } : {}) });
+      if (f.verified) await this.emit(final.id, { kind: 'verify', eid: fid, ekind: 'fact', at: f.verified });
       // A moved fact that was already retired must arrive retired, or the
       // teammates would see as current what the source had superseded.
       if (f.status === 'superseded' || f.status === 'retracted') {
@@ -1868,6 +2024,11 @@ export class Cortex {
     const teniaDebt = new Set((antes.debts || []).map(normalizeText));
     for (const d of final.debts || []) {
       if (!teniaDebt.has(normalizeText(d))) await this.emit(final.id, { kind: 'debt', text: d, at: fecha(d) });
+    }
+    // Checks of decisions and patterns that arrived with them, or are newer than the target's.
+    for (const [k, at] of Object.entries(final.entry_verified || {})) {
+      if (antes.entry_verified?.[k] === at) continue;
+      await this.emit(final.id, { kind: 'verify', eid: k, ekind: 'entry', at });
     }
     // Preferences are never emitted, here as in learn.
   }
@@ -1915,6 +2076,7 @@ export class Cortex {
       tags: [], connections: [], summary: '', heat: 0, access_count: 0,
       entry_dates: { ...(from.entry_dates || {}) },
       entry_status: { ...(from.entry_status || {}) },
+      entry_verified: { ...(from.entry_verified || {}) },
     };
     delete parte.map;
     const textos = [

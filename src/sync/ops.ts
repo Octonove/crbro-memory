@@ -15,7 +15,7 @@ import { contentHash } from '../utils/hash.js';
 /** Bumped only if the shape changes in a way older clients cannot read. */
 export const OPS_VERSION = 1;
 
-export type OpKind = 'neuron' | 'fact' | 'status' | 'decision' | 'pattern' | 'tag' | 'error' | 'map' | 'purge' | 'debt';
+export type OpKind = 'neuron' | 'fact' | 'status' | 'decision' | 'pattern' | 'tag' | 'error' | 'map' | 'purge' | 'debt' | 'verify';
 
 interface OpBase {
   v: number;
@@ -44,6 +44,14 @@ export interface FactOp extends OpBase {
   src?: string;
   /** Aliases indexed with the fact (1.15). Merged, never replaced, on the receiving side. */
   keys?: string[];
+  /**
+   * The fact's shelf_life, only when someone set it explicitly (shelf life).
+   * Merge: the most volatile explicit value wins (volatile < normal < durable
+   * < permanent): a needless warning costs one check, a missing one a wrong
+   * answer. So lengthening a shared fact's shelf life stays local. A client
+   * that does not know the field ignores it.
+   */
+  shelf?: 'volatile' | 'normal' | 'durable' | 'permanent';
 }
 
 /**
@@ -115,7 +123,25 @@ export interface PurgeOp extends OpBase {
   key: string;
 }
 
-export type Op = NeuronOp | FactOp | StatusOp | DecisionOp | PatternOp | TagOp | ErrorOp | MapOp | PurgeOp | DebtOp;
+/**
+ * A line was checked against its source and still held (shelf life): emitted
+ * by crbro_revise status=verified and by a session learning the same fact
+ * again. `eid` is the fact id (ekind 'fact') or the entryId of a decision or
+ * pattern (ekind 'entry'); `at` is the check. Merge: the latest `at` wins over
+ * every log and the local value. A later check is newer evidence, there is
+ * nothing to vote on, and max() keeps the merge order-independent.
+ *
+ * Added without bumping OPS_VERSION, like the purge kinds in 2.0: an older
+ * client reads the line (v <= 1), does not know the kind and skips it. The
+ * check simply does not reach that teammate: a degradation, never a corruption.
+ */
+export interface VerifyOp extends OpBase {
+  op: 'verify';
+  eid: string;
+  ekind: 'fact' | 'entry';
+}
+
+export type Op = NeuronOp | FactOp | StatusOp | DecisionOp | PatternOp | TagOp | ErrorOp | MapOp | PurgeOp | DebtOp | VerifyOp;
 
 /**
  * Same wording, same id, on every machine.

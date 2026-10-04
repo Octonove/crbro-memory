@@ -108,7 +108,10 @@ describe('crbro_maintenance compact', () => {
     expect(byText.name).toBe('Imported notes 2026-05-13 (general)');
     expect(byText.matching_content).toContain('bloque 17');
     // "scratchpad" appears in no line: only in the names, which travelled as keys.
-    const byName = body(await call('crbro_recall', { query: 'scratchpad paso' })).results[0];
+    // The line that wins here holds a URL and is months old: since shelf life
+    // it comes back in possibly_stale, still found — which is what this pins.
+    const out = body(await call('crbro_recall', { query: 'scratchpad paso' }));
+    const byName = [...out.results, ...(out.possibly_stale || [])][0];
     expect(byName.name).toBe('Imported notes 2026-05-13 (general)');
   });
 

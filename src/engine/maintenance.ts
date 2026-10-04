@@ -7,6 +7,7 @@ import { entryId } from '../sync/ops.js';
 import { inferEntryDay, isDayPrecision, datesInText } from './dates.js';
 import { fold } from '../search/tokenize.js';
 import { factId } from '../utils/hash.js';
+import { stalenessContext, factStaleness, entryStaleness, type StalenessContext, type StaleInfo, type ShelfLife } from './shelf.js';
 import type { Brain } from './brain.js';
 import type { Cortex } from './cortex.js';
 import type { Synapses } from './synapses.js';
@@ -53,6 +54,15 @@ export interface MaintenanceReport {
   expired_entries: number;
   /** The longest-expired of them, to review: keep, crbro_revise, or crbro_learn supersedes. Never touched by maintenance. */
   expired_sample: ExpiredEntry[];
+  /**
+   * Live facts, decisions and patterns past their shelf life since last
+   * verified (shelf life) — what recall would serve in possibly_stale.
+   * Read-only, like expired_entries; the two can name the same entry and
+   * answer different questions. Absent with CRBRO_STALENESS=0.
+   */
+  stale_entries?: number;
+  /** The most overdue of them (age minus window), at most 10. */
+  stale_sample?: StaleEntry[];
   /** Neurons past SPLIT_MIN_ENTRIES live entries, each with the groups its own words suggest. */
   split_candidates: SplitCandidate[];
   /** One-line neurons left by a bulk import, by the day they were created. compact:true folds each group into one digest neuron. */
@@ -72,6 +82,19 @@ export interface ExpiredEntry {
   added: string;
   /** The day it looked forward to, now behind us. */
   due: string;
+  preview: string;
+}
+
+export interface StaleEntry {
+  neuron_id: string;
+  entry_id: string;
+  kind: string;
+  shelf_life: ShelfLife;
+  /** The class was inferred from the text (true) or set by someone (false). */
+  inferred: boolean;
+  /** Day of the last verification, or of the entry when never verified. */
+  last_verified: string;
+  age_days: number;
   preview: string;
 }
 
@@ -110,6 +133,7 @@ const SPLIT_MIN_ENTRIES = 80;
 const SPLIT_MAX_CANDIDATES = 8;
 const SPLIT_GROUPS = 5;
 const EXPIRED_SAMPLE = 10;
+const STALE_SAMPLE = 10;
 /** Too common to name a subtopic. Short on purpose: the share bounds below do most of the work. */
 const SPLIT_STOP = new Set(('para como pero este esta estos estas desde hasta entre sobre cuando donde porque tambien todos todas cada '
   + 'tiene tienen hace hacer puede pueden debe deben usar solo antes despues ahora siempre nunca mismo misma nueva nuevo '
@@ -324,6 +348,17 @@ export class Maintenance {
     report.expired_entries = revision.expired;
     report.expired_sample = revision.sample;
     report.split_candidates = revision.splits;
+    if (revision.stale) {
+      report.stale_entries = revision.stale.count;
+      report.stale_sample = revision.stale.sample;
+      if (revision.stale.count > 0) {
+        report.notes.push(
+          `${revision.stale.count} live entr${revision.stale.count === 1 ? 'y is' : 'ies are'} past ${revision.stale.count === 1 ? 'its' : 'their'} shelf life since last verified ` +
+          '(stale_sample lists the most overdue). Recall serves them in possibly_stale. Check each against its source: still true → ' +
+          'crbro_revise status=verified facts=[entry_id] (entries=[entry_id] for a decision or pattern); changed → crbro_learn the new value with supersedes. ' +
+          'Nothing was changed.');
+      }
+    }
     if (revision.expired > 0) {
       report.notes.push(
         `${revision.expired} live entr${revision.expired === 1 ? 'y names' : 'ies name'} a day that was still ahead when written and has ` +
@@ -660,6 +695,9 @@ export class Maintenance {
       for (const k of Object.keys(neuron.entry_source || {})) {
         if (!vivos.has(k)) issues.push(`Stale entry_source key in ${id}: ${k}`);
       }
+      for (const k of Object.keys(neuron.entry_verified || {})) {
+        if (!vivos.has(k)) issues.push(`Stale entry_verified key in ${id}: ${k}`);
+      }
     }
 
     // Synapse files whose ends no longer both exist.
@@ -755,9 +793,14 @@ export class Maintenance {
    * that gather between 8% and 45% of them — frequent enough to be a
    * subtopic, not so frequent that they are just the neuron's own name.
    */
-  private async reviewEntries(): Promise<{ expired: number; sample: ExpiredEntry[]; splits: SplitCandidate[] }> {
+  private async reviewEntries(): Promise<{ expired: number; sample: ExpiredEntry[]; splits: SplitCandidate[]; stale?: { count: number; sample: StaleEntry[] } }> {
     const hoy = today();
     const vencidas: ExpiredEntry[] = [];
+    // Shelf life: the same pass judges every live fact, decision and pattern.
+    let since: string | undefined;
+    try { since = (await this.brain.getManifest()).staleness_since; } catch { /* no manifest: full grace */ }
+    const vida: StalenessContext | null = stalenessContext(since);
+    const rancias: Array<StaleEntry & { overdue: number }> = [];
     const gordas: SplitCandidate[] = [];
     const enNeuronas = new Map<string, number>();
     const grandes: Array<{ n: Neuron; vivas: number; palabras: Array<Set<string>>; propias: Set<string> }> = [];
@@ -789,6 +832,25 @@ export class Maintenance {
         for (const t of lista || []) {
           if (!t || retirada(t)) continue;
           vivas.push({ eid: entryId(t), kind, text: t, added: n.entry_dates?.[entryId(t)] || '' });
+        }
+      }
+
+      if (vida) {
+        for (const e of vivas) {
+          let s: StaleInfo | null = null;
+          if (e.kind === 'fact') {
+            const f = (n.facts || []).find(x => (x.id || factId(x.text)) === e.eid && x.text === e.text);
+            s = f ? factStaleness(f, vida) : null;
+          } else if (e.kind === 'decision' || e.kind === 'pattern') {
+            s = entryStaleness(n, e.kind, e.text, vida);
+          }
+          if (!s || !s.stale) continue;
+          rancias.push({
+            neuron_id: n.id, entry_id: e.eid, kind: e.kind, shelf_life: s.shelf_life, inferred: s.shelf_inferred,
+            last_verified: s.last_verified, age_days: s.age_days,
+            preview: e.text.length > 160 ? `${e.text.slice(0, 160).trimEnd()}…` : e.text,
+            overdue: s.age_days - (s.window ?? 0),
+          });
         }
       }
 
@@ -862,7 +924,11 @@ export class Maintenance {
 
     vencidas.sort((a, b) => (a.due < b.due ? -1 : a.due > b.due ? 1 : a.entry_id < b.entry_id ? -1 : 1));
     gordas.sort((a, b) => b.entries - a.entries);
-    return { expired: vencidas.length, sample: vencidas.slice(0, EXPIRED_SAMPLE), splits: gordas.slice(0, SPLIT_MAX_CANDIDATES) };
+    rancias.sort((a, b) => b.overdue - a.overdue || (a.entry_id < b.entry_id ? -1 : 1));
+    return {
+      expired: vencidas.length, sample: vencidas.slice(0, EXPIRED_SAMPLE), splits: gordas.slice(0, SPLIT_MAX_CANDIDATES),
+      ...(vida ? { stale: { count: rancias.length, sample: rancias.slice(0, STALE_SAMPLE).map(({ overdue: _o, ...r }) => r) } } : {}),
+    };
   }
 
   /**
@@ -975,7 +1041,8 @@ export class Maintenance {
       const fechasRancias = Object.keys(neuron.entry_dates || {}).filter(k => !vivos.has(k));
       const estadosRancios = Object.keys(neuron.entry_status || {}).filter(k => !vivos.has(k));
       const origenesRancios = Object.keys(neuron.entry_source || {}).filter(k => !vivos.has(k));
-      if (rotas.length === 0 && fechasRancias.length === 0 && estadosRancios.length === 0 && origenesRancios.length === 0) continue;
+      const verificadasRancias = Object.keys(neuron.entry_verified || {}).filter(k => !vivos.has(k));
+      if (rotas.length === 0 && fechasRancias.length === 0 && estadosRancios.length === 0 && origenesRancios.length === 0 && verificadasRancias.length === 0) continue;
 
       await updateJSON<Neuron>(this.brain.paths.neuron(id), current => {
         if (!current) return null;
@@ -992,12 +1059,17 @@ export class Maintenance {
           for (const k of origenesRancios) delete current.entry_source[k];
           if (Object.keys(current.entry_source).length === 0) delete current.entry_source;
         }
+        if (verificadasRancias.length > 0 && current.entry_verified) {
+          for (const k of verificadasRancias) delete current.entry_verified[k];
+          if (Object.keys(current.entry_verified).length === 0) delete current.entry_verified;
+        }
         return current;
       });
       for (const c of rotas) done.push(`Removed dangling connection ${id} → ${c}`);
       for (const k of fechasRancias) done.push(`Dropped stale entry_dates key ${k} from ${id}`);
       for (const k of estadosRancios) done.push(`Dropped stale entry_status key ${k} from ${id}`);
       for (const k of origenesRancios) done.push(`Dropped stale entry_source key ${k} from ${id}`);
+      for (const k of verificadasRancias) done.push(`Dropped stale entry_verified key ${k} from ${id}`);
     }
 
     // Counters: the disk is the truth.

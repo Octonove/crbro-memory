@@ -22,6 +22,7 @@ import { chunkId, factId } from '../utils/hash.js';
 import { queryTerms, variants } from './tokenize.js';
 import { SemanticIndex, semanticEnabled, type SemanticHit } from './semantic.js';
 import { entryId } from '../sync/ops.js';
+import { stalenessContext, factStaleness, entryStaleness, type StalenessContext, type StaleInfo } from '../engine/shelf.js';
 import type { Brain } from '../engine/brain.js';
 import type { Neuron, SearchResult, Fact } from '../types/index.js';
 
@@ -130,7 +131,10 @@ export interface SearchFilter {
  * line matters, and entry_id reads it whole through crbro_inspect.
  */
 const ALSO_PREVIEW = 300;
-function alsoLine(text: string, kind: string, added: string, eid?: string, from: { origin?: string; by?: string } = {}) {
+function alsoLine(
+  text: string, kind: string, added: string, eid?: string,
+  from: { origin?: string; by?: string; staleness?: { stale: boolean; age_days: number } } = {},
+) {
   return {
     ...(eid ? { entry_id: eid } : {}),
     kind,
@@ -140,6 +144,21 @@ function alsoLine(text: string, kind: string, added: string, eid?: string, from:
     // Same rule as the winning entry: said only when the line is not the user's own.
     ...(from.origin ? { origin: from.origin } : {}),
     ...(from.by ? { by: from.by } : {}),
+    // A preview past its shelf life keeps its place and carries its age
+    // (shelf life): it is a pointer, not an answer, and moving it would cost
+    // more tokens than it saves.
+    ...(from.staleness?.stale ? { stale_days: from.staleness.age_days } : {}),
+  };
+}
+
+/** What recall shows of a StaleInfo: the window is policy, not news. */
+function staleView(s: StaleInfo | null): SearchResult['staleness'] | undefined {
+  if (!s) return undefined;
+  return {
+    stale: s.stale, age_days: s.age_days, last_verified: s.last_verified,
+    shelf_life: s.shelf_life, shelf_inferred: s.shelf_inferred,
+    ...(s.shelf_reason ? { shelf_reason: s.shelf_reason } : {}),
+    ...(s.age_from ? { age_from: s.age_from } : {}),
   };
 }
 
@@ -944,6 +963,14 @@ export class SearchEngine {
 
     const resultados: Array<{ r: SearchResult; extra: ChunkHit[]; neuron: Neuron | null }> = [];
 
+    // Shelf life (staleness): judged here, where the neuron file is already
+    // read for every candidate, so it costs one lookup per row and nothing in
+    // the index. The ranking below does not look at it: the server partitions
+    // the rows AFTER they are chosen. Off with CRBRO_STALENESS=0.
+    let since: string | undefined;
+    try { since = (await this.brain.getManifest()).staleness_since; } catch { /* no manifest yet: full grace */ }
+    const vida = stalenessContext(since);
+
     // Provenance (2.7) needs two small files — which space a neuron is shared
     // in, and who "me" is — but only when a result is a teammate's. Read at
     // most once per call, and never on a brain nobody shares with.
@@ -1025,6 +1052,7 @@ export class SearchEngine {
           ...(elegido.semantic !== undefined ? { semantic_score: elegido.semantic } : {}),
           ...(neuron?.map?.text ? { has_map: true } : {}),
           ...(neuron ? await this.originOf(elegido, neuron, contextoEquipo) : {}),
+          ...(vida && neuron ? (() => { const s = staleView(this.stalenessOf(elegido, neuron, vida)); return s ? { staleness: s } : {}; })() : {}),
         },
         extra: contenido.filter(c => c !== elegido).slice(0, 2),
         neuron,
@@ -1048,7 +1076,10 @@ export class SearchEngine {
         // full text. The id reads any of them whole. Each line carries its own
         // origin: a teammate's line next to an own winner is still a teammate's.
         r.also_matched = await Promise.all(extra.map(async c =>
-          alsoLine(c.text, c.kind, c.added || '', c.eid, neuron ? await this.originOf(c, neuron, contextoEquipo) : {})));
+          alsoLine(c.text, c.kind, c.added || '', c.eid, {
+            ...(neuron ? await this.originOf(c, neuron, contextoEquipo) : {}),
+            ...(vida && neuron ? { staleness: this.stalenessOf(c, neuron, vida) ?? undefined } : {}),
+          })));
       }
     }
     return top.map(x => x.r);
@@ -1099,6 +1130,21 @@ export class SearchEngine {
     const { espacios } = await contexto();
     const espacio = espacios[neuron.id];
     return { origin: espacio ? `team:${espacio}` : 'team', ...(autor ? { by: autor } : {}) };
+  }
+
+  /**
+   * How a matched chunk stands against its shelf life, read from the neuron
+   * on disk (verified, shelf_life, entry_verified are not in the index).
+   * null for the header and the map, and for anything with no date.
+   */
+  private stalenessOf(chunk: ChunkHit, neuron: Neuron, ctx: StalenessContext): StaleInfo | null {
+    // Protocols are standing instructions, not values about the world; maintenance skips them too.
+    if (neuron.type === 'protocol') return null;
+    if (chunk.kind === 'fact') {
+      const f = (neuron.facts || []).find(x => !isRetired(x) && x.text === chunk.text);
+      return f ? factStaleness(f, ctx) : null;
+    }
+    return entryStaleness(neuron, chunk.kind, chunk.text, ctx);
   }
 
   /**
