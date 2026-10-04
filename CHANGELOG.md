@@ -2,7 +2,7 @@
 
 All notable changes to CRBRO.
 
-## [Unreleased]
+## [2.9.0] — 2026-10-04
 
 Shelf life: what may have changed since it was last checked comes apart.
 From community feedback (r/mcp); design in
