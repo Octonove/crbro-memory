@@ -22,7 +22,7 @@ import { chunkId, factId } from '../utils/hash.js';
 import { queryTerms, variants } from './tokenize.js';
 import { SemanticIndex, semanticEnabled, type SemanticHit } from './semantic.js';
 import { entryId } from '../sync/ops.js';
-import { stalenessContext, factStaleness, entryStaleness, type StalenessContext, type StaleInfo } from '../engine/shelf.js';
+import { stalenessContextOf, factStaleness, entryStaleness, type StalenessContext, type StaleInfo } from '../engine/shelf.js';
 import type { Brain } from '../engine/brain.js';
 import type { Neuron, SearchResult, Fact } from '../types/index.js';
 
@@ -967,9 +967,9 @@ export class SearchEngine {
     // read for every candidate, so it costs one lookup per row and nothing in
     // the index. The ranking below does not look at it: the server partitions
     // the rows AFTER they are chosen. Off with CRBRO_STALENESS=0.
-    let since: string | undefined;
-    try { since = (await this.brain.getManifest()).staleness_since; } catch { /* no manifest yet: full grace */ }
-    const vida = stalenessContext(since);
+    let manifiesto: { staleness_since?: string; created?: string } | undefined;
+    try { manifiesto = await this.brain.getManifest(); } catch { /* no manifest yet: full grace */ }
+    const vida = stalenessContextOf(manifiesto);
 
     // Provenance (2.7) needs two small files — which space a neuron is shared
     // in, and who "me" is — but only when a result is a teammate's. Read at

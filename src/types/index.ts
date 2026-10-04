@@ -269,9 +269,11 @@ export interface Manifest {
   last_consolidation: string | null;
   /**
    * First boot of a CRBRO that knows shelf life. Facts that were never
-   * verified, have no explicit shelf_life, are not volatile and predate it
-   * start their clock here instead, so an old brain does not turn "possibly
-   * stale" on upgrade day.
+   * verified, have no explicit shelf_life and predate it start their clock
+   * near here instead, so an old brain does not turn "possibly stale" on
+   * upgrade day. Inferred-volatile facts get that grace only when the brain
+   * itself predates the stamp (`created` well before it: 2.9.1); a brain
+   * born stamped flags them at once.
    */
   staleness_since?: string;
 }

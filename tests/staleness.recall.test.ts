@@ -361,6 +361,7 @@ describe('a brain written before shelf life', () => {
   const OLD_PLAIN = 'Los informes mensuales se envían al cliente por correo.';
   const OLD_PORT = 'La API interna de Garza escucha en el puerto 8080.';
   const UNDATED = 'El servidor de Garza está en el puerto 2222.';
+  const OLD_MARKED = 'El webhook de Garza firma con la clave rotada cada trimestre.';
 
   beforeAll(async () => {
     holder = await fs.mkdtemp(path.join(os.tmpdir(), 'crbro-stale-legacy-'));
@@ -380,6 +381,7 @@ describe('a brain written before shelf life', () => {
         { text: OLD_PLAIN, confidence: 1, added: ago(800), source: 'session', id: 'f_plain', status: 'active' },
         { text: OLD_PORT, confidence: 1, added: ago(400), source: 'session', id: 'f_port', status: 'active' },
         { text: UNDATED, confidence: 1, added: '', source: 'session', id: 'f_undated', status: 'active' },
+        { text: OLD_MARKED, confidence: 1, added: ago(400), source: 'session', id: 'f_marked', status: 'active', shelf_life: 'volatile' },
       ],
       decisions: [{ text: 'Garza se despliega a mano.', date: ago(900), rationale: '' }],
       patterns: [], preferences: [], connections: [], tags: [], errors: [], debts: [], entry_dates: {},
@@ -405,7 +407,7 @@ describe('a brain written before shelf life', () => {
     expect(await fs.readFile(file, 'utf8')).toBe(before);
   });
 
-  it('old non-volatile lines get the grace; an old volatile one is flagged; an undated one never is', async () => {
+  it('old unmarked lines get the grace, volatile ones too (2.9.1); one marked volatile by hand is flagged; an undated one never is', async () => {
     const plain = await json('crbro_recall', { query: 'informes mensuales cliente correo' });
     expect(plain.results[0].matching_content).toBe(OLD_PLAIN);
     expect(plain.possibly_stale).toBeUndefined();
@@ -413,8 +415,16 @@ describe('a brain written before shelf life', () => {
     const decision = await json('crbro_recall', { query: 'Garza despliega mano' });
     expect(decision.results[0].matching_content).toContain('Garza se despliega a mano.');
 
+    // Inferred volatile, in a brain that predates shelf life: the staggered
+    // grace (2.9.1). 2.9.0 flagged it on the first recall after the upgrade,
+    // together with every other version, URL and path the brain held.
     const port = await json('crbro_recall', { query: 'API interna Garza puerto' });
-    expect(port.possibly_stale?.[0]).toMatchObject({ last_known: OLD_PORT, age_days: 400, shelf_life: 'volatile' });
+    expect(port.results.map((r: any) => r.matching_content)).toContain(OLD_PORT);
+    expect((port.possibly_stale || []).map((r: any) => r.last_known)).not.toContain(OLD_PORT);
+
+    // Marked volatile by hand: no grace, as in 2.9.0.
+    const marked = await json('crbro_recall', { query: 'webhook Garza firma clave rotada trimestre' });
+    expect(marked.possibly_stale?.[0]).toMatchObject({ last_known: OLD_MARKED, age_days: 400, shelf_life: 'volatile', shelf_inferred: false });
 
     const undated = await json('crbro_recall', { query: 'servidor Garza puerto 2222' });
     const row = [...undated.results, ...(undated.possibly_stale || [])].find((r: any) => (r.matching_content ?? r.last_known) === UNDATED);
