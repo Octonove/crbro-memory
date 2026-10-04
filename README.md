@@ -49,6 +49,7 @@ Or in USDC. Send **USDC only** and **only on the network shown**; on any other n
 - **🧰 15 tools, one lifecycle** — Every read is a view of `crbro_inspect`; `crbro_learn`, `crbro_revise` and `crbro_forget` are the three stages of one rule (a new truth supersedes the old, an outdated one is retired, a dangerous one is removed), and every description says in its first sentence whether it reads or writes and which neighbour does the adjacent job. Down from 23 in 1.x without touching the brain on disk; `crbro_boot` maps the old names to the new calls *(v2.0+)*
 - **🔁 Lessons that outgrow their project** — Storing the same fact again counts it (`confirmations`, shown by `crbro_inspect` when above 1), and `crbro_consolidate` points out lessons that already live in two or more project neurons, with the `tech_` or `process_` neuron they belong in. It suggests; it never moves anything *(v2.7+)*
 - **🧷 Compact without losing the thread (opt-in)** — `npx crbro-memory install-hooks --compact` saves a redacted checkpoint of a Claude Code session before it compacts — last requests, task list, open items, folder and git remote — and hands it back when the session resumes, in 1,500 characters at most. No model call *(v2.7+)*
+- **📌 Open items in sight (opt-in)** — `npx crbro-memory install-mod` adds a Claude Code mod: the newest open item of the brain above the prompt, whole — its label apart, its numbered steps one per line, its age in color — with ‹ › to go through the rest, and `/pending` (alias `/pendientes`) with every one as a card: filter, *work on this*, *done* and *discard* behind a confirmation, and what was closed lately. It reads through `crbro_context` and closes through it; the brain file is only read when the server is not reachable. English or Spanish (`--lang`). Needs Claude Code 2.1.286 or later: the CLI and the desktop app's Code tab *(v2.8+)*
 - **🔎 Look back at your sessions (read-only)** — `crbro usage` sums the tokens each model took per session, subagents apart; `crbro postmortem` lists candidate lessons — corrections you had to repeat, a tool failing in a row, the same request asked again — and stores nothing. Both read Claude Code's own logs on your disk *(v2.7+)*
 - **⏱️ Memory at the moment of action (opt-in)** — `npx crbro-memory install-hooks --guard` wires a Claude Code `PreToolUse` hook: before a shell command runs, the stored errors, debts and patterns that mention *that command* are added to the model's context — three at most, once per session, never blocking. Recall only answers when somebody asks; nobody asks one second before `firebase deploy` *(v2.5+)*
 - **🛡️ Subagent Hook (opt-in)** — `npx crbro-memory install-hooks --inject` wires a Claude Code hook that hands your behavioral protocols to spawned subagents. Injection is off by default since 1.12 — three clean-control benchmark runs found no measured benefit in any model and real harm in small ones, and shipping an unmeasured default is not what this project does
@@ -220,6 +221,25 @@ A compaction keeps a summary and loses the detail that tells you where you were.
 - **`SessionStart`** prints the boot notice with the folder already filled in (`call crbro_boot … with project="<folder>"`, so the project's neurons come first), a `Project: <folder> · git: <remote>` line, and — only when the session comes back from a compaction and a checkpoint of that session younger than 24 hours exists — a "Resuming after compaction" block with the request, the pending tasks and the open items, never longer than 1,500 characters. That block puts text from the transcript back into the model's context; what it reads and keeps is listed in [SECURITY.md](SECURITY.md#reading-session-logs).
 
 The `install-boot` entry for Claude Code prints the same notice, so it is replaced (and put back by `uninstall-hooks --compact`). A CRBRO hook you wrote yourself is never replaced: the new hooks are added next to it with `--no-boot` / `--no-reminder`, so nothing is read twice. Only Claude Code has `PreCompact`; Codex and the rest are not touched. Like the other hooks, it never blocks: it reads no network, starts no `git` process, ends on its own if stdin never closes, and always exits 0.
+
+### 9. (Claude Code, optional) Open items in sight
+
+```bash
+npx crbro-memory install-mod               # --lang en | es | auto (default: leave it as it is; auto on a first install)
+npx crbro-memory install-mod --verify      # SHA-256 of the installed copy against this package; changes nothing
+npx crbro-memory uninstall-mod
+```
+
+An open item left in `crbro_context` is only seen when `crbro_boot` lists it, which is how finished work gets repeated back for weeks and unfinished work gets forgotten. This installs `mods/crbro-pending`, a Claude Code mod (a plugin of function hooks):
+
+- **The band**, above the prompt: the newest open item, whole. A short `Label:` is drawn apart and `(1) … (2) …` steps go one per line; the age is green up to 3 days, amber up to two weeks, red after. ‹ › walks the others, *Compact* folds it to one line, *See all* opens the list, *Hide* puts it away until `/pending`.
+- **`/pending`** (alias `/pendientes`): every open item as a card, with a filter that ignores accents, *Work on this* (writes the item into the prompt for you to send), *Done* and *Discard*, each behind a yes/no, and the items closed lately.
+
+It reads with `crbro_context` and no arguments, which only reads, on whichever MCP server has that tool (`crbro` in a standard install, found with the session's tool list), and refreshes every minute and after every CRBRO tool call. When no CRBRO server is reachable it reads `<CRBRO_PATH or ~/.crbro>/prefrontal/active_context.json` instead, resolved as the server resolves it, and says so. *Done* and *Discard* always go through the server — `resolve_pending` keeps the item under recently closed, `discard_pending` does not — and the mod never writes the brain.
+
+`install-mod` copies the mod to `~/.claude/crbro-mods/crbro-pending` and adds that folder to `env.CLAUDE_CODE_PLUGIN_DIRS` in `~/.claude/settings.json` (`;` between folders on Windows, `:` elsewhere), once; nothing else in that file is touched, except the mod's own language when `--lang en` or `--lang es` is given (`pluginConfigs.crbro-pending.options.language`, also a row in `/config`). `auto` follows `CRBRO_LANG`, then `LC_ALL` / `LC_MESSAGES` / `LANG`, then the system locale. A `settings.json` that does not parse is left alone, the write is atomic, and running it again changes nothing. If the list already holds a folder whose plugin is named `crbro-pendientes` or `crbro-pending` — a copy made by hand before this existed — it is replaced in place and named; its folder stays on disk for you to delete. `uninstall-mod` takes the path out of the list (and the variable, if it ends up empty) and deletes `~/.claude/crbro-mods/crbro-pending`, nothing else. `install-hooks --verify` checks the mod too.
+
+Mods need Claude Code 2.1.286 or later and are drawn in the CLI and in the desktop app's Code tab; Claude Desktop chat, Codex, Cursor and the VS Code extension do not draw them. Open a new session after installing.
 
 ## Tools
 
@@ -435,7 +455,9 @@ npx crbro-memory daemon on | off | status | stop   # One process owns the brain 
 npx crbro-memory install-hooks --guard   # Stored lessons speak before a shell command runs (above)
 npx crbro-memory install-hooks --compact # Checkpoint before a compaction, picked back up after it (above)
 npx crbro-memory guard "<command>"       # What the guard would say for a command
-npx crbro-memory install-hooks --verify  # SHA-256 of the installed hooks against this package; changes nothing
+npx crbro-memory install-hooks --verify  # SHA-256 of the installed hooks and mod against this package; changes nothing
+npx crbro-memory install-mod [--lang en|es|auto]   # Open items above the prompt and /pending in Claude Code (above)
+npx crbro-memory uninstall-mod           # Remove that mod and its CLAUDE_CODE_PLUGIN_DIRS entry
 npx crbro-memory usage [--days N] [--session ID] [--project DIR] [--json]   # Tokens per model and session, subagents apart
 npx crbro-memory postmortem [--days N] [--max N] [--json]   # Candidate lessons from past sessions; stores nothing
 npx crbro-memory --help   # Help

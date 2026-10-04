@@ -2,6 +2,51 @@
 
 All notable changes to CRBRO.
 
+## [Unreleased]
+
+Open items in sight, for whoever installs CRBRO, not only for its author.
+
+- **The open items above the prompt.** `npx crbro-memory install-mod` adds
+  `crbro-pending`, a Claude Code mod: the newest open item of the brain drawn
+  whole above the prompt — a short `Label:` apart, `(1) … (2) …` steps one per
+  line, its age green, amber or red — with ‹ › through the rest, compact/read
+  all, *See all* and *Hide*. `/pending` (alias `/pendientes`) shows every item
+  as a card, with a filter that ignores accents, *Work on this* (the item
+  written into the prompt, not sent), *Done* and *Discard* behind a yes/no,
+  and what was closed lately. It started as a mod the author kept in his own
+  `~/.claude`, reading his brain file by hand and speaking only Spanish.
+- **It asks CRBRO, not the disk.** The list comes from `crbro_context` with no
+  arguments, which only reads, on whichever MCP server has that tool —
+  `crbro` in a standard install, any other name found from the session's tool
+  list or from the first CRBRO tool the model calls. Only when no server is
+  reachable does it read `<CRBRO_PATH or ~/.crbro>/prefrontal/active_context.json`,
+  resolving `CRBRO_PATH` exactly as the server does, and the pane says which
+  of the two it read. *Done* and *Discard* always go through the server; the
+  mod never writes the brain.
+- **English and Spanish.** English by default and Spanish complete, every
+  string in one table. `install-mod --lang en|es` stores the choice in the
+  mod's own setting (a row in `/config` too); `auto` follows `CRBRO_LANG`,
+  then `LC_ALL` / `LC_MESSAGES` / `LANG`, then the system locale.
+- **Installed with the same care as the hooks.** The mod is copied to
+  `~/.claude/crbro-mods/crbro-pending` and that folder is added once to
+  `env.CLAUDE_CODE_PLUGIN_DIRS` in `~/.claude/settings.json`, with `;` on
+  Windows and `:` elsewhere. A file with a BOM is read, one that does not
+  parse is left alone, the write is atomic, a second run changes nothing. A
+  folder in that list holding a plugin named `crbro-pendientes` or
+  `crbro-pending` — the hand-made copy — is replaced in place and named, and
+  its folder is left on disk. `uninstall-mod` removes the entry (and the
+  variable when it ends up empty) and deletes its own folder, nothing else.
+- **Verified like the hooks.** `install-mod --verify`, and `install-hooks
+  --verify` too, compare the installed copy with the package file by file by
+  SHA-256 and check that `settings.json` lists it; exit 1 on any difference.
+- **Requirement.** Mods need Claude Code 2.1.286 or later, and are drawn in the
+  CLI and in the desktop app's Code tab — not in Claude Desktop chat, Codex,
+  Cursor or the VS Code extension. A new session picks the mod up.
+- **Package.** `mods/` ships; the mod's tests, `tsconfig.json` and generated
+  types do not (`mods/crbro-pending/.npmignore`). 18 tests for the mod under
+  `claude plugin test`, 27 for the installer in the vitest suite, which now
+  leaves `mods/` to the former.
+
 ## [2.7.2] — 2026-10-03
 
 The first run of the agentic benchmark, what it fixed in the server's
