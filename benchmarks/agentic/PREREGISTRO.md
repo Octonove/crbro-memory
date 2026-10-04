@@ -289,3 +289,74 @@ que U5 se juzgue en ella.
 
 **Estado:** diseñado y validado en seco (`--dry`, con y sin `--only`), sin
 ninguna ejecución con modelo. Este commit es el pre-registro.
+
+#### Nota fechada (2026-10-04), antes de la primera tanda `after`
+
+No cambia ninguna tarea, ninguna puntuación ni ningún umbral. Deja por escrito
+tres cosas que no salieron como decía el texto de arriba y cómo se va a medir
+`after`, antes de medirlo.
+
+**1. El orden.** Arriba dice que `before` se ejecuta «antes de que exista
+implementación» en la rama. No fue así: la implementación (`6e247d3`) se
+commiteó antes de que corriera ninguna tanda `before`. Por qué no contamina el
+`before`: se ejecutó con la build 2.8.0 en un clon aparte (`cab8283`,
+`dirty: false` en el JSON) y con el arnés de este pre-registro en otro clon
+(`1a023a7`, sin modificar). `git diff 1a023a7..b68600b -- benchmarks/agentic`
+sale vacío: el arnés, las tareas y la puntuación que mide `after` son los
+mismos bytes. Los resultados están en
+`results/agentic-2026-10-04-haiku-before.json` y `…-sonnet-before.json`
+(haiku: `crbro` 0/12 aciertos y 11/12 valores viejos sin aviso; sonnet: 0/12 y
+12/12; `baseline` 3/12 y 6/12, nunca el valor viejo). Con eso U4 es medible:
+`after` tiene que dar menos de 11 en haiku y menos de 12 en sonnet.
+
+**2. Una variable de entorno.** El `before` se lanzó con `CRBRO_MOD=0` en el
+entorno del ejecutor, que el CLI hereda al servidor MCP de cada celda: el
+`crbro_boot` de la 2.8.0 instala el mod de Claude Code en el `~/.claude` real
+del usuario, y eso estaba prohibido. Solo suprime esa instalación y su aviso
+en boot; no toca recall. `after` se lanza igual, por paridad.
+
+**3. Cambios de producto tras la revisión, antes de `after`** (commit
+`b68600b`, sin ninguna ejecución con modelo de por medio). Dos revisiones del
+código encontraron fallos y se corrigieron: verificaciones con fecha futura,
+gracia escalonada para cerebros antiguos, el re-learn que añade keywords ya no
+cuenta como verificación, un aviso en espacios de equipo, ids de hechos
+antiguos, el sello del manifiesto y la huella del daemon. Uno toca lo que el
+agente ve en estas cuatro tareas, y por eso se dice aquí: cuando la fila mejor
+clasificada pasa a `possibly_stale`, cada fila lleva su `rank` y el `hint`
+empieza por «The best match (rank 1) moved to possibly_stale; results holds
+lower-ranked rows that may be about something else». Salió de una revisión que
+reprodujo la salida de recall de u2 y u3 sobre el cerebro sembrado (en u2,
+`results[0]` era el precio de otro producto). Nadie ha visto todavía una
+respuesta de un modelo con esta build, así que la primera `after` sigue siendo
+ciega en ese sentido; pero el texto del servidor se ajustó mirando estas
+tareas, y se dice.
+
+**Cómo se mide `after`.** Con la build de la rama tal como queda en el commit
+de esta nota (`dirty: false`), por cada modelo (haiku y sonnet, `n = 3`), dos
+tandas, sin cambiar nada del producto entre ellas:
+
+- primero `--only stale-unmarked --label after-unmarked --compare <before>`:
+  el mismo conjunto de tareas que `before`, comparación directa;
+- después la tanda completa de 16 tareas, `--label after --compare <before>`,
+  como estaba pre-registrado. Es la que juzga U1–U5.
+
+Como son dos muestras de la misma build, la frase solo se escribe si **las
+dos** cumplen U1–U4 y la completa cumple además U5: más exigente que lo
+pre-registrado, no menos. Se publican las dos pase lo que pase. El tope de
+una enmienda sigue sin usarse.
+
+`--compare` solo comprueba el modelo. Se comprueba a mano y se deja escrito
+con los resultados: el JSON de `before` tiene `crbro.commit` `cab8283…`,
+`label: before`, `only: ["stale-unmarked"]`, el mismo modelo, `n = 3` y
+Claude Code 2.1.270.
+
+**Límites que se dirán con cualquier resultado** (detalle en
+[staleness.md §13](../../docs/design/staleness.md)): U5 no puede ver una
+inundación de avisos, porque los doce hechos originales se siembran con fecha
+de hoy y ninguna tarea tiene un dato viejo que siga siendo cierto; u3 y u4
+coinciden con los ejemplos de la tabla del detector, así que miden si
+reconoce sus propios ejemplos, no si generaliza; y en `after` el `hint` pide
+`crbro_revise` o `crbro_learn`, que en estas celdas se deniegan: se cuentan a
+partir de `tool_calls`. Para la próxima enmienda, pre-registrada antes de
+medirla: controles de dato viejo pero cierto, una consulta mixta con una fila
+vieja ajena y tareas sin marca redactadas por otra persona.
