@@ -628,7 +628,15 @@ amendment's dated note used:
   line that names its file. "Even in a short answer" answers a cause the
   author knew is in every prompt (the suffix). Neither was tuned against a
   model answer: no model was run on this build before the commit.
-- The unit tests use subjects and values that are not in any benchmark task.
+- The unit tests use subjects and values that are not in any benchmark task,
+  with three echoes (corrected 2026-10-04, after review and before the
+  `after` run): a negative example in `tests/staleness.framing.test.ts`
+  ("Lo dijo Antonio en la reunión del lunes", next to an `api.example.com`
+  line) echoes how w4's stored line gives its source; `tarifas.json` in the
+  same file is close to w2's `tarifas.csv`; and the examples in
+  `src/engine/source.ts` and in this section name `.env.production`, w4's
+  world file. All three are in comments, tests or docs: none of them is in
+  any text the server sends to the agent, and `namedSources` is generic.
 
 ### Limits
 
@@ -639,3 +647,25 @@ amendment's dated note used:
   lines saved from now on, not the ones already stored.
 - The causes above are not separated: if the run improves, it does not say
   which of the changes did it.
+- **What this change can reach in the Sixth amendment's tasks** (dated
+  2026-10-04, written after review and before the `after` run, from a
+  model-free check: the case brain seeded as `run.mjs` seeds it, this build,
+  `crbro_recall` called with each task's prompt). Only **w2** (160 days,
+  `volatile`) and **w4** (300 days, `volatile`) reach `possibly_stale`, with
+  `stale_warning`; among the secondary tasks, k2 (180 days, `volatile`) too.
+  **w1** (230 days), **w3** (270) and **w5** (130) carry no mark and are
+  inferred `normal`; **w6** (200) is marked `normal`. All four are under the
+  365-day window, so recall serves them in `results` as current values, with
+  no warning: this change cannot affect 12 of the 18 judged `crbro` cells per
+  model, and U1 (≥ 14/18) and U2 (≤ 1/18) can only pass if the agent opens
+  the file on its own, which no `crbro` cell did in the `before-b` runs (0 of
+  24 per model). The amendment assumed (its line on ages "between 90 and 365
+  days") that unmarked lines would be inferred `volatile`, as u3 and u4 were;
+  these are not, and it flagged only w6. `namedSources` fires on no judged
+  row: the one line that names its file (w1, `config/notificaciones.yml`) is
+  never flagged, and w2 and w4 get the general `next_step`. Nothing in
+  detection, the windows or the inference rules is changed for this: doing it
+  now would be tuning on tasks already seen. The `after` run goes ahead as
+  pre-registered, and its results are also given per task, split into flagged
+  (w2, w4) and unflagged (w1, w3, w5, w6) — a description, not a new
+  threshold.
