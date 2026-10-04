@@ -1,7 +1,7 @@
 import type { On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 
-import { brainDir, lines, parse, serverOf, split } from '../hooks/register'
+import { brainDir, clip, lines, parse, serverOf, split } from '../hooks/register'
 import { STRINGS, langOf } from '../hooks/strings'
 
 // Run with: claude plugin test mods/crbro-pending
@@ -77,6 +77,10 @@ function engine(
     calls?: Call[]
     onClose?: (id: string, action: 'resolve' | 'discard') => void
     isError?: boolean
+    /** What the person has typed in the prompt box. */
+    draft?: string
+    /** Whether the pane finds room to open. */
+    isPlaced?: boolean
   } = {},
 ) {
   on('session.start', (_, e) => ({ cwd: e.cwd }))
@@ -86,8 +90,9 @@ function engine(
   })
   on('ui.open', (_, e) => {
     opts.opened?.push(e.title ?? '')
-    return { value: { isPlaced: true } }
+    return { value: opts.isPlaced === false ? { isPlaced: false, reason: 'too narrow' } : { isPlaced: true } }
   })
+  on('prompt.read', () => ({ value: { text: opts.draft ?? '', cursor: (opts.draft ?? '').length } }))
   // What the engine would draw when the band gives its place up.
   on('ui.render', () => ({ type: 'Box', props: { key: 'engine' }, children: [] }))
   on('tool.list', () => ({ value: typeof opts.tools === 'function' ? opts.tools() : (opts.tools ?? CRBRO_TOOLS) }))
@@ -113,6 +118,40 @@ test('labels and numbered steps are split, in any language', () => {
   expect(long[0]).toBe('CRBRO after 2.5.1, waiting on the user:')
   expect(long[3]).toBe('(3) decide whether the old SSH passwords are cleaned up.')
   expect(lines('(1) uno (2) dos')).toEqual(['(1) uno', '(2) dos'])
+  // A colon inside a path, a URL or a time is not a label's.
+  expect(split('C:/Users/x/proyectos/crbro-memory: revisar el instalador')).toEqual({
+    label: 'C:/Users/x/proyectos/crbro-memory',
+    body: 'revisar el instalador',
+  })
+  expect(split('https://github.com/Octonove/crbro-memory/issues/12 sigue abierta')).toEqual({
+    label: null,
+    body: 'https://github.com/Octonove/crbro-memory/issues/12 sigue abierta',
+  })
+  expect(split('10:30 llamada con Fiverr').label).toBeNull()
+  expect(split('C: algo').label).toBeNull()
+  expect(split('Hecho:').label).toBe('Hecho')
+  expect(clip('x'.repeat(5000))).toHaveLength(2000)
+  expect(clip('short')).toBe('short')
+})
+
+test('items with no id, and errors that end in a period, read well in both languages', () => {
+  for (const t of [STRINGS.en, STRINGS.es]) {
+    const texts = [
+      t.closedOn('5 Sep', ''),
+      t.closedOn('', ''),
+      t.closedOn('', 'p_x'),
+      t.workPrompt('', 'x'),
+      t.resolved(''),
+      t.discarded(''),
+      t.stillOpen(''),
+    ]
+    for (const text of texts) expect(text).not.toMatch(/·\s*$|^\s*·|\(\)|\(-\)|^-|  /)
+    expect(t.readError('ENOENT: no such file.')).not.toContain('..')
+  }
+  expect(STRINGS.en.closedOn('5 Sep', '')).toBe('✓ closed 5 Sep')
+  expect(STRINGS.es.closedOn('', 'p_x')).toBe('✓ cerrado · p_x')
+  expect(STRINGS.en.workPrompt('', 'Review it')).toBe("Let's work on this CRBRO open item: Review it")
+  expect(STRINGS.es.resolved('')).toBe('Cerrado en CRBRO.')
 })
 
 test('the brain folder is resolved as the server resolves CRBRO_PATH', () => {
@@ -230,6 +269,14 @@ test('auto follows CRBRO_LANG, then LANG', { options: { language: 'auto' } }, as
   expect(await ui.find({ key: 'all', text: 'Ver todos' })).toBeDefined()
 })
 
+test('a language set in /config applies without waiting for session.start', { options: { language: 'es' } }, async ($, on) => {
+  engine(on, { env: { USERPROFILE: 'C:\\Users\\Test', LANG: 'en_US.UTF-8' } })
+  mock.clock(on, { now: NOW })
+  // A reload after /config runs register() again; session.start may not fire.
+  const pane = await $.ui.mount(PANE)
+  expect(await pane.find({ key: 'reload', text: 'Recargar' })).toBeDefined()
+})
+
 test('CRBRO_LANG wins over LANG under auto', { options: { language: 'auto' } }, async ($, on) => {
   engine(on, { env: { USERPROFILE: 'C:\\Users\\Test', LANG: 'es_ES.UTF-8', CRBRO_LANG: 'en' } })
   mock.clock(on, { now: NOW })
@@ -327,24 +374,84 @@ test('the pane shows whole cards, filters and sends the item to the prompt (Engl
   })
 
   await $.session.start(START)
-  const pane = await $.ui.mount(PANE)
+  for (const surface of ['terminal', 'desktop'] as const) {
+    filled.length = 0
+    const pane = await $.ui.mount({ ...PANE, surface })
+    expect(await pane.find({ text: '3 open' })).toBeDefined()
+    expect(await pane.find({ text: '● 1 from the last 3 days' })).toBeDefined()
+    expect(await pane.find({ text: /^\(2\) restart Claude Desktop and Codex;$/ })).toBeDefined()
+    expect(await pane.findAll({ type: 'Button', text: 'Done' })).toHaveLength(3)
+
+    await pane.input({ key: 'filter', text: 'campaign', kind: 'change' })
+    expect(await pane.find({ text: '1 of 3 match "campaign"' })).toBeDefined()
+    expect(await pane.findAll({ type: 'Button', text: 'Done' })).toHaveLength(1)
+
+    await pane.press({ key: 'work-p_old' })
+    expect(filled).toEqual(["Let's work on this CRBRO open item (p_old): Review the old campaign"])
+
+    // Recently closed, folded until asked for.
+    expect(await pane.find({ text: /Pin discussion/ })).toBeUndefined()
+    await pane.press({ key: 'closed' })
+    expect(await pane.find({ text: /Pin discussion/ })).toBeDefined()
+    expect(await pane.find({ text: '✓ closed 5 Sep · p_done' })).toBeDefined()
+    // Back as it was for the next surface.
+    await pane.press({ key: 'closed' })
+    await pane.input({ key: 'filter', text: '', kind: 'change' })
+    await pane.unmount()
+  }
+})
+
+test('on mobile the pane draws the cards with no filter field', { options: { language: 'en' } }, async ($, on) => {
+  engine(on)
+  mock.clock(on, { now: NOW })
+  await $.session.start(START)
+  const pane = await $.ui.mount({ ...PANE, surface: 'mobile' })
   expect(await pane.find({ text: '3 open' })).toBeDefined()
-  expect(await pane.find({ text: '● 1 from the last 3 days' })).toBeDefined()
-  expect(await pane.find({ text: /^\(2\) restart Claude Desktop and Codex;$/ })).toBeDefined()
   expect(await pane.findAll({ type: 'Button', text: 'Done' })).toHaveLength(3)
+  expect(await pane.find({ key: 'filter' })).toBeUndefined()
+})
 
-  await pane.input({ key: 'filter', text: 'campaign', kind: 'change' })
-  expect(await pane.find({ text: '1 of 3 match "campaign"' })).toBeDefined()
-  expect(await pane.findAll({ type: 'Button', text: 'Done' })).toHaveLength(1)
-
+test('«Work on this» keeps what the person had typed', { options: { language: 'en' } }, async ($, on) => {
+  engine(on, { draft: 'first this' })
+  mock.clock(on, { now: NOW })
+  const filled: { text: string; mode?: string }[] = []
+  on('prompt.fill', (_, e) => {
+    filled.push({ text: e.text, mode: e.mode })
+    return { isFilled: true }
+  })
+  await $.session.start(START)
+  const pane = await $.ui.mount(PANE)
   await pane.press({ key: 'work-p_old' })
-  expect(filled).toEqual(["Let's work on this CRBRO open item (p_old): Review the old campaign"])
+  expect(filled).toEqual([{ text: "\nLet's work on this CRBRO open item (p_old): Review the old campaign", mode: 'append' }])
+})
 
-  // Recently closed, folded until asked for.
-  expect(await pane.find({ text: /Pin discussion/ })).toBeUndefined()
-  await pane.press({ key: 'closed' })
-  expect(await pane.find({ text: /Pin discussion/ })).toBeDefined()
-  expect(await pane.find({ text: '✓ closed 5 Sep · p_done' })).toBeDefined()
+test('a long list draws a bounded number of cards and says how many more', { options: { language: 'en' } }, async ($, on) => {
+  const many = JSON.stringify({
+    pending_tasks: Array.from({ length: 45 }, (_, i) => ({ id: `p_${i}`, text: `Item ${i} ${'y'.repeat(3000)}`, added: '2026-10-01' })),
+  })
+  engine(on, { brain: () => many })
+  mock.clock(on, { now: NOW })
+  await $.session.start(START)
+  const pane = await $.ui.mount(PANE)
+  expect(await pane.find({ text: '45 open' })).toBeDefined()
+  expect(await pane.findAll({ type: 'Button', text: 'Done' })).toHaveLength(40)
+  expect(await pane.find({ text: '5 more: filter to narrow the list.' })).toBeDefined()
+  await pane.input({ key: 'filter', text: 'Item 44', kind: 'change' })
+  expect(await pane.findAll({ type: 'Button', text: 'Done' })).toHaveLength(1)
+})
+
+test('«See all» says so when there is no room for the pane', { options: { language: 'es' } }, async ($, on) => {
+  engine(on, { isPlaced: false })
+  mock.clock(on, { now: NOW })
+  const toasts: string[] = []
+  on('ui.toast', (_, e) => {
+    toasts.push(e.text)
+    return { value: undefined }
+  })
+  await $.session.start(START)
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  await ui.press({ key: 'all' })
+  expect(toasts).toEqual(['CRBRO: aquí no hay sitio para la lista; ensancha la ventana.'])
 })
 
 test('the pane in Spanish, and the filter ignores accents', { options: { language: 'es' } }, async ($, on) => {
@@ -457,6 +564,9 @@ test('a late CRBRO server is learnt from its first tool call', { options: { lang
   await $.session.start(START)
   expect(calls).toEqual([])
   tools = CRBRO_TOOLS
+  // Any other tool goes by untouched.
+  await $.tool.call({ tool: 'mcp__other__search', query: 'x' } as never)
+  expect(calls).toEqual([])
   await $.tool.call({ tool: 'mcp__crbro__crbro_recall', query: 'x' } as never)
   expect(calls.some(c => c.server === 'crbro' && c.tool === 'crbro_context')).toBe(true)
 })
