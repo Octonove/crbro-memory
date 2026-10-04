@@ -2,7 +2,7 @@
 
 All notable changes to CRBRO.
 
-## [Unreleased]
+## [2.8.0] — 2026-10-04
 
 Open items in sight, for whoever installs CRBRO, not only for its author.
 
@@ -88,6 +88,11 @@ Open items in sight, for whoever installs CRBRO, not only for its author.
   types do not (`mods/crbro-pending/.npmignore`). The mod's tests run under
   `claude plugin test`, the installer's in the vitest suite, which leaves
   `mods/` to the former.
+- **A new tour at the top of the README.** `docs/crbro-tour.gif` replaces the
+  August demo: memory across sessions, corrections that replace old facts,
+  secrets kept out, the guard, the compaction checkpoint and the band.
+  `docs/pending-band.gif` shows the band and `/pending` at work. Both are drawn
+  by code with made-up data; every figure on screen is one this README states.
 
 ## [2.7.2] — 2026-10-03
 
