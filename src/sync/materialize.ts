@@ -17,7 +17,8 @@ import type { Neuron, Fact, Decision, FactStatus } from '../types/index.js';
 import type { Op, FactOp, StatusOp, DecisionOp, MapOp, PurgeOp, VerifyOp } from './ops.js';
 import { normalizeText, entryId } from './ops.js';
 import { factId } from '../utils/hash.js';
-import { mostVolatile, latestOf, isShelfLife } from '../engine/shelf.js';
+import { mostVolatile, isShelfLife } from '../engine/shelf.js';
+import { mergeCheck, mergeFactEvidence, mergeEntryEvidence, readVerification } from '../engine/evidence.js';
 
 /** Fields that disagreed and were left alone, so a human can look. */
 export interface Divergence {
@@ -43,6 +44,7 @@ export interface MergeReport {
   verifications_updated: number;
   /** Facts whose explicit shelf_life became more volatile through a teammate's op. */
   shelf_updated: number;
+  metadata_updated: number;
   authors: string[];
   divergence: Divergence[];
 }
@@ -84,6 +86,7 @@ export function applyOps(
     tags_added: 0,
     verifications_updated: 0,
     shelf_updated: 0,
+    metadata_updated: 0,
     authors: [],
     divergence: [],
   };
@@ -96,7 +99,7 @@ export function applyOps(
   // reported rather than resolved. Overwriting someone's local name because a
   // teammate spelled it differently is not a merge, it is a stomp.
   const neuron: Neuron = base
-    ? { ...base, facts: [...base.facts], decisions: [...base.decisions], patterns: [...base.patterns], preferences: [...base.preferences], tags: [...base.tags], connections: [...base.connections], errors: [...(base.errors || [])], debts: [...(base.debts || [])], entry_dates: { ...(base.entry_dates || {}) }, entry_status: { ...(base.entry_status || {}) }, ...(base.entry_source ? { entry_source: { ...base.entry_source } } : {}), ...(base.entry_verified ? { entry_verified: { ...base.entry_verified } } : {}), map: base.map ? { ...base.map } : undefined }
+    ? { ...base, facts: base.facts.map(f => structuredClone(f)), decisions: [...base.decisions], patterns: [...base.patterns], preferences: [...base.preferences], tags: [...base.tags], connections: [...base.connections], errors: [...(base.errors || [])], debts: [...(base.debts || [])], entry_dates: { ...(base.entry_dates || {}) }, entry_status: { ...(base.entry_status || {}) }, ...(base.entry_source ? { entry_source: { ...base.entry_source } } : {}), ...(base.entry_verified ? { entry_verified: { ...base.entry_verified } } : {}), ...(base.entry_verification ? { entry_verification: structuredClone(base.entry_verification) } : {}), map: base.map ? { ...base.map } : undefined }
     : {
         id,
         name: neuronOp && neuronOp.op === 'neuron' ? neuronOp.name : id,
@@ -189,6 +192,9 @@ export function applyOps(
       const fo = op as FactOp;
       const existing = byFid.get(fo.fid) || byText.get(normalizeText(fo.text));
       if (existing) {
+        const before = JSON.stringify([existing.reference, existing.temporal, existing.verification_invalidated_at]);
+        mergeFactEvidence(existing, { reference: fo.reference, temporal: fo.temporal, verification_invalidated_at: fo.verification_invalidated_at });
+        if (JSON.stringify([existing.reference, existing.temporal, existing.verification_invalidated_at]) !== before) report.metadata_updated++;
         // Same fact from two people. Keep the earliest date so provenance
         // reflects who knew it first, and the higher confidence.
         existing.id = existing.id || fo.fid;
@@ -216,6 +222,7 @@ export function applyOps(
       };
       if (fo.keys?.length) fact.keys = fo.keys.slice(0, 8);
       if (isShelfLife(fo.shelf)) fact.shelf_life = fo.shelf;
+      mergeFactEvidence(fact, { reference: fo.reference, temporal: fo.temporal, verification_invalidated_at: fo.verification_invalidated_at });
       neuron.facts.push(fact);
       byFid.set(fo.fid, fact);
       alias(fact);
@@ -252,8 +259,14 @@ export function applyOps(
     const target = byFid.get(vo.eid);
     if (!target) continue;
     const at = typeof vo.at === 'string' ? vo.at : undefined;
-    const nuevo = latestOf(target.verified, at);
-    if (nuevo && nuevo !== target.verified) { target.verified = nuevo; report.verifications_updated++; }
+    const verification = readVerification(vo.verification);
+    if (vo.verification !== undefined && (!verification || verification.at !== at)) continue;
+    const nuevo = mergeCheck(target, { verified: at, verification });
+    if (nuevo.verified && (nuevo.verified !== target.verified || JSON.stringify(nuevo.verification) !== JSON.stringify(target.verification))) {
+      target.verified = nuevo.verified;
+      if (nuevo.verification) target.verification = nuevo.verification; else delete target.verification;
+      report.verifications_updated++;
+    }
   }
 
   // ─── Decisions: union by (id, author) ────────────────────────
@@ -354,9 +367,16 @@ export function applyOps(
   for (const vo of verifyOps) {
     if (vo.ekind !== 'entry' || typeof vo.eid !== 'string' || !vo.eid) continue;
     const at = typeof vo.at === 'string' ? vo.at : undefined;
-    const previo = neuron.entry_verified?.[vo.eid];
-    const nuevo = latestOf(previo, at);
-    if (nuevo && nuevo !== previo) { (neuron.entry_verified ||= {})[vo.eid] = nuevo; report.verifications_updated++; }
+    const verification = readVerification(vo.verification);
+    if (vo.verification !== undefined && (!verification || verification.at !== at)) continue;
+    const previo = { verified: neuron.entry_verified?.[vo.eid], verification: neuron.entry_verification?.[vo.eid] };
+    const nuevo = mergeCheck(previo, { verified: at, verification });
+    if (nuevo.verified && (nuevo.verified !== previo.verified || JSON.stringify(nuevo.verification) !== JSON.stringify(previo.verification))) {
+      (neuron.entry_verified ||= {})[vo.eid] = nuevo.verified;
+      if (nuevo.verification) (neuron.entry_verification ||= {})[vo.eid] = nuevo.verification;
+      else if (neuron.entry_verification) delete neuron.entry_verification[vo.eid];
+      report.verifications_updated++;
+    }
   }
 
   // ─── The map: last writer wins, deterministically ────────────
@@ -478,6 +498,10 @@ export function applyOps(
   }
 
   report.authors = [...new Set(ops.map(o => o.by).filter(Boolean))].sort();
+  mergeEntryEvidence(neuron, neuron, new Set([
+    ...neuron.decisions.map(d => d.text), ...neuron.patterns, ...neuron.preferences,
+    ...(neuron.errors || []), ...(neuron.debts || []),
+  ].map(entryId)));
 
   return { neuron, report };
 }

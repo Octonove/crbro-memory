@@ -88,8 +88,8 @@ describe('round trip', () => {
     // are what a naive implementation mangles; and a trailing newline is the
     // classic cause of a 401 nobody can explain.
     const awkward: Array<[string, string]> = [
-      ['WP_STYLE', 'fixture_revoked_wordpress'],
-      ['SHELL_META', 'fixture_revoked_ssh'],
+      ['WP_STYLE', 'demo demo demo demo demo demo'],
+      ['SHELL_META', 'fixture-only-!$&*()='],
       ['QUOTES', `mixed "double" and 'single' quotes`],
       ['UNICODE', 'contraseña-con-acentos-ñ'],
       ['BACKTICKS', 'back`tick`and;semicolon&amp'],

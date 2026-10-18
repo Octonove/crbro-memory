@@ -35,6 +35,7 @@ beforeEach(async () => {
   await put('cortex/project_b.json', '{"id":"project_b"}');
   await put('hippocampus/session_2026-09-20.json', '{"summary":"hoy"}');
   await put('synapses/s1.json', '{}');
+  await put('projects.json', '{"version":1,"projects":{}}');
   // Everything below must stay out.
   await put('.quarantine/forgotten.json', '{"secret":"sk-live-must-not-travel"}');
   await put('.device-token', 'machine-bound');
@@ -45,6 +46,9 @@ beforeEach(async () => {
   await put('.semantic/models/m.onnx', 'binary');
   await put('shared/equipo/.git/config', '[core]');
   await put('shared/equipo/notes/n1.json', '{"note":1}');
+  await put('cortex/project_a.json.lock', '123 owner');
+  await put('cortex/project_a.json.lock.guard', '');
+  await put('cortex/project_a.json.123.random.tmp', 'unfinished');
 });
 
 afterEach(async () => {
@@ -60,6 +64,7 @@ describe('createBackup', () => {
     const b = await readBackup(r.path);
     expect(Object.keys(b.files)).toContain('cortex/project_a.json');
     expect(Object.keys(b.files)).toContain('shared/equipo/notes/n1.json');
+    expect(Object.keys(b.files)).toContain('projects.json');
     expect(b.files['cortex/project_a.json']).toContain('la ñ y el café ☕ sobreviven');
   });
 
@@ -71,6 +76,7 @@ describe('createBackup', () => {
     }
     expect(JSON.stringify(await readBackup(r.path))).not.toContain('sk-live-must-not-travel');
     expect(JSON.stringify(await readBackup(r.path))).not.toContain('daemon-token-must-not-travel');
+    expect(names.some(n => n.endsWith('.lock') || n.endsWith('.guard') || n.endsWith('.tmp'))).toBe(false);
   });
 
   it('refuses to write an empty backup that would rotate a real one out', async () => {

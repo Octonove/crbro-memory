@@ -5,11 +5,13 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { readJSON, writeJSON, updateJSON, deleteJSON, listJSONFiles, now } from '../utils/fs.js';
 import { neuronId, inferNeuronType, toSnakeCase, legacySnakeCase } from '../utils/ids.js';
 import { factId } from '../utils/hash.js';
-import { entryId, normalizeText } from '../sync/ops.js';
+import { entryId, normalizeText, type Op } from '../sync/ops.js';
+import { applyOps, type MergeReport } from '../sync/materialize.js';
 import { redact, secretKinds } from './secrets.js';
-import { shelfOfFact, mostVolatile, latestOf, isShelfLife, type ShelfReason } from './shelf.js';
+import { shelfOfFact, mostVolatile, isShelfLife, type ShelfReason } from './shelf.js';
+import { sanitizeReference, sanitizeTemporal, makeVerification, mergeCheck, mergeFactEvidence, mergeEntryEvidence, type VerificationInput } from './evidence.js';
 import type { Brain } from './brain.js';
-import type { Neuron, NeuronType, Fact, Decision, FactStatus, EntryStatus, EntryRetirement, ShelfLife } from '../types/index.js';
+import type { Neuron, NeuronType, Fact, Decision, FactStatus, EntryStatus, EntryRetirement, ShelfLife, SourceReference, Verification } from '../types/index.js';
 
 const TYPE_PREFIX_RE = /^(project_|tech_|lang_|person_|domain_|process_|protocol_)/;
 
@@ -307,7 +309,7 @@ export type Indexer = (neuron: Neuron) => Promise<void> | void;
 export type Emitter = (
   neuronId: string,
   change:
-    | { kind: 'fact'; text: string; fid: string; conf: number; at: string; src?: string; keys?: string[]; shelf?: ShelfLife }
+    | { kind: 'fact'; text: string; fid: string; conf: number; at: string; src?: string; keys?: string[]; shelf?: ShelfLife; reference?: SourceReference; temporal?: Fact['temporal']; verification_invalidated_at?: string }
     | { kind: 'status'; fid: string; to: 'superseded' | 'retracted'; at: string; why?: string }
     | { kind: 'decision'; text: string; why?: string; at: string }
     | { kind: 'pattern'; text: string; at: string }
@@ -319,7 +321,7 @@ export type Emitter = (
     | { kind: 'decision_purge'; key: string; at: string }
     | { kind: 'pattern_purge'; key: string; at: string }
     /** A line was checked against its source and still holds (shelf life). `at` is the check. */
-    | { kind: 'verify'; eid: string; ekind: 'fact' | 'entry'; at: string }
+    | { kind: 'verify'; eid: string; ekind: 'fact' | 'entry'; at: string; verification?: Verification }
 ) => Promise<void> | void;
 
 /**
@@ -342,6 +344,8 @@ function earliestOf(a: string | undefined, b: string | undefined): string {
 
 function copyFact(f: Fact): Fact {
   const out: Fact = { ...f };
+  if (f.reference) out.reference = { ...f.reference };
+  if (f.verification) out.verification = { ...f.verification, ...(f.verification.reference ? { reference: { ...f.verification.reference } } : {}) };
   if (f.keys) out.keys = [...f.keys];
   if (f.supersedes) out.supersedes = [...f.supersedes];
   return out;
@@ -412,8 +416,7 @@ export function unionNeuron(target: Neuron, source: Neuron): {
     if (keys.length) hit.keys = keys; else delete hit.keys;
     // The later check is the newer evidence; the more volatile explicit class
     // wins, as in a team space (a needless warning is cheaper than a missing one).
-    const verificado = latestOf(hit.verified, sf.verified);
-    if (verificado) hit.verified = verificado;
+    mergeFactEvidence(hit, sf);
     const vida = mostVolatile(hit.shelf_life, sf.shelf_life);
     if (vida) hit.shelf_life = vida;
   }
@@ -487,15 +490,10 @@ export function unionNeuron(target: Neuron, source: Neuron): {
   if (Object.keys(estadosVivos).length) neuron.entry_status = estadosVivos;
   else delete neuron.entry_status;
 
-  const verificadas: Record<string, string> = { ...(source.entry_verified || {}) };
-  for (const [k, v] of Object.entries(target.entry_verified || {})) {
-    const l = latestOf(verificadas[k], v);
-    if (l) verificadas[k] = l; else if (!verificadas[k]) verificadas[k] = v;
-  }
-  const verificadasVivas: Record<string, string> = {};
-  for (const k of Object.keys(verificadas).sort()) if (vivos.has(k)) verificadasVivas[k] = verificadas[k];
-  if (Object.keys(verificadasVivas).length) neuron.entry_verified = verificadasVivas;
-  else delete neuron.entry_verified;
+  // Usar ambos pares originales: una fecha nueva y una fuente vieja no se mezclan.
+  neuron.entry_verified = target.entry_verified;
+  neuron.entry_verification = target.entry_verification;
+  mergeEntryEvidence(neuron, source, vivos);
 
   const origenes: Record<string, string> = { ...(source.entry_source || {}), ...(target.entry_source || {}) };
   const origenesVivos: Record<string, string> = {};
@@ -612,34 +610,28 @@ export class Cortex {
     try {
       await this.emitter(neuronId, change);
     } catch {
-      // Sharing must never break a local write. The note can be re-emitted
-      // later; a lost fact cannot be recovered.
+      // El emisor solo falla si no logró registrar la entrega persistente.
+      // La nota local sigue guardada, pero no se puede confirmar éxito total.
+      throw new Error('Local change saved, but shared delivery could not be recorded. Check local storage before retrying.');
     }
   }
 
   /**
-   * Overwrite a neuron with the result of merging the team's notes.
-   * Only the sync layer calls this, and only with a neuron that already
-   * contains everything local plus whatever arrived.
+   * Fusionar contra la versión leída dentro del mismo bloqueo de escritura.
+   * Un snapshot calculado antes del bloqueo puede borrar un learn o retiro.
    */
-  async replaceFromSync(neuron: Neuron): Promise<Neuron> {
-    const saved = await updateJSON<Neuron>(this.brain.paths.neuron(neuron.id), current => {
-      // Local-only observations stay local: they describe this machine's use
-      // of the memory, not the knowledge itself.
-      if (current) {
-        neuron.heat = current.heat;
-        neuron.access_count = current.access_count;
-        neuron.last_accessed = current.last_accessed;
-        neuron.summary = current.summary || neuron.summary;
-        neuron.preferences = current.preferences;
-        neuron.connections = current.connections;
-        neuron.created = current.created;
-      }
+  async mergeFromSync(nid: string, ops: Op[]): Promise<{ report: MergeReport; created: boolean }> {
+    let report!: MergeReport;
+    let created = false;
+    const saved = await updateJSON<Neuron>(this.brain.paths.neuron(nid), current => {
+      created = current === null;
+      const merged = applyOps(current, ops, { id: nid });
+      report = merged.report;
+      const neuron = merged.neuron;
       return neuron;
     });
-    const final = (saved || neuron) as Neuron;
-    await this.reindex(final);
-    return final;
+    if (saved) await this.reindex(saved);
+    return { report, created };
   }
 
   private async reindex(neuron: Neuron): Promise<void> {
@@ -799,6 +791,8 @@ export class Cortex {
       neuronId?: string;
       /** Who is writing: 'session' (default), 'miner', 'manual'. */
       source?: string;
+      reference?: SourceReference;
+      temporal?: Fact['temporal'];
       /** Ids or verbatim texts of facts this one replaces. */
       supersedes?: string[];
       /**
@@ -847,11 +841,13 @@ export class Cortex {
     confirmations?: number;
     /** Facts only: the shelf-life class that applies, and whether it was inferred from the text (and by which rule). */
     shelf?: { shelf_life: ShelfLife; inferred: boolean; reason?: ShelfReason };
-    /** Exact-duplicate fact learned again by a session: its `verified` was stamped now. */
+    /** Compatibilidad de lectura: learn ya no produce esta marca. */
     reconfirmed?: boolean;
     /** An explicit shelf_life was replaced by a less volatile one (team merge restores the more volatile value). */
     shelf_lengthened?: boolean;
   }> {
+    const reference = options?.reference === undefined ? undefined : sanitizeReference(options.reference);
+    const temporal = sanitizeTemporal(options?.temporal);
     // Credentials never make it to disk. The sentence around them survives, so
     // "the deploy token is [REDACTED: npm token]" still records that a token
     // exists and what kind — the knowledge without the liability.
@@ -893,9 +889,7 @@ export class Cortex {
     let updatedInPlace = false;
     let confirmations: number | undefined;
     let shelf: { shelf_life: ShelfLife; inferred: boolean; reason?: ShelfReason } | undefined;
-    let reconfirmed = false;
     let shelfLengthened = false;
-    let verificar: { eid: string; at: string } | null = null;
     const vidaPedida: ShelfLife | undefined = isShelfLife(options?.shelfLife) ? options!.shelfLife : undefined;
     let skippedRetired: { id: string; status: 'superseded' | 'retracted'; revised?: string; note?: string } | null = null;
 
@@ -999,23 +993,22 @@ export class Cortex {
                   cambiado = true;
                 }
               }
-              // Saying the same line again, and nothing else, is a check
-              // (shelf life): the clock restarts. Not when the call also
-              // brings keywords, a confidence or a class — that is editing the
-              // line, and the server itself asks for exactly that re-learn to
-              // add keywords, so counting it would mark an unchecked line as
-              // checked. Not for the miner either: re-reading an old
-              // transcript is not looking at the source.
-              if (options?.source !== 'miner' && !cambiado) {
-                existente.verified = now();
-                reconfirmed = true;
-                // One op per line per session: a retry or the re-save after a
-                // compaction must not add a line to the team's log each time.
-                const yaVerificadas = (this.tally.verifiedEmitted ??= new Set<string>());
-                if (!yaVerificadas.has(testigo)) {
-                  yaVerificadas.add(testigo);
-                  verificar = { eid: existente.id || factId(existente.text), at: existente.verified };
-                }
+              const referenceChanged = reference && JSON.stringify(reference) !== JSON.stringify(existente.reference);
+              const temporalChanged = temporal && temporal !== existente.temporal;
+              if (referenceChanged || temporalChanged) {
+                const previous = mergeCheck(existente, {});
+                existente.verification_invalidated_at = new Date(Math.max(Date.now(),
+                  Date.parse(previous.verified || '') || 0, Date.parse(previous.verification_invalidated_at || '') || 0)).toISOString();
+                delete existente.verified;
+                delete existente.verification;
+              }
+              if (referenceChanged) {
+                existente.reference = reference;
+                cambiado = true;
+              }
+              if (temporalChanged) {
+                existente.temporal = temporal;
+                cambiado = true;
               }
               if (cambiado) {
                 // Note for shared neurons: materialize takes max(conf) and
@@ -1023,10 +1016,17 @@ export class Cortex {
                 // stays local. Documented, not fought — the log is append-only.
                 updatedInPlace = true;
                 this.tally.topics.add(n.id);
-                emitir = { kind: 'fact' as const, text: existente.text, fid: existente.id || id,
-                           conf: existente.confidence ?? 1, at: existente.added, src: existente.source, keys: existente.keys,
-                           ...(existente.shelf_life ? { shelf: existente.shelf_life } : {}) };
               }
+              // Un intento anterior pudo guardar la neurona pero fallar antes
+              // de persistir su entrega. Reemitir permite recuperarla incluso
+              // tras reiniciar; applyOps deduplica por fid. No es verificación
+              // nueva y conserva la fecha original, no la del reintento.
+              emitir = { kind: 'fact' as const, text: existente.text, fid: existente.id || id,
+                         conf: existente.confidence ?? 1, at: existente.added, src: existente.source, keys: existente.keys,
+                         ...(existente.reference ? { reference: existente.reference } : {}),
+                         ...(existente.temporal ? { temporal: existente.temporal } : {}),
+                         ...(existente.verification_invalidated_at ? { verification_invalidated_at: existente.verification_invalidated_at } : {}),
+                         ...(existente.shelf_life ? { shelf: existente.shelf_life } : {}) };
               const sv = shelfOfFact(existente);
               shelf = { shelf_life: sv.shelf, inferred: sv.inferred, ...(sv.reason ? { reason: sv.reason } : {}) };
             }
@@ -1052,6 +1052,8 @@ export class Cortex {
               if (options?.supersedes?.length) fact.supersedes = options.supersedes;
               if (keys.length) fact.keys = keys;
               if (vidaPedida) fact.shelf_life = vidaPedida;
+              if (reference) fact.reference = reference;
+              if (temporal) fact.temporal = temporal;
               const sv = shelfOfFact(fact);
               shelf = { shelf_life: sv.shelf, inferred: sv.inferred, ...(sv.reason ? { reason: sv.reason } : {}) };
               n.facts.push(fact);
@@ -1060,6 +1062,8 @@ export class Cortex {
               this.tally.topics.add(n.id);
               emitir = { kind: 'fact' as const, text: content, fid: id,
                          conf: fact.confidence, at: fact.added, src: fact.source, keys: fact.keys,
+                         ...(fact.reference ? { reference: fact.reference } : {}),
+                         ...(fact.temporal ? { temporal: fact.temporal } : {}),
                          ...(fact.shelf_life ? { shelf: fact.shelf_life } : {}) };
             }
             break;
@@ -1085,8 +1089,8 @@ export class Cortex {
               n.patterns.push(content);
               fechar(n, content);
               origen(n, content);
-              emitir = { kind: 'pattern' as const, text: content, at: now() };
             }
+            emitir = { kind: 'pattern' as const, text: content, at: n.entry_dates?.[entryId(content)] || now() };
             break;
           }
           case 'preference': {
@@ -1104,8 +1108,8 @@ export class Cortex {
               fechar(n, content);
               origen(n, content);
               this.tally.topics.add(n.id);
-              emitir = { kind: 'error' as const, text: content, at: now() };
             }
+            emitir = { kind: 'error' as const, text: content, at: n.entry_dates?.[entryId(content)] || now() };
             break;
           }
           case 'debt': {
@@ -1116,8 +1120,8 @@ export class Cortex {
               fechar(n, content);
               origen(n, content);
               this.tally.topics.add(n.id);
-              emitir = { kind: 'debt' as const, text: content, at: now() };
             }
+            emitir = { kind: 'debt' as const, text: content, at: n.entry_dates?.[entryId(content)] || now() };
             break;
           }
         }
@@ -1146,16 +1150,12 @@ export class Cortex {
     // Preferences are never emitted: they are the field most likely to hold a
     // key and the least likely to be worth sharing.
     if (emitir) await this.emit(final.id, emitir);
-    // A reconfirming re-learn reaches the team as a check: the latest wins.
-    const v = verificar as { eid: string; at: string } | null;
-    if (v) await this.emit(final.id, { kind: 'verify', eid: v.eid, ekind: 'fact', at: v.at });
     return {
       neuron: final, action, superseded, supersedes_unmatched: supersedesUnmatched,
       near_duplicates: nearDuplicates, redacted: limpio.found,
       duplicate, updated_in_place: updatedInPlace, skipped_retired: null,
       ...(confirmations !== undefined ? { confirmations } : {}),
       ...(shelf ? { shelf } : {}),
-      ...(reconfirmed ? { reconfirmed } : {}),
       ...(shelfLengthened ? { shelf_lengthened: true } : {}),
     };
   }
@@ -1235,13 +1235,15 @@ export class Cortex {
    */
   async verify(
     neuronRef: string,
-    targets: { facts?: string[]; entries?: string[] }
+    targets: { facts?: string[]; entries?: string[]; evidence?: VerificationInput }
   ): Promise<{
     neuron: Neuron | null;
     verified: string[];
     unmatched: string[];
     retired: Array<{ target: string; id: string; status: 'superseded' | 'retracted' }>;
   }> {
+    // Validar antes de cualquier escritura, incluida la creación de neuronas.
+    const evidence = makeVerification(targets.evidence, now());
     const facts = (targets.facts || []).filter(t => typeof t === 'string');
     const entries = (targets.entries || []).filter(t => typeof t === 'string');
     const neuron = (await this.peek(neuronRef)) || (await this.findByName(neuronRef));
@@ -1250,7 +1252,7 @@ export class Cortex {
     const verified: string[] = [];
     let unmatched: string[] = [];
     let retired: Array<{ target: string; id: string; status: 'superseded' | 'retracted' }> = [];
-    const emitir: Array<{ eid: string; ekind: 'fact' | 'entry'; at: string }> = [];
+    const emitir: Array<{ eid: string; ekind: 'fact' | 'entry'; at: string; verification: Verification }> = [];
 
     const actualizada = await updateJSON<Neuron>(this.brain.paths.neuron(neuron.id), current => {
       const n = current || neuron;
@@ -1269,9 +1271,12 @@ export class Cortex {
         }
         for (const f of vivos) {
           f.id = f.id || factId(f.text);
-          f.verified = cuando;
+          // Un check explícito posterior al cambio debe sobrevivir incluso
+          // cuando ambas llamadas caben en el mismo milisegundo.
+          f.verified = new Date(Math.max(Date.parse(cuando), (Date.parse(f.verification_invalidated_at || '') || 0) + 1)).toISOString();
+          f.verification = { ...evidence, at: f.verified };
           if (!verified.includes(f.id)) verified.push(f.id);
-          emitir.push({ eid: f.id, ekind: 'fact', at: cuando });
+          emitir.push({ eid: f.id, ekind: 'fact', at: f.verified, verification: f.verification });
         }
       }
 
@@ -1293,8 +1298,9 @@ export class Cortex {
         for (const c of vivas) {
           const k = entryId(c.text);
           (n.entry_verified ||= {})[k] = cuando;
+          (n.entry_verification ||= {})[k] = { ...evidence, at: cuando };
           if (!verified.includes(k)) verified.push(k);
-          emitir.push({ eid: k, ekind: 'entry', at: cuando });
+          emitir.push({ eid: k, ekind: 'entry', at: cuando, verification: n.entry_verification[k] });
         }
       }
 
@@ -1810,6 +1816,13 @@ export class Cortex {
         }
         if (Object.keys(current.entry_verified).length === 0) delete current.entry_verified;
       }
+      if (current.entry_verification) {
+        const vivos = liveEntryKeys(current);
+        for (const k of Object.keys(current.entry_verification)) {
+          if (!vivos.has(k)) delete current.entry_verification[k];
+        }
+        if (Object.keys(current.entry_verification).length === 0) delete current.entry_verification;
+      }
       // And for provenance: a forgotten teammate line that comes back through
       // a sync replay must be labelled by that replay, not by a stale key.
       if (current.entry_source) {
@@ -2017,16 +2030,24 @@ export class Cortex {
    */
   private async emitAdded(antes: Neuron, final: Neuron): Promise<void> {
     const cuando = now();
-    const teniaFact = new Set(antes.facts.map(f => f.id || factId(f.text)));
+    const teniaFact = new Map(antes.facts.map(f => [f.id || factId(f.text), f]));
     for (const f of final.facts) {
       const fid = f.id || factId(f.text);
-      if (teniaFact.has(fid)) continue;
-      await this.emit(final.id, { kind: 'fact', text: f.text, fid, conf: f.confidence ?? 1, at: f.added, src: f.source, keys: f.keys,
-        ...(f.shelf_life ? { shelf: f.shelf_life } : {}) });
-      if (f.verified) await this.emit(final.id, { kind: 'verify', eid: fid, ekind: 'fact', at: f.verified });
+      const previo = teniaFact.get(fid) || antes.facts.find(p => normalizeText(p.text) === normalizeText(f.text));
+      const metadata = (v: Fact) => JSON.stringify([v.keys, v.shelf_life, v.reference, v.temporal, v.verification_invalidated_at]);
+      if (!previo || metadata(previo) !== metadata(f)) {
+        await this.emit(final.id, { kind: 'fact', text: f.text, fid, conf: f.confidence ?? 1, at: f.added, src: f.source, keys: f.keys,
+          ...(f.reference ? { reference: f.reference } : {}), ...(f.temporal ? { temporal: f.temporal } : {}),
+          ...(f.verification_invalidated_at ? { verification_invalidated_at: f.verification_invalidated_at } : {}),
+          ...(f.shelf_life ? { shelf: f.shelf_life } : {}) });
+      }
+      if (f.verified && (previo?.verified !== f.verified || JSON.stringify(previo?.verification) !== JSON.stringify(f.verification))) {
+        await this.emit(final.id, { kind: 'verify', eid: fid, ekind: 'fact', at: f.verified,
+        ...(f.verification ? { verification: f.verification } : {}) });
+      }
       // A moved fact that was already retired must arrive retired, or the
       // teammates would see as current what the source had superseded.
-      if (f.status === 'superseded' || f.status === 'retracted') {
+      if (previo?.status !== f.status && (f.status === 'superseded' || f.status === 'retracted')) {
         await this.emit(final.id, { kind: 'status', fid, to: f.status, at: f.revised || cuando, why: f.revision_note });
       }
     }
@@ -2050,8 +2071,9 @@ export class Cortex {
     }
     // Checks of decisions and patterns that arrived with them, or are newer than the target's.
     for (const [k, at] of Object.entries(final.entry_verified || {})) {
-      if (antes.entry_verified?.[k] === at) continue;
-      await this.emit(final.id, { kind: 'verify', eid: k, ekind: 'entry', at });
+      if (antes.entry_verified?.[k] === at && JSON.stringify(antes.entry_verification?.[k]) === JSON.stringify(final.entry_verification?.[k])) continue;
+      await this.emit(final.id, { kind: 'verify', eid: k, ekind: 'entry', at,
+        ...(final.entry_verification?.[k] ? { verification: final.entry_verification[k] } : {}) });
     }
     // Preferences are never emitted, here as in learn.
   }
@@ -2100,6 +2122,7 @@ export class Cortex {
       entry_dates: { ...(from.entry_dates || {}) },
       entry_status: { ...(from.entry_status || {}) },
       entry_verified: { ...(from.entry_verified || {}) },
+      entry_verification: structuredClone(from.entry_verification || {}),
     };
     delete parte.map;
     const textos = [

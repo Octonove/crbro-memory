@@ -71,6 +71,8 @@ const os = await import('node:os');
 const tmp = path.join(os.tmpdir(), `crbro-mcpb-${Date.now()}`);
 process.env.CRBRO_PATH = tmp;              // nunca el cerebro real del autor
 process.env.CRBRO_SEMANTIC = '0';
+process.env.CRBRO_MOD = '0';
+process.env.CRBRO_AUTOBACKUP = '0';
 const { createServer } = await import(pathToFileURL(path.join(RAIZ, 'dist', 'server.js')).href);
 const [ct, st] = InMemoryTransport.createLinkedPair();
 await createServer().connect(st);
@@ -100,7 +102,7 @@ const manifest = {
   long_description:
     'CRBRO gives Claude a memory that survives the conversation. What you save is written as plain JSON files under a folder on your computer, ' +
     'organised as topics with facts, decisions, patterns, mistakes and living system maps, and searched back with a fact-level index. ' +
-    'Nothing is uploaded: there is no account, no server and no telemetry. Knowledge can be corrected instead of only piled up, so a fact that ' +
+    'There is no CRBRO cloud account or telemetry. Tool results reach your AI client; optional team sync uses your chosen Git remote. Knowledge can be corrected instead of only piled up, so a fact that ' +
     'stopped being true is retired rather than competing with its replacement. Start any session by calling crbro_boot.',
   author: { name: 'Octonove', url: 'https://github.com/Octonove' },
   repository: { type: 'git', url: REPO },

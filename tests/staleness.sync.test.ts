@@ -204,7 +204,7 @@ describe('cortex: what writes verified, and what carries it', () => {
     await fs.rm(root, { recursive: true, force: true });
   });
 
-  it('a session learning the same fact again stamps verified and emits a verify op; the miner never does', async () => {
+  it('repetir un hecho no verifica ni emite una comprobación, tampoco desde el minero', async () => {
     const r1 = await cortex.learn('Tienda', 'fact', FACT);
     const id = r1.neuron!.id;
     expect(r1.neuron!.facts[0].verified).toBeUndefined();
@@ -216,22 +216,23 @@ describe('cortex: what writes verified, and what carries it', () => {
     expect(emitted.some(e => e.change.kind === 'verify')).toBe(false);
 
     const again = await cortex.learn('Tienda', 'fact', FACT, { neuronId: id });
-    expect(again.reconfirmed).toBe(true);
+    expect(again.reconfirmed).toBeUndefined();
     const f = (await cortex.peek(id))!.facts[0];
-    expect(f.verified).toBeTruthy();
-    expect(emitted.filter(e => e.change.kind === 'verify')).toEqual([
-      { nid: id, change: { kind: 'verify', eid: f.id, ekind: 'fact', at: f.verified } },
-    ]);
+    expect(f.verified).toBeUndefined();
+    expect(emitted.filter(e => e.change.kind === 'verify')).toEqual([]);
   });
 
-  it('the same session repeating a fact emits one verify op, not one per repeat (review fix)', async () => {
+  it('las repeticiones de una sesión no emiten verify ops', async () => {
     const r = await cortex.learn('Tienda', 'fact', FACT);
     const id = r.neuron!.id;
     for (let i = 0; i < 3; i++) {
       const again = await cortex.learn('Tienda', 'fact', FACT, { neuronId: id });
-      expect(again.reconfirmed).toBe(true);
+      expect(again.reconfirmed).toBeUndefined();
     }
-    expect(emitted.map(e => e.change.kind)).toEqual(['fact', 'verify']);
+    // Los reintentos pueden reemitir el hecho para recuperar una entrega que
+    // falló después de guardarlo localmente. Nunca son una verificación nueva.
+    expect(emitted.map(e => e.change.kind)).toEqual(['fact', 'fact', 'fact', 'fact']);
+    expect(emitted.slice(1).every(e => JSON.stringify(e.change) === JSON.stringify(emitted[0].change))).toBe(true);
   });
 
   it('a re-learn that edits the line (keywords, class, confidence) is not a check (review fix)', async () => {
@@ -246,9 +247,9 @@ describe('cortex: what writes verified, and what carries it', () => {
     expect(conConf.reconfirmed).toBeUndefined();
     expect((await cortex.peek(id))!.facts[0].verified).toBeUndefined();
     expect(emitted.some(e => e.change.kind === 'verify')).toBe(false);
-    // The same keywords again change nothing, so that call is a bare repeat: a check.
+    // Repetir incluso sin cambios de metadatos no constituye una comprobación.
     const igual = await cortex.learn('Tienda', 'fact', FACT, { neuronId: id, keys: ['panel'] });
-    expect(igual.reconfirmed).toBe(true);
+    expect(igual.reconfirmed).toBeUndefined();
   });
 
   it('lengthening an explicit class is reported, shortening is not', async () => {

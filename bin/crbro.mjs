@@ -168,7 +168,23 @@ async function semanticBuild() {
   return { chunks, vectors: engine.semanticCount(), seconds: ((Date.now() - started) / 1000).toFixed(1) };
 }
 
-if (command === 'init') {
+if (command === 'doctor') {
+  // Observational only: never fall through to initialization or MCP startup.
+  const json = args.includes('--json');
+  try {
+    if (args.slice(1).some(arg => arg !== '--json')) throw new Error('invalid doctor option');
+    const { diagnose, formatDoctor } = await import('../dist/engine/doctor.js');
+    const report = await diagnose({ env: process.env, cwd: process.cwd() });
+    console.log(json ? JSON.stringify(report, null, 2) : formatDoctor(report));
+    process.exitCode = report.status === 'error' ? 1 : 0;
+  } catch {
+    // Do not print exception text: configuration/JSON errors can quote secrets.
+    const failure = { schema_version: 1, read_only: true, status: 'error', error: 'doctor_unavailable_or_invalid_options' };
+    console.log(json ? JSON.stringify(failure) : 'CRBRO doctor: unavailable or invalid options; use doctor [--json].');
+    process.exitCode = 1;
+  }
+
+} else if (command === 'init') {
   // ─── Initialize brain + IDE detection ──────────────────────────
   import('../dist/engine/brain.js').then(async ({ Brain }) => {
     const brain = new Brain();
@@ -1374,6 +1390,7 @@ if (command === 'init') {
   console.log('    npx crbro-memory init             Initialize brain + detect IDEs');
   console.log('    npx crbro-memory install-boot     Make the memory load itself in every conversation');
   console.log('    npx crbro-memory status           Show brain status');
+  console.log('    npx crbro-memory doctor [--json]  Read-only local diagnostics; never initializes or boots');
   console.log('');
   console.log('  Auto-Mining:');
   console.log('    npx crbro-memory mine [dir]       One-shot mining of artifacts');

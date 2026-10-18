@@ -195,17 +195,16 @@ describe('staleness through the MCP tools', () => {
     expect(served).not.toContain(PORT);
   });
 
-  it('learning the same text again reconfirms it (a session is a check)', async () => {
+  it('learning the same text again does not renew its verification', async () => {
     await edit(root, pelicano, n => { for (const f of n.facts) if (f.text === PRICE) { f.added = ago(150); delete f.verified; } });
     const stale = await json('crbro_recall', { query: 'plan Equipo cuesta euros' });
     expect(stale.possibly_stale?.[0]?.last_known).toBe(PRICE);
 
     const again = await json('crbro_learn', { topic: 'Pelícano', type: 'fact', content: PRICE, keywords: ['tarifa'] });
-    expect(again.reconfirmed).toBe(true);
+    expect(again.reconfirmed).toBeUndefined();
     expect(again.shelf_life).toBe('volatile');
     const fresh = await json('crbro_recall', { query: 'plan Equipo cuesta euros' });
-    expect(fresh.results[0].matching_content).toBe(PRICE);
-    expect(fresh.possibly_stale).toBeUndefined();
+    expect(fresh.possibly_stale?.[0]?.last_known).toBe(PRICE);
   });
 
   it('a re-learn that only adds keywords is not a check: the line stays in possibly_stale (review fix)', async () => {
@@ -215,9 +214,12 @@ describe('staleness through the MCP tools', () => {
     expect(r.reconfirmed).toBeUndefined();
     const still = await json('crbro_recall', { query: 'plan Equipo cuesta euros' });
     expect(still.possibly_stale?.[0]?.last_known).toBe(PRICE);
-    // The bare repeat is the check.
+    // A bare repeat is not a check either. Only explicit confirmation renews it.
     const bare = await json('crbro_learn', { topic: 'Pelícano', type: 'fact', content: PRICE });
-    expect(bare.reconfirmed).toBe(true);
+    expect(bare.reconfirmed).toBeUndefined();
+    const repeated = await json('crbro_recall', { query: 'plan Equipo cuesta euros' });
+    expect(repeated.possibly_stale?.[0]?.last_known).toBe(PRICE);
+    await call('crbro_revise', { neuron: pelicano, facts: [PRICE], status: 'verified', evidence: { method: 'user' } });
     const fresh = await json('crbro_recall', { query: 'plan Equipo cuesta euros' });
     expect(fresh.results[0].matching_content).toBe(PRICE);
   });

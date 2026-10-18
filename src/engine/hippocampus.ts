@@ -1,7 +1,7 @@
 // ─── CRBRO Hippocampus Engine ────────────────────────────────────
 // Session logging and memory formation
 
-import { readJSON, writeJSON, listJSONFiles, deleteJSON, now, today } from '../utils/fs.js';
+import { readJSON, writeJSON, updateJSON, listJSONFiles, deleteJSON, now, today } from '../utils/fs.js';
 import { sessionId } from '../utils/ids.js';
 import { redact, secretKinds } from './secrets.js';
 import type { Brain } from './brain.js';
@@ -43,8 +43,8 @@ export class Hippocampus {
     data = { ...data, summary: limpio.text };
     const id = sessionId();
 
-    // Check if session for today already exists — append to it
-    let existing = await readJSON<SessionLog>(this.brain.paths.session(id));
+    let created = false;
+    const saved = await updateJSON<SessionLog>(this.brain.paths.session(id), existing => {
 
     if (existing) {
       // Append to existing session
@@ -54,8 +54,7 @@ export class Hippocampus {
       existing.decisions_made += data.decisions_made || 0;
       existing.new_neurons_created += data.new_neurons_created || 0;
       existing.synapses_updated += data.synapses_updated || 0;
-      await writeJSON(this.brain.paths.session(id), existing);
-      return { ...existing, redacted: limpio.found };
+      return existing;
     }
 
     // Create new session log
@@ -71,13 +70,17 @@ export class Hippocampus {
       synapses_updated: data.synapses_updated || 0,
     };
 
-    await writeJSON(this.brain.paths.session(id), session);
+    created = true;
+    return session;
+    });
 
     // Update manifest
-    const manifest = await this.brain.getManifest();
-    await this.brain.updateManifest({ total_sessions: manifest.total_sessions + 1 });
+    if (created) {
+      const manifest = await this.brain.getManifest();
+      await this.brain.updateManifest({ total_sessions: manifest.total_sessions + 1 });
+    }
 
-    return { ...session, redacted: limpio.found };
+    return { ...saved!, redacted: limpio.found };
   }
 
   /**

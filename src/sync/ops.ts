@@ -11,6 +11,7 @@
 // can arise if no two writers touch the same bytes.
 
 import { contentHash } from '../utils/hash.js';
+import type { SourceReference, Verification } from '../types/index.js';
 
 /** Bumped only if the shape changes in a way older clients cannot read. */
 export const OPS_VERSION = 1;
@@ -42,6 +43,9 @@ export interface FactOp extends OpBase {
   text: string;
   conf: number;
   src?: string;
+  reference?: SourceReference;
+  temporal?: 'current' | 'historical';
+  verification_invalidated_at?: string;
   /** Aliases indexed with the fact (1.15). Merged, never replaced, on the receiving side. */
   keys?: string[];
   /**
@@ -127,8 +131,8 @@ export interface PurgeOp extends OpBase {
 
 /**
  * A line was checked against its source and still held (shelf life): emitted
- * by crbro_revise status=verified and by a session learning the same fact
- * again. `eid` is the fact id (ekind 'fact') or the entryId of a decision or
+ * by crbro_revise status=verified. Repetir un hecho no emite esta operación.
+ * `eid` is the fact id (ekind 'fact') or the entryId of a decision or
  * pattern (ekind 'entry'); `at` is the check. Merge: the latest `at` wins over
  * every log and the local value. A later check is newer evidence, there is
  * nothing to vote on, and max() keeps the merge order-independent.
@@ -141,6 +145,7 @@ export interface VerifyOp extends OpBase {
   op: 'verify';
   eid: string;
   ekind: 'fact' | 'entry';
+  verification?: Verification;
 }
 
 export type Op = NeuronOp | FactOp | StatusOp | DecisionOp | PatternOp | TagOp | ErrorOp | MapOp | PurgeOp | DebtOp | VerifyOp;

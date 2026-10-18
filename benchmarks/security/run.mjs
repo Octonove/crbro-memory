@@ -105,6 +105,11 @@ const out = {
   disclaimer: 'Un check determinista es un SUELO, no una prueba de seguridad. Los que se colaron van como issues abiertos.',
 };
 
+if (process.argv.includes('--check')) {
+  const { securityFailures, enforceGate } = await import('../gates.mjs');
+  enforceGate(securityFailures({ caught: cazados, total: SECRETOS.length, falsePositives: falsosPos, innocents: INOCENTES.length }));
+}
+
 if (process.argv.includes('--json')) {
   console.log(JSON.stringify(out, null, 2));
 } else {

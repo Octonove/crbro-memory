@@ -2,6 +2,37 @@
 
 All notable changes to CRBRO.
 
+## [2.10.0] — 2026-10-18
+
+- Prevent concurrent Windows keychain writers from overwriting externally added,
+  updated or removed entries. Locked fresh mutations, unique atomic temporaries
+  and ciphertext-aware read cache. Lock timeout now fails closed; live owners are
+  never reaped by age and release checks ownership.
+- Make context and daily-session appends atomic. Sync merges operations against
+  the current locked neuron. Leaving a team space preserves a recovery archive
+  even when its final push fails, with honest delivery status.
+- Persist shared deliveries independently of a slow Git operation. Retrying a
+  learn after an outbox write failure records delivery even when the local entry
+  already exists; replay remains idempotent and does not verify the entry.
+- Repeating a fact no longer verifies it. Add structured source references,
+  explicit user/source verification and current/historical meaning; preserve
+  evidence through sync, moves and merges without inventing legacy provenance.
+- Stable full-path/repository project identities and explicit aliases/bindings;
+  per-connection scope, project pending items, due dates and completion criteria.
+- Separate search relevance from provenance, verification and freshness. Add
+  project/all scope and current/history intent without replacing the ranker.
+- Add read-only `doctor [--json]`, reporting observed/unknown states rather than
+  promising operational integrations from configuration files alone.
+- Enforce frozen retrieval/secret-filter benchmark gates and add integrity,
+  evidence, project, MCP and diagnostic regressions using isolated fake data.
+- Update the MCP SDK and affected transitive/test dependencies to patched
+  compatible versions; the audited dependency tree has no reported advisories
+  at release verification time (not a guarantee against future vulnerabilities).
+- Keep 15 tools and legacy brains/callers. Document local-storage versus
+  AI-client/authentication data flows; no credentials are release artifacts.
+
+See [the 2.10 guide](docs/reliability-2.10.md) and [doctor](docs/doctor.md).
+
 ## [2.9.1] — 2026-10-04
 
 Shelf life, less noise: what 2.9.0 flagged on a real brain was mostly not a

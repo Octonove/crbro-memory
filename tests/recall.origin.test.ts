@@ -47,9 +47,7 @@ afterEach(async () => {
 const op = (o: Record<string, unknown>): Op => ({ v: OPS_VERSION, nid: NID, at: '2026-09-10T10:00:00Z', ...o }) as Op;
 
 async function sync(ops: Op[]): Promise<void> {
-  const local = await cortex.peek(NID);
-  const { neuron } = applyOps(local, ops, { id: NID });
-  await cortex.replaceFromSync(neuron);
+  await cortex.mergeFromSync(NID, ops);
 }
 
 const top = async (q: string) => (await engine.search(q, { limit: 3 }))[0];

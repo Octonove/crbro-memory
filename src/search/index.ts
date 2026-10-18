@@ -123,6 +123,11 @@ export type RecallKind = typeof RECALL_KINDS[number];
 export interface SearchFilter {
   since?: string;
   kinds?: readonly string[];
+  neuronIds?: readonly string[];
+  includeGlobal?: boolean;
+  /** Explicit project membership excludes those neurons from global lessons. */
+  globalExcludedNeurons?: readonly string[];
+  preferNeurons?: readonly string[];
 }
 
 /**
@@ -645,7 +650,15 @@ export class SearchEngine {
     const desde = (options?.since || '').slice(0, 10);
     const clases = options?.kinds && options.kinds.length > 0 ? new Set(options.kinds) : null;
     const sinFecha = new Set<string>();
-    const admite = (doc: { id?: string; kind?: string; added?: string }): boolean => {
+    const allowed = options?.neuronIds ? new Set(options.neuronIds) : null;
+    const owned = new Set(options?.globalExcludedNeurons || []);
+    const admite = (doc: { id?: string; kind?: string; added?: string; neuron?: string }): boolean => {
+      if (allowed && !allowed.has(doc.neuron || '')) {
+        const global = options?.includeGlobal && (doc.kind === 'preference' ||
+          (!!doc.neuron && /^(tech_|process_)/.test(doc.neuron) && !owned.has(doc.neuron) &&
+            ['pattern', 'error', 'debt'].includes(doc.kind || '')));
+        if (!global) return false;
+      }
       if (clases && !clases.has(String(doc.kind || ''))) return false;
       if (desde) {
         if (doc.kind === 'header') return false;   // dated by the neuron's birth, which says nothing about its content
@@ -691,6 +704,7 @@ export class SearchEngine {
         // of their own, so a long narrative cannot outrank the fact that
         // answers, and the neuron path below never sees them.
         if (doc.kind === 'session') {
+          if (allowed) continue; // A daily narrative has no reliable project boundary.
           if (clases) continue;                                   // a day log is not an entry kind
           if (desde && String(doc.added || '').slice(0, 10) < desde) continue;
           const prev = perSession.get(key);
@@ -765,7 +779,7 @@ export class SearchEngine {
     // How many neurons had any hit, before the limit: without it a caller
     // shown five results cannot tell "five matched" from "five of forty".
     if (options?.stats) options.stats.matched_neurons = byNeuron.size;
-    return this.materializeResults([...byNeuron.values()], limit, terms.length);
+    return this.materializeResults([...byNeuron.values()], limit, terms.length, options?.preferNeurons);
   }
 
   /**
@@ -838,9 +852,10 @@ export class SearchEngine {
       });
     }
     const escala = (RRF_K + 1) / listas.length;
+    const preferred = new Set(options.preferNeurons || []);
     if (options.stats) options.stats.matched_neurons = fused.size;
     return [...fused.values()]
-      .sort((a, b) => b.score - a.score)
+      .sort((a, b) => Number(preferred.has(b.best.neuron_id)) - Number(preferred.has(a.best.neuron_id)) || b.score - a.score)
       .slice(0, limit)
       .map(f => {
         const r: SearchResult = { ...f.best, relevance_score: Math.round(f.score * escala * 1000) / 1000 };
@@ -954,11 +969,13 @@ export class SearchEngine {
   private async materializeResults(
     porNeurona: ChunkHit[][],
     limit: number,
-    queryTermCount: number
+    queryTermCount: number,
+    preferNeurons?: readonly string[]
   ): Promise<SearchResult[]> {
     // Only the plausible head pays the neuron reads: nothing below it could
     // reach the answer even if everything above dropped out.
-    porNeurona.sort((a, b) => b[0].score - a[0].score);
+    const preferred = new Set(preferNeurons || []);
+    porNeurona.sort((a, b) => Number(preferred.has(b[0].neuron)) - Number(preferred.has(a[0].neuron)) || b[0].score - a[0].score);
     const candidatos = porNeurona.slice(0, Math.max(limit * 3, limit + 8));
 
     const resultados: Array<{ r: SearchResult; extra: ChunkHit[]; neuron: Neuron | null }> = [];
@@ -1063,7 +1080,7 @@ export class SearchEngine {
     // neighbour also scored was measured on 633 queries over the reference
     // brain and changed recall@3 by 0.15 points at most. Pre-registration and
     // numbers in benchmarks/synapse-activation/; mechanism in commit 69917ce.
-    resultados.sort((a, b) => b.r.relevance_score - a.r.relevance_score);
+    resultados.sort((a, b) => Number(preferred.has(b.r.neuron_id)) - Number(preferred.has(a.r.neuron_id)) || b.r.relevance_score - a.r.relevance_score);
     const top = resultados.slice(0, limit);
 
     // The neuron's next best lines, for the head of the list only: the line

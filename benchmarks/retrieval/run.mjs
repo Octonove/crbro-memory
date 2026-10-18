@@ -22,6 +22,15 @@ import { readFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { retrievalFailures, enforceGate } from '../gates.mjs';
+
+const CHECK = process.argv.includes('--check');
+if (CHECK) {
+  if (['CRBRO_BENCH_QUERIES', 'CRBRO_BENCH_HAYSTACK', 'CRBRO_BENCH_KEYS', 'CRBRO_BENCH_ALTS'].some(k => process.env[k])) {
+    throw new Error('--check requires the frozen baseline without benchmark overrides. Run variants without --check.');
+  }
+  process.env.CRBRO_SEMANTIC = '0';
+}
 
 // The pre-registered arm is the keyword engine. Since 1.16 the semantic layer
 // switches itself on wherever the runtime is installed, so the benchmark pins
@@ -177,6 +186,9 @@ const out = {
   ia_en_el_bucle_1_15: { keywords: KEYS ? 'on' : 'off', alternativas: ALTS ? 'on' : 'off' },
   fallos: res.fallos,
 };
+
+if (CHECK) enforceGate(retrievalFailures({ queries: N, at1: res.motor.at1, at3: res.motor.at3,
+  mrr: res.motor.mrr / N, distractors: D, confidentDistractors: distConfiados }));
 
 if (process.argv.includes('--json')) {
   console.log(JSON.stringify(out, null, 2));

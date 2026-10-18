@@ -8,10 +8,13 @@
 
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
-import { readJSON, writeJSON, fileExists, now } from '../utils/fs.js';
+import { randomUUID } from 'node:crypto';
+import { readJSON, writeJSON, updateJSON, fileExists, now } from '../utils/fs.js';
+import { withLock } from '../utils/lock.js';
 import { contentHash } from '../utils/hash.js';
 import { secretKinds } from '../engine/secrets.js';
-import { applyOps, type MergeReport } from './materialize.js';
+import { sanitizeReference } from '../engine/evidence.js';
+import type { MergeReport } from './materialize.js';
 import { decodeOps, encodeOp, entryId, opsRelPath, OPS_VERSION, type Op } from './ops.js';
 import type { Emitter } from '../engine/cortex.js';
 import { git, gitAvailable, initSpace, cloneSpace, syncSpace, type GitResult } from './git.js';
@@ -49,6 +52,50 @@ export interface SyncReport {
   merged: MergeReport[];
   pushed: boolean;
   message: string;
+}
+
+// Fuera de shared/: el bloqueo debe sobrevivir al traslado de un espacio.
+// Orden: shared-state -> shared-outbox-state -> JSON. Nunca a la inversa.
+// Git retiene shared-state, pero NUNCA shared-outbox-state. Los emisores de
+// Cortex llegan después de soltar la neurona y solo toman el segundo.
+function withSharedState<T>(brain: Brain, fn: () => Promise<T>): Promise<T> {
+  return withLock(path.join(brain.paths.root, 'shared-state'), fn);
+}
+
+function withOutboxState<T>(brain: Brain, fn: () => Promise<T>): Promise<T> {
+  return withLock(path.join(brain.paths.root, 'shared-outbox-state'), fn);
+}
+
+interface PendingOps { neuronId: string; identity: Identity; ops: Op[] }
+
+function outboxDir(brain: Brain, space: string): string {
+  return path.join(brain.paths.root, 'shared-outbox', space);
+}
+
+/** Con outbox-state adquirido y sin Git concurrente sobre este repositorio. */
+async function drainOutboxUnlocked(brain: Brain, space: string): Promise<number> {
+  const pendingDir = outboxDir(brain, space);
+  let files: string[];
+  try { files = await fs.readdir(pendingDir); }
+  catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return 0;
+    throw err;
+  }
+  let drained = 0;
+  for (const file of files.filter(f => f.endsWith('.json')).sort()) {
+    const pending = path.join(pendingDir, file);
+    const record = await readJSON<PendingOps>(pending);
+    if (!record) continue;
+    if (!(await readSpace(brain, space))) throw new Error('Cannot deliver pending notes: space is missing.');
+    const abs = path.join(spaceDir(brain, space), opsRelPath(record.neuronId, record.identity.author, record.identity.device));
+    await fs.mkdir(path.dirname(abs), { recursive: true });
+    // La línea inicial aísla un posible append truncado por caída del proceso.
+    // Si cayó tras append pero antes de unlink se repite: applyOps es idempotente.
+    await fs.appendFile(abs, '\n' + record.ops.map(encodeOp).join('\n') + '\n', 'utf-8');
+    await fs.unlink(pending);
+    drained += record.ops.length;
+  }
+  return drained;
 }
 
 /**
@@ -95,6 +142,12 @@ export async function createSpace(
   author: string,
   branch = 'main'
 ): Promise<{ ok: boolean; message: string; detail?: string }> {
+  return withSharedState(brain, () => createSpaceUnlocked(brain, name, remote, author, branch));
+}
+
+async function createSpaceUnlocked(
+  brain: Brain, name: string, remote: string, author: string, branch: string
+): Promise<{ ok: boolean; message: string; detail?: string }> {
   if (!gitAvailable()) {
     return { ok: false, message: 'git is not installed, and it is what carries the shared memory. Install it and try again.' };
   }
@@ -135,6 +188,12 @@ export async function joinSpace(
   author: string,
   branch = 'main'
 ): Promise<{ ok: boolean; message: string; detail?: string }> {
+  return withSharedState(brain, () => joinSpaceUnlocked(brain, name, remote, author, branch));
+}
+
+async function joinSpaceUnlocked(
+  brain: Brain, name: string, remote: string, author: string, branch: string
+): Promise<{ ok: boolean; message: string; detail?: string }> {
   if (!gitAvailable()) {
     return { ok: false, message: 'git is not installed, and it is what carries the shared memory. Install it and try again.' };
   }
@@ -174,10 +233,14 @@ function neuronOps(neuron: Neuron, id: Identity): Op[] {
     const fid = f.id || entryId(f.text);
     ops.push({ v: OPS_VERSION, op: 'fact', nid: neuron.id, by: id.author,
       at: f.added || at, fid, text: f.text, conf: f.confidence ?? 1, src: f.source,
+      ...(f.reference ? { reference: f.reference } : {}),
+      ...(f.temporal ? { temporal: f.temporal } : {}),
+      ...(f.verification_invalidated_at ? { verification_invalidated_at: f.verification_invalidated_at } : {}),
       ...(f.keys?.length ? { keys: f.keys } : {}),
       ...(f.shelf_life ? { shelf: f.shelf_life } : {}) });
     if (f.verified) {
-      ops.push({ v: OPS_VERSION, op: 'verify', nid: neuron.id, by: id.author, at: f.verified, eid: fid, ekind: 'fact' });
+      ops.push({ v: OPS_VERSION, op: 'verify', nid: neuron.id, by: id.author, at: f.verified, eid: fid, ekind: 'fact',
+        ...(f.verification ? { verification: f.verification } : {}) });
     }
     if (f.status === 'superseded' || f.status === 'retracted') {
       ops.push({ v: OPS_VERSION, op: 'status', nid: neuron.id, by: id.author,
@@ -206,7 +269,8 @@ function neuronOps(neuron: Neuron, id: Identity): Op[] {
     if (d) ops.push({ v: OPS_VERSION, op: 'debt', nid: neuron.id, by: id.author, at: fecha(d), text: d });
   }
   for (const [k, when] of Object.entries(neuron.entry_verified || {})) {
-    if (k && when) ops.push({ v: OPS_VERSION, op: 'verify', nid: neuron.id, by: id.author, at: when, eid: k, ekind: 'entry' });
+    if (k && when) ops.push({ v: OPS_VERSION, op: 'verify', nid: neuron.id, by: id.author, at: when, eid: k, ekind: 'entry',
+      ...(neuron.entry_verification?.[k] ? { verification: neuron.entry_verification[k] } : {}) });
   }
   if (neuron.map && neuron.map.text) {
     ops.push({ v: OPS_VERSION, op: 'map', nid: neuron.id, by: id.author,
@@ -241,7 +305,23 @@ export async function prepareShare(
   const revisar = (where: string, text: string) => {
     for (const kind of secretKinds(text || '')) blocked.push({ where, kind });
   };
-  (neuron.facts || []).forEach((f, i) => revisar(`facts[${i}]`, f.text));
+  const revisarReferencia = (where: string, reference: unknown) => {
+    if (reference === undefined) return;
+    try {
+      sanitizeReference(reference);
+      revisar(where, JSON.stringify(reference));
+    } catch {
+      blocked.push({ where, kind: 'unsafe source reference' });
+    }
+  };
+  (neuron.facts || []).forEach((f, i) => {
+    revisar(`facts[${i}]`, f.text);
+    revisarReferencia(`facts[${i}].reference`, f.reference);
+    revisarReferencia(`facts[${i}].verification.reference`, f.verification?.reference);
+  });
+  for (const [k, v] of Object.entries(neuron.entry_verification || {})) {
+    revisarReferencia(`entry_verification[${k}].reference`, v.reference);
+  }
   (neuron.decisions || []).forEach((d, i) => revisar(`decisions[${i}]`, d.text));
   (neuron.patterns || []).forEach((p, i) => revisar(`patterns[${i}]`, p));
   (neuron.errors || []).forEach((e, i) => revisar(`errors[${i}]`, e));
@@ -270,6 +350,13 @@ export async function commitShare(
   spaceName: string,
   token: string
 ): Promise<{ ok: boolean; message: string; ops?: number }> {
+  return withSharedState(brain, () => withOutboxState(brain,
+    () => commitShareUnlocked(brain, cortex, neuronRef, spaceName, token)));
+}
+
+async function commitShareUnlocked(
+  brain: Brain, cortex: Cortex, neuronRef: string, spaceName: string, token: string
+): Promise<{ ok: boolean; message: string; ops?: number }> {
   const prep = await prepareShare(brain, cortex, neuronRef, spaceName);
   if ('error' in prep) return { ok: false, message: prep.error };
   if (prep.blocked.length > 0) {
@@ -293,7 +380,7 @@ export async function commitShare(
   // keep flowing without anyone having to share it again. A neuron that was
   // unshared earlier loses its tombstone here, so re-sharing works.
   await removeUnshared(brain, neuron.id);
-  await markShared(brain, neuron.id, spaceName);
+  await markSharedUnlocked(brain, neuron.id, spaceName);
 
   return { ok: true, message: `"${neuron.id}" is now shared in "${spaceName}".`, ops: ops.length };
 }
@@ -311,9 +398,11 @@ export async function sharedMap(brain: Brain): Promise<SharedMap> {
 }
 
 export async function markShared(brain: Brain, neuronId: string, space: string): Promise<void> {
-  const m = await sharedMap(brain);
-  m[neuronId] = space;
-  await writeJSON(sharedMapPath(brain), m);
+  await withSharedState(brain, () => withOutboxState(brain, () => markSharedUnlocked(brain, neuronId, space)));
+}
+
+async function markSharedUnlocked(brain: Brain, neuronId: string, space: string): Promise<void> {
+  await updateJSON<SharedMap>(sharedMapPath(brain), current => ({ ...current, [neuronId]: space }));
 }
 
 // ─── Unsharing ───────────────────────────────────────────────────
@@ -333,15 +422,11 @@ export async function unsharedList(brain: Brain): Promise<string[]> {
 }
 
 async function addUnshared(brain: Brain, neuronId: string): Promise<void> {
-  const lista = await unsharedList(brain);
-  if (!lista.includes(neuronId)) lista.push(neuronId);
-  await writeJSON(unsharedPath(brain), lista);
+  await updateJSON<string[]>(unsharedPath(brain), current => [...new Set([...(current || []), neuronId])]);
 }
 
 async function removeUnshared(brain: Brain, neuronId: string): Promise<void> {
-  const lista = await unsharedList(brain);
-  if (!lista.includes(neuronId)) return;
-  await writeJSON(unsharedPath(brain), lista.filter(id => id !== neuronId));
+  await updateJSON<string[]>(unsharedPath(brain), current => current?.filter(id => id !== neuronId) || null);
 }
 
 /**
@@ -356,6 +441,12 @@ export async function unshareNeuron(
   cortex: Cortex,
   neuronRef: string
 ): Promise<{ ok: boolean; neuron_id: string | null; space: string | null; message: string }> {
+  return withSharedState(brain, () => withOutboxState(brain, () => unshareNeuronUnlocked(brain, cortex, neuronRef)));
+}
+
+async function unshareNeuronUnlocked(
+  brain: Brain, cortex: Cortex, neuronRef: string
+): Promise<{ ok: boolean; neuron_id: string | null; space: string | null; message: string }> {
   const neuron = (await cortex.peek(neuronRef)) || (await cortex.findByName(neuronRef));
   const id = neuron?.id || neuronRef;
 
@@ -365,6 +456,8 @@ export async function unshareNeuron(
     return { ok: false, neuron_id: id, space: null, message: `"${id}" is not shared in any space.` };
   }
 
+  // Lo ya confirmado debe llegar al log antes de dejar de seguir la neurona.
+  await drainOutboxUnlocked(brain, space);
   delete m[id];
   await writeJSON(sharedMapPath(brain), m);
   await addUnshared(brain, id);
@@ -380,7 +473,7 @@ export async function unshareNeuron(
 
 /**
  * Leave a space: one last sync so pending notes go out, then the local copy
- * of the space is removed and its neurons stop being followed. The local
+ * of the space is archived and its neurons stop being followed. The local
  * neurons and the remote repository are untouched. The ids are NOT
  * tombstoned — re-joining should follow them again.
  */
@@ -388,24 +481,43 @@ export async function leaveSpace(
   brain: Brain,
   cortex: Cortex,
   name: string
-): Promise<{ ok: boolean; message: string; synced_before_leaving: SyncReport['state'] | 'skipped'; neurons_unshared: number }> {
+): Promise<{
+  ok: boolean; message: string; synced_before_leaving: SyncReport['state'] | 'skipped';
+  pushed_before_leaving: boolean; neurons_unshared: number; archive_path?: string;
+}> {
+  return withSharedState(brain, async () => {
   const cfg = await readSpace(brain, name);
   if (!cfg) {
-    return { ok: false, message: `You are not in a space called "${name}".`, synced_before_leaving: 'skipped', neurons_unshared: 0 };
+    return { ok: false, message: `You are not in a space called "${name}".`, synced_before_leaving: 'skipped', pushed_before_leaving: false, neurons_unshared: 0 };
   }
 
   // Offline or no access are not failures here: the point is to leave, and
   // what could not be pushed is reported, not blocking.
   let synced: SyncReport['state'] | 'skipped' = 'skipped';
+  let pushed = false;
   try {
-    synced = (await syncSpaceNow(brain, cortex, name, 10_000)).state;
+    const result = await syncSpaceUnlocked(brain, cortex, name, 10_000);
+    synced = result.state;
+    pushed = result.pushed;
   } catch {
     synced = 'offline';
   }
 
-  // maxRetries: the space is a git repository, and on Windows its pack files
-  // are read-only; Node retries after fixing the mode, but only if asked.
-  await fs.rm(spaceDir(brain, name), { recursive: true, force: true, maxRetries: 3 });
+  return withOutboxState(brain, async () => {
+  // Siempre se conserva TODO el repositorio (incluido .git), incluso tras
+  // enviar: las operaciones y su historial siguen siendo recuperables.
+  const archive = path.join(brain.paths.root, 'shared-archives', `${name}-${randomUUID()}`);
+  try {
+    // También lo confirmado mientras Git o la materialización estaban ocupados.
+    if (await drainOutboxUnlocked(brain, name)) pushed = false;
+    await fs.mkdir(path.dirname(archive), { recursive: true });
+    await fs.rename(spaceDir(brain, name), archive);
+  } catch {
+    return {
+      ok: false, message: `Could not archive "${name}". The space and its logs were kept; you have not left.`,
+      synced_before_leaving: synced, pushed_before_leaving: pushed, neurons_unshared: 0,
+    };
+  }
 
   const m = await sharedMap(brain);
   let neurons_unshared = 0;
@@ -417,36 +529,41 @@ export async function leaveSpace(
   }
   if (neurons_unshared > 0) await writeJSON(sharedMapPath(brain), m);
 
-  const aviso = synced === 'ok'
+  const aviso = pushed
     ? 'Your pending notes went out first.'
-    : synced === 'offline' || synced === 'auth'
-    ? `Your pending notes could not be pushed (${synced}); they are gone with the local copy.`
-    : 'No final sync was possible.';
+    : 'The final push was not confirmed; pending notes remain recoverable in the archive.';
 
   return {
     ok: true,
     message: `Left "${name}". ${aviso} ${neurons_unshared} neuron(s) are no longer followed; ` +
-      'your local copies are untouched and the remote repository was not modified.',
+      `your local neurons are kept. Recoverable space archive: ${archive}`,
     synced_before_leaving: synced,
+    pushed_before_leaving: pushed,
     neurons_unshared,
+    archive_path: archive,
   };
+  });
+  });
 }
 
-/** Append one note for a neuron that is already shared. Silent if it is not. */
+/** Registra antes de confirmar. Solo omite una neurona que ya no se comparte. */
 export async function emitOps(brain: Brain, neuronId: string, make: (id: Identity) => Op[]): Promise<void> {
+  return withOutboxState(brain, async () => {
   const m = await sharedMap(brain);
   const space = m[neuronId];
   if (!space) return;
 
-  const dir = spaceDir(brain, space);
-  if (!(await fileExists(path.join(dir, 'space.json')))) return;
-
   const id = await getIdentity(brain);
-  const abs = path.join(dir, opsRelPath(neuronId, id.author, id.device));
-  await fs.mkdir(path.dirname(abs), { recursive: true });
   const ops = make(id);
   if (ops.length === 0) return;
-  await fs.appendFile(abs, ops.map(encodeOp).join('\n') + '\n', 'utf-8');
+  await writeJSON<PendingOps>(path.join(outboxDir(brain, space), `${randomUUID()}.json`), { neuronId, identity: id, ops });
+  // Si sync adquiere shared-state después de esta comprobación, debe esperar
+  // nuestro outbox-state antes de empezar Git. No hay ventana de append/Git.
+  if (!(await fileExists(path.join(brain.paths.root, 'shared-state.lock')))) {
+    try { await drainOutboxUnlocked(brain, space); }
+    catch { /* Ya persistido: se reintenta en sync/leave, incluso tras reinicio. */ }
+  }
+  });
 }
 
 // ─── Sync ────────────────────────────────────────────────────────
@@ -476,12 +593,19 @@ export async function syncSpaceNow(
   spaceName: string,
   timeoutMs = 30_000
 ): Promise<SyncReport> {
+  return withSharedState(brain, () => syncSpaceUnlocked(brain, cortex, spaceName, timeoutMs));
+}
+
+async function syncSpaceUnlocked(
+  brain: Brain, cortex: Cortex, spaceName: string, timeoutMs: number
+): Promise<SyncReport> {
   const base: SyncReport = {
     space: spaceName, state: 'ok', neurons_touched: [], merged: [], pushed: false, message: '',
   };
 
   const cfg = await readSpace(brain, spaceName);
   if (!cfg) return { ...base, state: 'not_joined', message: `You are not in a space called "${spaceName}".` };
+  await withOutboxState(brain, () => drainOutboxUnlocked(brain, spaceName));
   if (!gitAvailable()) return { ...base, state: 'no_git', message: 'git is not installed on this machine.' };
 
   const dir = spaceDir(brain, spaceName);
@@ -518,23 +642,23 @@ export async function syncSpaceNow(
     const ops = await readAllOps(dir, nid);
     if (ops.length === 0) continue;
 
-    const local = await cortex.peek(nid);
-    const { neuron, report } = applyOps(local, ops, { id: nid });
+    const { report, created } = await cortex.mergeFromSync(nid, ops);
 
     const cambio = report.facts_added + report.facts_retracted + report.facts_superseded +
       report.decisions_added + report.patterns_added + report.tags_added +
       report.errors_added + report.debts_added + report.entries_removed +
-      report.verifications_updated + report.shelf_updated +
+      report.verifications_updated + report.shelf_updated + report.metadata_updated +
       (report.map_updated ? 1 : 0);
-    if (cambio > 0 || !local) {
-      await cortex.replaceFromSync(neuron);
+    if (cambio > 0 || created) {
       base.neurons_touched.push(nid);
       base.merged.push(report);
     }
-    await markShared(brain, nid, spaceName);
+    await markSharedUnlocked(brain, nid, spaceName);
   }
 
-  base.pushed = !!pushed?.ok;
+  const pending = await withOutboxState(brain, () => drainOutboxUnlocked(brain, spaceName));
+  // Git solo envió lo que había antes: lo añadido después espera el próximo sync.
+  base.pushed = !!pushed?.ok && pending === 0;
   const nuevos = base.merged.reduce((n, m) => n + m.facts_added, 0);
   base.message = base.neurons_touched.length === 0
     ? 'Up to date. Nothing new from anyone.'
@@ -574,11 +698,15 @@ export function attachSync(brain: Brain, cortex: Cortex): void {
       if (change.kind === 'fact') {
         return [{ ...comun, op: 'fact', fid: change.fid, text: change.text,
                   conf: change.conf, src: change.src,
+                  ...(change.reference ? { reference: change.reference } : {}),
+                  ...(change.temporal ? { temporal: change.temporal } : {}),
+                  ...(change.verification_invalidated_at ? { verification_invalidated_at: change.verification_invalidated_at } : {}),
                   ...(change.keys?.length ? { keys: change.keys } : {}),
                   ...(change.shelf ? { shelf: change.shelf } : {}) } as Op];
       }
       if (change.kind === 'verify') {
-        return [{ ...comun, op: 'verify', eid: change.eid, ekind: change.ekind } as Op];
+        return [{ ...comun, op: 'verify', eid: change.eid, ekind: change.ekind,
+          ...(change.verification ? { verification: change.verification } : {}) } as Op];
       }
       if (change.kind === 'status') {
         return [{ ...comun, op: 'status', fid: change.fid, to: change.to, why: change.why } as Op];

@@ -27,6 +27,9 @@ Or in USDC. Send **USDC only** and **only on the network shown**; on any other n
 
 ## Features
 
+- **🧭 Project continuity (2.10+)** — Full-path/repository identities and explicit aliases bind neurons to a project. Each MCP connection has its own current project, with scoped pending items, optional due dates and completion criteria. `crbro_recall scope=all` can still find other projects. Scope is organization, not an access-control boundary. [Examples and compatibility](docs/reliability-2.10.md).
+- **🩺 Read-only diagnostics (2.10+)** — `npx crbro-memory doctor --json` reports observed versions, brain/client paths, last boot, semantic files, backups and local Git state. It does not repair, read credential values, install anything or fetch/push. Unknown means unknown; see [doctor](docs/doctor.md).
+
 - **🧬 Biological Architecture** — Knowledge organized as neurons (cortex), connections (synapses), and session memory (hippocampus)
 - **🔍 Fact-Level Search** — Powered by [Orama](https://orama.com/). Every fact is indexed on its own, so a topic with hundreds of facts stays as findable as one with three. Each result comes back with the exact line that matched, when it was recorded, a `confidence` label (`weak` = little of the question was covered) and, for the top results, the topic's next best lines. A short bilingual synonym table widens the question without inventing terms *(v1.13+)*
 - **🎯 Read the entry, not the neuron** — `crbro_inspect view=neuron` returns an index: every fact, decision, pattern, preference, error, debt and the map as an id, a kind, a date and a preview. `entries=[ids]` reads just those; every recall hit carries its `entry_id`. The whole-neuron read still exists as `detail=full`, behind a declared ceiling. A 307-fact neuron went from 66,952 tokens to 1,887 to open *(v2.1+)*
@@ -35,14 +38,14 @@ Or in USDC. Send **USDC only** and **only on the network shown**; on any other n
 - **🧭 Semantic recall** — `npx crbro-memory init` installs a local embedding model (`multilingual-e5-small`, int8) fused with the keyword engine, so paraphrases the words do not cover start to land. It matters most in a big brain: with 1,482 unrelated facts around the test set it lifts recall@1 from 54% to 67% on the original exam and from 31% to 48% on a new 96-question one; on a small brain it measures within 2 points of the keyword engine (75% vs 77% on 2.7.2). Costs ~500 MB on disk once per machine and ~0.5 GB of RAM while a server runs; `init --no-semantic` skips it, `CRBRO_SEMANTIC=0` turns it off *(v1.14+, installed by default since v1.16)*
 - **🔥 Heat Scores** — Automatic relevance tracking based on frequency, recency, and connectivity. Topics written in the same session are linked at consolidation, so the graph fills itself in *(v1.13+)*
 - **🕰️ Dates that mean something** — A recency lift of at most 4% breaks ties towards the newer telling (measured: it only ever flipped exact ties), `crbro_recall since` / `kind` narrow a search to "the last two weeks" or "only past mistakes", and `crbro_maintenance backfill_dates` dates the entries written before 1.13 from the date stated in their own text — never guessed *(v2.5+)*
-- **⏳ Shelf life: what may have changed comes apart** — A port, a price, a version or who holds a role changes in the world without anyone telling the memory, and recall used to serve the old value with `confidence: strong`. Now every fact has a shelf life — `volatile` (versions, prices, ports, hosts, paths, config, people in roles: 90 days), `normal` (365), `durable` (decisions and patterns: 730) or `permanent` (preferences, errors, debts, history: never) — set with `shelf_life` on `crbro_learn` or, when omitted, inferred from the text and returned. Since 2.9.1 two kinds of unmarked fact are inferred `permanent`: a line the miner imported (`shelf_reason: "miner"`), and a dated record of something done — a date and a finished action in the line's first sentence, "FASE 2 completada (ago 2026)", "Deployed v2.3.1 on 2026-06-18" (`shelf_reason: "history"`) — unless that sentence states what holds from a date on ("desde el 18-sep el puerto es 9443", "as of 2026-10-01 the plan is $49"), looks ahead ("caduca", "will be released"), speaks of the present ("actualmente", "last deployed") or says the value it carries still holds ("Comprobado el 4-oct-2026: cuesta 35 €", "Migrado el panel al puerto 9443 (18-sep-2026)"); those keep warning. The clock runs from the last verification: `crbro_revise status=verified` when the agent checked a line against its source, or the same fact learned again with nothing else in the call. A recall row whose best line is past its window moves, whole, to a separate `possibly_stale` block with `age_days` and `last_verified`, and the hint says how to reconfirm or supersede it; the ranking does not change and what is current stays where it was. The windows are a policy choice, not a measurement — `CRBRO_SHELF_DAYS="volatile=90,normal=365,durable=730"` changes them, `CRBRO_STALENESS=0` turns the whole feature off. An existing brain is not flooded on upgrade: unmarked lines written before the first boot of this version start counting near that boot — since 2.9.1 the ones the detector infers volatile too, when the brain itself predates shelf life — staggered so they do not all come due on the same day; a line marked volatile by hand gets no grace, lines with no date are never flagged, and nothing is rewritten on disk. **Measured, and it did not change what the agent answers:** in the pre-registered agentic case below, recall flags all four changed values correctly, but no agent opened the file to check — see the table. A second iteration changes how the warning arrives: the answer opens with `stale_warning`, each stale row leads with `warning` and a `next_step` (open the file the line itself names, or look where the value lives; if that is not possible, say it may be out of date) and carries the old line as `last_known` rather than as ordinary content, and `crbro_learn` asks that a changeable value say where it came from. **Measured on a second pre-registered case, and still not met:** when recall flags the row, the agent stops giving the old value as current (it warns or abstains), but it still does not open the file to check, and only two of that case's six changed values were flagged at all — see the table
+- **⏳ Shelf life and explicit evidence** — Facts have `volatile` (90 days), `normal` (365), `durable` (730) or `permanent` shelf life, configurable through `CRBRO_SHELF_DAYS`; expired claims move to `possibly_stale` with a source-check warning. Since 2.10, repeating a fact never verifies it: only `crbro_revise status=verified` restarts a check. Optional `evidence` records `source` with its reference, or `user`; older explicit calls remain `unspecified`, and legacy dates are not promoted into evidence. References are data, never executed. `temporal` distinguishes current claims from history; `intent=current` separates historical matches. Relevance, provenance, verification and freshness are separate labels, not a truth guarantee. Earlier agent benchmarks showed that warnings alone did not reliably make agents check sources; those historical measurements remain in [the design report](docs/design/staleness.md).
 - **🧹 Housekeeping that reports before it acts** — every maintenance run lists entries whose own deadline has passed, neurons that outgrew one read (with `crbro_revise move_to` to split them keeping every date) and the one-line neurons a bulk import left behind (`compact:true` folds them into a digest). All read-only until asked *(v2.5+)*
 - **💽 Backs itself up** — one gzipped copy a day at consolidation, rotated, beside the brain it belongs to; `CRBRO_BACKUP_DIR` points it at a synced folder. The quarantine and machine tokens never travel *(v2.5+)*
 - **✏️ Correctable** — Knowledge can be superseded or retracted, not just piled up — facts, and since 2.0 decisions, patterns, errors and debts too. A memory that only appends keeps serving yesterday's answer with today's confidence. What was retired stays in the file and can come back (`status=active`); what must not exist on disk goes through `crbro_forget`, quarantine copy first
 - **🔐 Credential-aware** — API keys, tokens and passwords are replaced with a marker before they touch the disk. The sentence around them survives; the secret does not — and `crbro_secret` puts the real value in your operating system's own keychain, so refusing it does not leave you with nowhere to put it
 - **🏠 One process for every client (opt-in)** — `npx crbro-memory daemon on` and the clients of a brain stop loading a copy of it each: what they launch becomes a 55 MB proxy to one daemon that holds the index and the model once. Measured with three clients: 2,153 MB → 1,140 MB, the second client ready in 0.3 s instead of 1.8, and a line saved in one chat recalled in another at once. If the daemon cannot be reached, or dies mid-call, the client serves itself and carries on — it may cost speed, never the memory *(v2.5+)*
 - **👥 Safe with two editors open** — Writes are serialised per neuron, so running CRBRO in two IDEs at once does not silently lose facts
-- **🤝 Shareable per project** — Put one project in a team space and it stays in step across everyone's machine. Everything else in your brain never leaves it
+- **🤝 Shareable per project** — Only explicitly shared neurons sync to your configured Git remote. A failed push remains unsent; leaving a space preserves a local recovery archive. Information returned by memory tools still reaches your AI client even when it is not shared with a team.
 - **🗺️ Living Maps** — Each topic can carry one always-current map of how its system works (`crbro_map`), replaced whole on every change — plus a global map of clusters and cross-domain bridges
 - **📓 Error Ledger** — `type: "error"` stores each real mistake WITH its correction, on the topic where it happened, so the same error is not made twice. Dated since 1.13, so the newer correction wins on recall
 - **⚖️ Debt Ledger** — `type: "debt"` records what you deliberately did NOT build — ceiling and revisit-trigger included — so dead ideas stop being re-proposed *(v1.11+)*
@@ -55,7 +58,7 @@ Or in USDC. Send **USDC only** and **only on the network shown**; on any other n
 - **⏱️ Memory at the moment of action (opt-in)** — `npx crbro-memory install-hooks --guard` wires a Claude Code `PreToolUse` hook: before a shell command runs, the stored errors, debts and patterns that mention *that command* are added to the model's context — three at most, once per session, never blocking. Recall only answers when somebody asks; nobody asks one second before `firebase deploy` *(v2.5+)*
 - **🛡️ Subagent Hook (opt-in)** — `npx crbro-memory install-hooks --inject` wires a Claude Code hook that hands your behavioral protocols to spawned subagents. Injection is off by default since 1.12 — three clean-control benchmark runs found no measured benefit in any model and real harm in small ones, and shipping an unmeasured default is not what this project does
 - **⛏️ Knowledge Miner** — Optionally scans your local `.md`/`.txt` notes and feeds them into the brain
-- **🔒 Fully Local** — Runs on Node.js alone: no Python, no Docker, no databases, no external services. Your memory never leaves your machine. The one download is the embedding model at `init`, from Hugging Face, once per machine; nothing calls out afterwards
+- **🔒 Local storage, explicit data flows** — The server and optional embedding model run locally, with no hosted CRBRO account or telemetry. MCP tool results go to your AI client and may reach its model provider; team sync and synced backup folders use the destinations you choose. The keychain is separate from normal memory backups and release packages, but reading a secret through MCP returns it to that client. See [Security](SECURITY.md).
 - **💾 File-Based** — All data stored as readable JSON files in `~/.crbro/` — inspectable, diffable, and versionable with git
 - **🔌 MCP Native** — Works with Claude Desktop, Claude Code, Cursor, Windsurf, and any MCP-compatible client
 
@@ -263,7 +266,7 @@ Mods need Claude Code 2.1.286 or later and are drawn in the CLI and in the deskt
 |------|-------------|
 | `crbro_boot` | Boot the brain at session start — loads hot topics, context, the last three sessions and the `retired_tools` map. `project` (the folder or repo name) puts that project's neurons first and lists them in `project_neurons` |
 | `crbro_inspect` | Read-only views by id or name: `view=status` (with the version the process runs, and the one installed on disk when npx replaced it under a running process), `neuron`, `neurons`, `sessions`, `global_map`. `view=neuron` is an index by default — every entry as id, kind, date and preview; `entries=[ids]` reads those in full, `detail=full` the whole neuron. `view=sessions session=<id>` reads one day log whole |
-| `crbro_learn` | Store a fact, decision, pattern, preference, error or debt — with the keywords a future question may use. `supersedes` retires the old version in the same call; `shelf_life` says how fast a fact goes stale (inferred from the text when omitted, and returned); the same fact again, with nothing else in the call, counts as re-verified |
+| `crbro_learn` | Store a fact, decision, pattern, preference, error or debt with search keywords. `supersedes` replaces old facts; `shelf_life`, `reference` and `temporal` describe the claim. Repeating it never verifies it; use an explicit `crbro_revise status=verified` with evidence after a real check. |
 | `crbro_recall` | Search every stored line, not just topic names — returns what matched, how confidently, and the topic's next best lines. Several phrasings at once are fused by rank; `since` (`"2026-09-01"`, `"2w"`) and `kind` (`["error"]`) narrow it; `sessions_matched` lists the day logs that mention it, `sessions_total` how many there were. A line that is not yours says where it came from, in `also_matched` too: `origin` is `team:<space>` (with `by`, which the author declares and can be forged), plain `team` when the neuron is no longer shared, or `miner`. A row whose best line is past its shelf life since last verified comes back apart, in `possibly_stale`: `warning` and `next_step` first (what to check before answering, naming the file the line cites when it cites one), the line as `last_known`, then `age_days`, `last_verified`, `shelf_life` and `shelf_inferred`; the answer then opens with `stale_warning`. An old `also_matched` preview carries `stale_days` |
 | `crbro_revise` | Retire facts (and decisions, patterns, errors, debts via `entries`) as superseded or retracted, reactivate them with `status=active`, reconfirm facts, decisions and patterns checked against their source with `status=verified`, edit summary, domain, tags or name, and split a neuron with `move_to` — the entries keep their dates |
 | `crbro_forget` | Remove for good, keeping a copy in `.quarantine/` first — entries of a neuron, a whole neuron (two-step with `confirm_token`), a session log; `restore` and `merge_into` too |
@@ -402,13 +405,17 @@ know next time they sit down.
 - No connection is a normal answer, not an error. Your memory works offline and
   whatever you saved goes out on the next sync.
 
-**What never leaves your machine**
+**What team sync excludes**
 
 - Every project you did not explicitly share.
 - Preferences — not shareable at all, at any setting. They are the field most
   likely to hold a key.
-- Credentials. `crbro_share` refuses outright if it finds one, and tells you
-  where. It will not redact it and send the rest.
+- Recognized credentials. `crbro_share` refuses outright if it finds one,
+  and tells you where. The filter cannot recognize every possible secret;
+  keep credential values in the separate OS keychain, never in shared notes.
+
+These are team-sync exclusions, not guarantees about your AI client's data
+flows or a cloud-synced folder you choose for the brain.
 
 > **What was sent stays sent.** `crbro_share unshare:true` stops following a
 > project — no more notes go out and the next sync ignores it — but once a
@@ -529,8 +536,7 @@ them up with git and delete them. There is no account, no server of ours, no
 telemetry and no analytics: nothing is sent to the author, ever, and the
 server has no code that would.
 
-Three things do touch the network, all of them started by you and none of
-them on by default:
+These data flows can touch the network:
 
 - **The optional semantic layer.** `npx crbro-memory init` (or
   `semantic install`) downloads an embedding model from Hugging Face into
@@ -539,16 +545,19 @@ them on by default:
   never downloads it.
 - **Team spaces.** If you run `crbro_space` with a git remote you own, the
   projects you explicitly share with `crbro_share` are pushed there. Nothing
-  else leaves: preferences are excluded from sharing and sync by design, and
+  else is included by that sync: preferences are excluded by design, and
   a project is shared only when you name it.
 - **Your MCP client.** Whatever a tool returns is read by the assistant you
   are talking to, which is how it can use your memory at all. That traffic is
   between you and your client, not us.
 
-Anything that looks like a credential is replaced with a marker before it
+Recognized credential patterns are replaced with a marker before the text
 reaches disk, and the sentence around it survives; `crbro_secret` puts the
-real value in your operating system's own keychain instead of the brain. To
-erase everything, delete the folder. To see what is stored about any topic,
+real value in your operating system's own keychain instead of the brain.
+An explicit `crbro_secret action=get` returns the value to the AI client;
+encryption at rest does not prevent that transfer. Normal brain backups do
+not include the keychain. Deleting the brain does not delete keychain entries,
+backups, conversation logs or copies others already received. To inspect a topic,
 read its file or call `crbro_inspect`.
 
 `crbro usage` and `crbro postmortem` read Claude Code's own session logs in

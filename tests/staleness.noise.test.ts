@@ -427,13 +427,30 @@ describe('through the MCP tools', () => {
     expect(state.possibly_stale?.map((r: any) => r.last_known)).toContain(STATE);
   });
 
-  it('a session that learns the miner line again takes it out of "miner": it is judged by its text', async () => {
+  it('repetir una línea del miner no verifica; una comprobación explícita permite juzgarla por su texto', async () => {
     const r = await json('crbro_learn', { topic: 'Garza', type: 'fact', content: MINED });
-    expect(r).toMatchObject({ shelf_life: 'volatile', shelf_inferred: true, shelf_reason: 'url' });
-    const neuron = JSON.parse(await fs.readFile(path.join(root, 'cortex', `${garza}.json`), 'utf8'));
+    expect(r).toMatchObject({ shelf_life: 'permanent', shelf_inferred: true, shelf_reason: 'miner' });
+    const file = path.join(root, 'cortex', `${garza}.json`);
+    const neuron = JSON.parse(await fs.readFile(file, 'utf8'));
     const f = neuron.facts.find((x: any) => x.text === MINED);
     expect(f.source).toBe('miner');
-    expect(f.verified).toBeTruthy();
+    expect(f.verified).toBeUndefined();
+    expect(f.verification).toBeUndefined();
+
+    const reference = { kind: 'url', value: 'https://panel.ejemplo-garza.dev/ajustes' };
+    await json('crbro_revise', {
+      neuron: garza, facts: [MINED], status: 'verified', evidence: { method: 'source', reference },
+    });
+    const checked = JSON.parse(await fs.readFile(file, 'utf8')).facts.find((x: any) => x.text === MINED);
+    expect(checked.verified).toEqual(expect.any(String));
+    expect(checked.verification).toEqual({ method: 'source', at: checked.verified, reference });
+
+    const repeated = await json('crbro_learn', { topic: 'Garza', type: 'fact', content: MINED });
+    expect(repeated).toMatchObject({ shelf_life: 'volatile', shelf_inferred: true, shelf_reason: 'url' });
+    const after = JSON.parse(await fs.readFile(file, 'utf8')).facts.find((x: any) => x.text === MINED);
+    expect(after.source).toBe('miner');
+    expect(after.verified).toBe(checked.verified);
+    expect(after.verification).toEqual(checked.verification);
   });
 
   it('view=status: the running version, no note when the disk agrees', async () => {

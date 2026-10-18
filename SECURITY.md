@@ -16,7 +16,8 @@ like friction, and nobody trusts one for more than it does.
 | | Claude Code session logs, read by `crbro usage`, `crbro postmortem` and the lifecycle hook | `~/.claude/projects/` |
 | | Compaction checkpoints written by the lifecycle hook (requests, task list, folder, remote) | `<brain>/checkpoints/`, seven days |
 | **Code CRBRO runs in Claude Code without a command** | The open-items mod, installed and updated by `crbro_boot` | `~/.claude/crbro-mods/`, one entry in `env.CLAUDE_CODE_PLUGIN_DIRS` of `~/.claude/settings.json` |
-| **Communication out** | Team-space sync | A git remote you configure |
+| **Communication out** | MCP tool results, including explicit secret reads | Your AI client and, depending on it, its model provider |
+| | Team-space sync | A git remote you configure |
 | | The optional semantic model | Downloaded once from Hugging Face by `semantic install` |
 
 There is no account, no server of ours and no telemetry. Nothing is sent to
@@ -65,12 +66,36 @@ it, and it goes back into a config file in plain text. `crbro_secret` and
 - **Linux** — the Secret Service, through `secret-tool(1)`.
 
 CRBRO invents no cryptography. The store lives outside the brain on purpose,
-so no sync, share or backup can reach it even by mistake. The value is read
+so normal memory sync, share and backups do not include that store. Keep custom
+`CRBRO_KEYS_DIR` locations outside the brain, repositories and synced folders.
+Never add the encrypted store to Git or a release package. The value is read
 from stdin by the CLI, never from arguments, so it stays out of shell history
 and the process table.
 
 What it does not do: protect against code running as your own user. DPAPI,
 the login keychain and the Secret Service all open for the logged-in account.
+
+`crbro_secret action=get` deliberately returns the value to the MCP client.
+Local encryption does not stop that client from putting it into model context
+or conversation logs. Prefer a credential-aware CLI that reads it internally
+and uses it only to authenticate to the intended service; never print it for
+convenience. There is no promise that a secret used for authentication never
+leaves the computer.
+
+On Windows, 2.10 serializes read-modify-write operations across processes and
+checks ciphertext changes before serving cached values. Lock timeouts fail
+closed. A crashed short-lived `.lock.guard` is not automatically stolen; stop
+all writers and inspect it before manual recovery rather than deleting locks
+while another process might own them.
+
+### Project and evidence boundaries (2.10)
+
+Project scope is a retrieval/task-organization filter, not authorization or
+tenant isolation. A caller with this brain's MCP access can request `scope=all`.
+References name a file, URL or person but are never fetched or executed by the
+memory server. `verification.method=source` records the caller's claim to have
+checked that reference, not an independently audited or signed result. A strong
+search match, a repeated statement, and a true statement are different things.
 
 ### Quarantine before forgetting
 

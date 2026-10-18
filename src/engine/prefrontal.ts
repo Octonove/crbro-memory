@@ -1,7 +1,7 @@
 // ─── CRBRO Prefrontal Engine ─────────────────────────────────────
 // Active context, hot topics, and global map (clustering + bridges)
 
-import { readJSON, writeJSON, listJSONFiles, now } from '../utils/fs.js';
+import { readJSON, updateJSON, listJSONFiles, now } from '../utils/fs.js';
 import { pendingId } from '../utils/hash.js';
 import { redact } from './secrets.js';
 import type { Brain } from './brain.js';
@@ -18,6 +18,26 @@ function toTask(entry: PendingTask | string): PendingTask {
   return entry;
 }
 
+function normalizeContext(ctx: ActiveContext | null): ActiveContext {
+  return {
+    last_session: '', active_topics: [], last_updated: now(), ...ctx,
+    pending_tasks: (ctx?.pending_tasks || []).map(toTask),
+    recently_closed: ctx?.recently_closed || [],
+  };
+}
+
+function projectView(ctx: ActiveContext, project?: string): ActiveContext {
+  if (!project) return ctx;
+  const visible = (t: PendingTask) => !t.project || t.project === project;
+  return {
+    ...ctx, active_topics: ctx.project_topics?.[project] || [],
+    project_topics: ctx.project_topics?.[project] ? { [project]: ctx.project_topics[project] } : {},
+    pending_tasks: ctx.pending_tasks.map(toTask).filter(visible)
+      .sort((a, b) => (a.due || '9999').localeCompare(b.due || '9999') || b.added.localeCompare(a.added)),
+    recently_closed: (ctx.recently_closed || []).filter(visible),
+  };
+}
+
 export class Prefrontal {
   constructor(private brain: Brain) {}
 
@@ -26,21 +46,9 @@ export class Prefrontal {
   /**
    * Get the current active context.
    */
-  async getContext(): Promise<ActiveContext> {
+  async getContext(project?: string): Promise<ActiveContext> {
     const ctx = await readJSON<ActiveContext>(this.brain.paths.activeContext());
-    if (!ctx) {
-      return {
-        last_session: '',
-        active_topics: [],
-        pending_tasks: [],
-        recently_closed: [],
-        last_updated: now(),
-      };
-    }
-    // Upgrade v1 string entries in memory; they get written back on next update.
-    ctx.pending_tasks = (ctx.pending_tasks || []).map(toTask);
-    ctx.recently_closed = ctx.recently_closed || [];
-    return ctx;
+    return projectView(normalizeContext(ctx), project);
   }
 
   /**
@@ -51,6 +59,9 @@ export class Prefrontal {
    * timestamp said "changed just now" about a context nobody had changed.
    */
   async updateContext(updates: {
+    project?: string;
+    due?: string;
+    done_when?: string;
     set_topics?: string[];
     add_pending?: string;
     /**
@@ -68,8 +79,11 @@ export class Prefrontal {
     /** Empty active_topics, pending_tasks and recently_closed. Runs before the other updates. */
     clear?: boolean;
   }): Promise<ActiveContext & { resolved: PendingTask[]; discarded: PendingTask[]; written: boolean; redacted?: string[] }> {
-    const ctx = await this.getContext();
-
+    if (updates.project && !/^[a-zA-Z0-9_-]{1,100}$/.test(updates.project)) throw new Error('Invalid project id.');
+    if (updates.due && (!/^\d{4}-\d{2}-\d{2}$/.test(updates.due) ||
+      !Number.isFinite(Date.parse(updates.due)) || new Date(updates.due).toISOString().slice(0, 10) !== updates.due)) {
+      throw new Error('Invalid due date; use a real YYYY-MM-DD calendar day.');
+    }
     const hayCambio =
       updates.clear === true ||
       updates.set_topics !== undefined ||
@@ -78,22 +92,31 @@ export class Prefrontal {
       (updates.discard_pending !== undefined && updates.discard_pending !== '');
 
     if (!hayCambio) {
-      return { ...ctx, resolved: [], discarded: [], written: false };
+      return { ...await this.getContext(updates.project), resolved: [], discarded: [], written: false };
     }
 
-    if (updates.clear) {
-      ctx.active_topics = [];
-      ctx.pending_tasks = [];
-      ctx.recently_closed = [];
-    }
-
-    let tasks = ctx.pending_tasks.map(toTask);
     let resolved: PendingTask[] = [];
     let discarded: PendingTask[] = [];
     let redacted: string[] = [];
+    const saved = await updateJSON<ActiveContext>(this.brain.paths.activeContext(), current => {
+    const ctx = normalizeContext(current);
+
+    if (updates.clear) {
+      if (updates.project) {
+        delete ctx.project_topics?.[updates.project];
+        ctx.pending_tasks = ctx.pending_tasks.map(toTask).filter(t => t.project !== updates.project);
+        ctx.recently_closed = ctx.recently_closed?.filter(t => t.project !== updates.project);
+      } else {
+        ctx.active_topics = []; ctx.project_topics = {};
+        ctx.pending_tasks = []; ctx.recently_closed = [];
+      }
+    }
+
+    let tasks = ctx.pending_tasks.map(toTask);
 
     if (updates.set_topics) {
-      ctx.active_topics = updates.set_topics;
+      if (updates.project) (ctx.project_topics ||= {})[updates.project] = updates.set_topics;
+      else ctx.active_topics = updates.set_topics;
     }
 
     if (updates.add_pending) {
@@ -102,10 +125,17 @@ export class Prefrontal {
       const filtrado = redact(updates.add_pending.trim());
       redacted = filtrado.found;
       const text = filtrado.text;
-      const id = pendingId(text);
-      if (!tasks.some(t => t.id === id)) {
-        tasks.push({ id, text, added: now() });
-      }
+      const id = pendingId(updates.project ? `${updates.project}\n${text}` : text);
+      const criterion = updates.done_when ? redact(updates.done_when) : undefined;
+      redacted.push(...(criterion?.found || []));
+      const existing = tasks.find(t => t.id === id);
+      const metadata = {
+        ...(updates.project ? { project: updates.project } : {}),
+        ...(updates.due ? { due: updates.due } : {}),
+        ...(criterion ? { done_when: criterion.text } : {}),
+      };
+      if (existing) Object.assign(existing, metadata);
+      else tasks.push({ id, text, added: now(), status: 'open', ...metadata });
     }
 
     // Id, exact text, or a case-insensitive substring of at least 8 chars in
@@ -113,16 +143,16 @@ export class Prefrontal {
     const matcher = (needleRaw: string) => {
       const needle = needleRaw.trim();
       const lower = needle.toLowerCase();
-      return (t: PendingTask) =>
+      return (t: PendingTask) => (!updates.project || !t.project || t.project === updates.project) && (
         t.id === needle ||
         t.text === needle ||
         (lower.length >= 8 &&
-          (t.text.toLowerCase().includes(lower) || lower.includes(t.text.toLowerCase())));
+          (t.text.toLowerCase().includes(lower) || lower.includes(t.text.toLowerCase()))));
     };
 
     if (updates.resolve_pending) {
       const hit = matcher(updates.resolve_pending);
-      resolved = tasks.filter(hit).map(t => ({ ...t, closed: now() }));
+      resolved = tasks.filter(hit).map(t => ({ ...t, closed: now(), status: 'done' as const }));
       tasks = tasks.filter(t => !hit(t));
 
       if (resolved.length > 0) {
@@ -139,8 +169,9 @@ export class Prefrontal {
 
     ctx.pending_tasks = tasks;
     ctx.last_updated = now();
-    await writeJSON(this.brain.paths.activeContext(), ctx);
-    return { ...ctx, resolved, discarded, written: true, ...(redacted.length ? { redacted } : {}) };
+    return ctx;
+    });
+    return { ...projectView(saved!, updates.project), resolved, discarded, written: true, ...(redacted.length ? { redacted } : {}) };
   }
 
   /**
@@ -148,10 +179,9 @@ export class Prefrontal {
    * Before this, nothing ever wrote last_session, so boot reported null forever.
    */
   async setLastSession(sessionId: string): Promise<void> {
-    const ctx = await this.getContext();
-    ctx.last_session = sessionId;
-    ctx.last_updated = now();
-    await writeJSON(this.brain.paths.activeContext(), ctx);
+    await updateJSON<ActiveContext>(this.brain.paths.activeContext(), current => ({
+      ...normalizeContext(current), last_session: sessionId, last_updated: now(),
+    }));
   }
 
   // ─── Hot Topics ─────────────────────────────────────────────────

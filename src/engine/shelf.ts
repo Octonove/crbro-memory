@@ -461,10 +461,10 @@ export function recordVerdict(text: string): { record: boolean; why: string } {
  * record of something done (2.9.1), else volatile when a rule fires (and
  * which one), normal otherwise.
  */
-export function detectShelf(text: string): { shelf: 'volatile' | 'normal' | 'permanent'; reason?: ShelfReason } {
+export function detectShelf(text: string, temporal?: Fact['temporal']): { shelf: 'volatile' | 'normal' | 'permanent'; reason?: ShelfReason } {
   const raw = String(text || '');
   if (!raw.trim()) return { shelf: 'normal' };
-  if (isDatedRecord(raw)) return { shelf: 'permanent', reason: 'history' };
+  if (temporal !== 'current' && isDatedRecord(raw)) return { shelf: 'permanent', reason: 'history' };
   const t = fold(raw);
   for (const r of RULES) {
     if (r.test(raw, t)) return { shelf: 'volatile', reason: r.reason };
@@ -480,17 +480,17 @@ export function detectShelf(text: string): { shelf: 'volatile' | 'normal' | 'per
  * made about the present — warning on it is noise); else the one its text
  * implies.
  *
- * Once a session has said the same line too, it is no longer only an
- * imported note: the duplicate branch of learn keeps `source: "miner"` but
- * sets `verified` or adds a confirmation, and from then on the line is judged
- * by its text like any other claim about the present.
+ * `current` impide inferir historia por origen o texto, sin verificar nada.
+ * Sin temporalidad explícita se conserva la clasificación legacy por
+ * confirmations; repetir ya no cambia la fecha de verificación.
  */
 export function shelfOfFact(
-  f: Pick<Fact, 'text' | 'shelf_life'> & { source?: string; verified?: string; confirmations?: number },
+  f: Pick<Fact, 'text' | 'shelf_life' | 'temporal'> & { source?: string; verified?: string; confirmations?: number },
 ): { shelf: ShelfLife; inferred: boolean; reason?: ShelfReason } {
   if (isShelfLife(f.shelf_life)) return { shelf: f.shelf_life, inferred: false };
-  if (f.source === 'miner' && !f.verified && (f.confirmations ?? 1) <= 1) return { shelf: 'permanent', inferred: true, reason: 'miner' };
-  const d = detectShelf(f.text);
+  if (f.temporal === 'historical') return { shelf: 'permanent', inferred: true, reason: 'history' };
+  if (f.temporal !== 'current' && f.source === 'miner' && !f.verified && (f.confirmations ?? 1) <= 1) return { shelf: 'permanent', inferred: true, reason: 'miner' };
+  const d = detectShelf(f.text, f.temporal);
   return { shelf: d.shelf, inferred: true, ...(d.reason ? { reason: d.reason } : {}) };
 }
 

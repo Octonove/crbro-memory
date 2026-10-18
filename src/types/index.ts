@@ -13,11 +13,30 @@
  */
 export type FactStatus = 'active' | 'superseded' | 'retracted';
 
+export interface SourceReference {
+  kind: 'file' | 'url' | 'person';
+  value: string;
+  field?: string;
+  project?: string;
+}
+
+/** Declaración del llamador; CRBRO no consulta ni ejecuta la referencia. */
+export interface Verification {
+  method: 'source' | 'user' | 'unspecified';
+  at: string;
+  reference?: SourceReference;
+}
+
 export interface Fact {
   text: string;
   confidence: number;       // 0.0 - 1.0
   added: string;             // ISO date
   source: string;            // session_id, 'manual' or 'miner'
+  reference?: SourceReference;
+  temporal?: 'current' | 'historical';
+  verification?: Verification;
+  /** Marca interna: un cambio de referencia/temporalidad invalida comprobaciones anteriores. */
+  verification_invalidated_at?: string;
 
   // ─── Lifecycle (all optional: a v1 fact is a valid v2 fact) ───
   id?: string;               // content hash, stable across rewrites
@@ -44,8 +63,8 @@ export interface Fact {
   confirmations?: number;
   /**
    * ISO instant of the last time this line was checked against its source
-   * and still held (shelf life): crbro_revise status=verified, or the same text
-   * learned again by a session (never by the miner). Absent === never
+   * and still held (shelf life): crbro_revise status=verified. Repetir el texto
+   * no renueva esta fecha. Absent === never
    * re-checked: the shelf-life clock runs from `added`. Reading is not
    * checking — recall and inspect never touch it.
    */
@@ -156,6 +175,7 @@ export interface Neuron {
    * the clock runs from the entry's date.
    */
   entry_verified?: Record<string, string>;
+  entry_verification?: Record<string, Verification>;
   /**
    * The living map of the system: where it lives, what serves what, which
    * pieces talk to each other, the traps. One document, replaced whole on
@@ -210,11 +230,16 @@ export interface PendingTask {
   text: string;
   added: string;             // ISO datetime
   closed?: string;           // ISO datetime, set when resolved
+  project?: string;          // stable local project id; absent means global
+  status?: 'open' | 'done';
+  due?: string;              // optional ISO calendar day
+  done_when?: string;        // human-checkable completion criterion
 }
 
 export interface ActiveContext {
   last_session: string;
   active_topics: string[];   // neuron IDs
+  project_topics?: Record<string, string[]>;
   /** Open items. Strings are still accepted on read for v1 brains. */
   pending_tasks: Array<PendingTask | string>;
   /** Recently resolved items, newest first. Capped — this is a reminder, not a log. */

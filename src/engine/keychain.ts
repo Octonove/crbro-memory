@@ -26,9 +26,11 @@
 // secret even if some future bug tried to.
 
 import { spawnSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { homedir, platform } from 'node:os';
 import { join } from 'node:path';
-import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, unlinkSync } from 'node:fs';
+import { existsSync, mkdirSync, openSync, closeSync, readFileSync, writeFileSync, renameSync, unlinkSync } from 'node:fs';
+import { withLockSync } from '../utils/lock.js';
 
 /** Namespace under which every CRBRO secret is filed in the OS store. */
 const SERVICE = 'crbro';
@@ -139,7 +141,7 @@ interface WinStore {
 // open. Thirty seconds covers the burst of reads at the start of a task and
 // nothing beyond it.
 const CACHE_TTL_MS = 30_000;
-let cached: { store: WinStore; at: number; file: string } | null = null;
+let cached: { store: WinStore; at: number; file: string; sealed: string } | null = null;
 
 function invalidateCache(): void {
   cached = null;
@@ -182,14 +184,24 @@ function psDpapi(script: string, input?: string) {
   return r.stdout;
 }
 
-function winRead(): WinStore {
+function winRead(fresh = false): WinStore {
   const { file } = winPaths();
-  if (cached && cached.file === file && Date.now() - cached.at < CACHE_TTL_MS) {
+  // Compare the ciphertext itself, not mtime/size: a same-size replacement or
+  // restored timestamp must not hide an external update. Reading is cheap;
+  // the cache avoids the expensive DPAPI subprocess only while bytes match.
+  let sealed: string;
+  try {
+    sealed = readFileSync(file, 'utf8').trim();
+  } catch (err) {
+    invalidateCache();
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return {};
+    throw err;
+  }
+  if (!fresh && cached && cached.file === file && cached.sealed === sealed && Date.now() - cached.at < CACHE_TTL_MS) {
     return cached.store;
   }
-  if (!existsSync(file)) return {};
-  const sealed = readFileSync(file, 'utf8').trim();
-  if (!sealed) return {};
+  invalidateCache();
+  if (!sealed) throw new KeychainUnavailable('The key store is empty or truncated. Refusing to overwrite it.');
   // ConvertTo-SecureString without -Key is DPAPI at CurrentUser scope: only
   // this Windows account, on this machine, can turn it back into text.
   // 1.8.0 and 1.8.1 sealed with ConvertFrom-SecureString, whose output is hex.
@@ -207,7 +219,7 @@ function winRead(): WinStore {
     : psDpapi(DPAPI_OPEN, sealed);
   try {
     const store = JSON.parse(json) as WinStore;
-    cached = { store, at: Date.now(), file };
+    cached = { store, at: Date.now(), file, sealed };
     return store;
   } catch {
     throw new KeychainUnavailable('The key store exists but could not be read. It was sealed by a different Windows account.');
@@ -216,14 +228,26 @@ function winRead(): WinStore {
 
 function winWrite(store: WinStore): void {
   const { dir, file } = winPaths();
+  invalidateCache();
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 });
   const sealed = psDpapi(DPAPI_SEAL, JSON.stringify(store)).trim();
   // Atomic: a crash mid-write leaves the previous store intact rather than a
   // truncated file that would take every secret with it.
-  const tmp = `${file}.tmp`;
-  writeFileSync(tmp, sealed, { encoding: 'ascii', mode: 0o600 });
-  renameSync(tmp, file);
-  cached = { store, at: Date.now(), file };
+  const tmp = `${file}.${process.pid}.${randomUUID()}.tmp`;
+  let created = false;
+  let fd: number | undefined;
+  try {
+    fd = openSync(tmp, 'wx', 0o600);
+    created = true;
+    writeFileSync(fd, sealed, { encoding: 'ascii' });
+    closeSync(fd);
+    fd = undefined;
+    renameSync(tmp, file);
+    cached = { store, at: Date.now(), file, sealed };
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+    if (created && existsSync(tmp)) unlinkSync(tmp);
+  }
 }
 
 // ─── macOS: an index of its own ──────────────────────────────────
@@ -284,9 +308,11 @@ export function setSecret(name: string, value: string, description = ''): void {
   if (!value) throw new Error('Refusing to store an empty value.');
 
   if (backend === 'windows-dpapi') {
-    const store = winRead();
-    store[name] = { value, description, updated: new Date().toISOString().slice(0, 10) };
-    winWrite(store);
+    withLockSync(winPaths().file, () => {
+      const store = winRead(true);
+      store[name] = { value, description, updated: new Date().toISOString().slice(0, 10) };
+      winWrite(store);
+    });
     return;
   }
 
@@ -379,11 +405,13 @@ export function removeSecret(name: string): boolean {
   const backend = requireBackend();
 
   if (backend === 'windows-dpapi') {
-    const store = winRead();
-    if (!(name in store)) return false;
-    delete store[name];
-    winWrite(store);
-    return true;
+    return withLockSync(winPaths().file, () => {
+      const store = winRead(true);
+      if (!(name in store)) return false;
+      delete store[name];
+      winWrite(store);
+      return true;
+    });
   }
 
   if (backend === 'macos-keychain') {

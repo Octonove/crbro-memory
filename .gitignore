@@ -7,3 +7,9 @@ crbro-mine.bat
 
 # Paquete .mcpb generado por npm run mcpb
 build/
+*.tgz
+.crbro/
+.crbro-keys/
+keys.dpapi*
+secrets.enc*
+*service-account*.json

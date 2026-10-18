@@ -87,9 +87,9 @@ describe('tools/list', () => {
     expect(s).toEqual([...STRUCTURED].sort());
   });
 
-  it('crbro_boot takes one optional parameter, project (2.7): its schema is no longer empty', () => {
+  it('crbro_boot keeps project optional while accepting explicit project bindings', () => {
     const boot = tools.find(t => t.name === 'crbro_boot')!;
-    expect(Object.keys(boot.inputSchema.properties ?? {})).toEqual(['project']);
+    expect(Object.keys(boot.inputSchema.properties ?? {})).toEqual(['project', 'project_id', 'project_aliases', 'project_neurons']);
     expect(boot.inputSchema.properties.project.type).toBe('string');
     expect(boot.inputSchema.required ?? []).not.toContain('project');
     expect(boot.description).toContain('project_neurons');

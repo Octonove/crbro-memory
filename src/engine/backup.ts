@@ -104,6 +104,9 @@ async function walk(root: string, rel: string, out: Record<string, string>): Pro
   }
   for (const e of entries) {
     if (SKIP_ANYWHERE.has(e.name)) continue;
+    // Process coordination is not knowledge. Restoring a captured .guard
+    // would block every writer; an in-flight atomic temporary is incomplete.
+    if (e.name.endsWith('.lock') || e.name.endsWith('.lock.guard') || /\.json\.[^/]+\.tmp$/.test(e.name)) continue;
     if (!rel && SKIP_TOP.has(e.name)) continue;
     const childRel = rel ? `${rel}/${e.name}` : e.name;
     if (e.isDirectory()) {

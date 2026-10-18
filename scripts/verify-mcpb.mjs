@@ -61,7 +61,7 @@ try {
   const transporte = new StdioClientTransport({
     command: process.execPath,
     args: [path.join(destino, 'dist', 'index.js')],
-    env: { ...process.env, CRBRO_PATH: cerebro, CRBRO_SEMANTIC: '0' },
+    env: { ...process.env, CRBRO_PATH: cerebro, CRBRO_SEMANTIC: '0', CRBRO_MOD: '0', CRBRO_AUTOBACKUP: '0', CRBRO_KEYS_DIR: path.join(tmp, 'keys') },
     stderr: 'pipe',
   });
   const cliente = new Client({ name: 'verify-mcpb', version: pkg.version });

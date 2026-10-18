@@ -12,10 +12,11 @@
 // lock) behaves differently on every platform and cannot be made to wait
 // politely on Windows.
 
-import { promises as fs } from 'node:fs';
+import { promises as fs, openSync, closeSync, mkdirSync, readFileSync, writeFileSync, statSync, unlinkSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 
-/** How long a lock may be held before we assume its owner died. */
+/** Minimum age before checking whether a lock's owner died. Age alone is never proof. */
 const STALE_MS = 10_000;
 /** How long to keep trying before giving up. */
 const TIMEOUT_MS = 15_000;
@@ -24,66 +25,125 @@ const RETRY_MIN_MS = 8;
 const RETRY_MAX_MS = 60;
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+const sleeper = new Int32Array(new SharedArrayBuffer(4));
 
 function lockPath(target: string): string {
   return `${target}.lock`;
 }
 
-/**
- * Take the lock for a file. Returns a release function.
- *
- * `wx` fails if the file already exists, and that failure is the whole
- * mechanism: exactly one caller can create it.
- */
-async function acquire(target: string): Promise<() => Promise<void>> {
-  const lock = lockPath(target);
-  await fs.mkdir(path.dirname(lock), { recursive: true });
+function contended(err: unknown): boolean {
+  return ['EEXIST', 'EPERM', 'EBUSY'].includes((err as NodeJS.ErrnoException)?.code ?? '');
+}
 
+/**
+ * Serialize the short filesystem operations, including reaping and release.
+ * Checking a token then unlinking without this guard is a TOCTOU race: another
+ * reaper could remove the old lock and a writer acquire its replacement.
+ * No await or user code runs here. A guard left by a crash is deliberately NOT
+ * stolen: callers time out, requiring offline cleanup rather than risking data.
+ */
+function guarded<T>(lock: string, fn: () => T): { value: T } | undefined {
+  const guard = `${lock}.guard`;
+  let fd: number;
+  try {
+    fd = openSync(guard, 'wx', 0o600);
+  } catch (err) {
+    if (contended(err)) return undefined;
+    throw err;
+  }
+  try {
+    return { value: fn() };
+  } finally {
+    closeSync(fd);
+    unlinkSync(guard);
+  }
+}
+
+// Called only under the guard. Legacy records start with the PID too.
+function reapDead(lock: string): boolean {
+  try {
+    if (Date.now() - statSync(lock).mtimeMs <= STALE_MS) return false;
+    const match = /^(\d+)\s/.exec(readFileSync(lock, 'utf8'));
+    const pid = match ? Number(match[1]) : 0;
+    if (!Number.isSafeInteger(pid) || pid <= 0) return false;
+    try {
+      process.kill(pid, 0);
+      return false;
+    } catch (err) {
+      // EPERM and unknown failures do not establish that a process is dead.
+      if ((err as NodeJS.ErrnoException).code !== 'ESRCH') return false;
+    }
+    unlinkSync(lock);
+    return true;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return false;
+    throw err;
+  }
+}
+
+function tryAcquire(lock: string, owner: string): boolean {
+  return guarded(lock, () => {
+    let fd: number;
+    try {
+      fd = openSync(lock, 'wx', 0o600);
+    } catch (err) {
+      if (!contended(err)) throw err;
+      reapDead(lock);
+      return false;
+    }
+    try {
+      writeFileSync(fd, owner, 'utf8');
+    } catch (err) {
+      closeSync(fd);
+      unlinkSync(lock);
+      throw err;
+    }
+    closeSync(fd);
+    return true;
+  })?.value ?? false;
+}
+
+function tryRelease(lock: string, owner: string): boolean {
+  return guarded(lock, () => {
+    try {
+      if (readFileSync(lock, 'utf8') === owner) unlinkSync(lock);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+    }
+    return true;
+  })?.value ?? false;
+}
+
+function checkDeadline(deadline: number, lock: string): void {
+  if (Date.now() >= deadline) throw new Error(`Timed out waiting for lock: ${lock}`);
+}
+
+async function waitFor(attempt: () => boolean, lock: string): Promise<void> {
   const deadline = Date.now() + TIMEOUT_MS;
   let wait = RETRY_MIN_MS;
-
-  for (;;) {
-    try {
-      const fh = await fs.open(lock, 'wx');
-      await fh.writeFile(`${process.pid} ${new Date().toISOString()}`, 'utf-8');
-      await fh.close();
-      return async () => {
-        try {
-          await fs.unlink(lock);
-        } catch {
-          // Already gone: released twice, or cleaned up as stale. Harmless.
-        }
-      };
-    } catch (err) {
-      const code = (err as NodeJS.ErrnoException)?.code;
-      // EEXIST is the mechanism. EPERM and EBUSY are Windows saying the same
-      // thing a beat later: the holder is unlinking the lock at the very
-      // instant we try to create it. Measured on the CI runner: two writers
-      // interleaving on the same neuron hit it about one run in five. Both
-      // are a reason to try again, never a reason to lose the write.
-      if (code !== 'EEXIST' && code !== 'EPERM' && code !== 'EBUSY') throw err;
-
-      // Someone holds it. If they have held it far too long, they are gone.
-      try {
-        const st = await fs.stat(lock);
-        if (Date.now() - st.mtimeMs > STALE_MS) {
-          await fs.unlink(lock).catch(() => { /* someone else got there first */ });
-          continue;
-        }
-      } catch {
-        continue; // Vanished between the failure and the stat: try again.
-      }
-
-      if (Date.now() > deadline) {
-        // Never block a write forever. Losing the lock is bad; hanging the
-        // assistant is worse, and the stale sweep above makes this rare.
-        return async () => { /* nothing to release */ };
-      }
-
-      await sleep(wait);
-      wait = Math.min(Math.round(wait * 1.4), RETRY_MAX_MS);
-    }
+  while (!attempt()) {
+    checkDeadline(deadline, lock);
+    await sleep(wait);
+    wait = Math.min(Math.round(wait * 1.4), RETRY_MAX_MS);
   }
+}
+
+function waitForSync(attempt: () => boolean, lock: string): void {
+  const deadline = Date.now() + TIMEOUT_MS;
+  let wait = RETRY_MIN_MS;
+  while (!attempt()) {
+    checkDeadline(deadline, lock);
+    Atomics.wait(sleeper, 0, 0, wait);
+    wait = Math.min(Math.round(wait * 1.4), RETRY_MAX_MS);
+  }
+}
+
+async function acquire(target: string): Promise<() => Promise<void>> {
+  const lock = lockPath(target);
+  mkdirSync(path.dirname(lock), { recursive: true });
+  const owner = `${process.pid} ${randomUUID()} ${new Date().toISOString()}`;
+  await waitFor(() => tryAcquire(lock, owner), lock);
+  return () => waitFor(() => tryRelease(lock, owner), lock);
 }
 
 /**
@@ -99,6 +159,19 @@ export async function withLock<T>(target: string, fn: () => Promise<T>): Promise
   }
 }
 
+/** Same cross-process protocol for synchronous APIs such as the DPAPI broker. */
+export function withLockSync<T>(target: string, fn: () => T): T {
+  const lock = lockPath(target);
+  mkdirSync(path.dirname(lock), { recursive: true });
+  const owner = `${process.pid} ${randomUUID()} ${new Date().toISOString()}`;
+  waitForSync(() => tryAcquire(lock, owner), lock);
+  try {
+    return fn();
+  } finally {
+    waitForSync(() => tryRelease(lock, owner), lock);
+  }
+}
+
 /**
  * Remove lock files left behind by a process that died mid-write.
  * Returns how many were swept. Called from maintenance.
@@ -110,12 +183,8 @@ export async function sweepStaleLocks(dir: string): Promise<number> {
       if (!f.endsWith('.lock')) continue;
       const p = path.join(dir, f);
       try {
-        const st = await fs.stat(p);
-        if (Date.now() - st.mtimeMs > STALE_MS) {
-          await fs.unlink(p);
-          swept++;
-        }
-      } catch { /* gone already */ }
+        if (guarded(p, () => reapDead(p))?.value) swept++;
+      } catch { /* inaccessible or gone already: leave it alone */ }
     }
   } catch { /* no such directory */ }
   return swept;
