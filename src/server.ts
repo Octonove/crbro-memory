@@ -236,7 +236,12 @@ export function createEngines(): Engines {
   return { brain, cortex, synapses, heatEngine, hippocampus, prefrontal, searchEngine, maintenance };
 }
 
-export function createServer(shared?: Engines): McpServer {
+export interface CreateServerOptions {
+  /** Tools this server leaves out (serve --http drops crbro_secret unless asked). */
+  excludeTools?: string[];
+}
+
+export function createServer(shared?: Engines, options: CreateServerOptions = {}): McpServer {
   // Served at initialize for the clients that read it (Claude Desktop does
   // not, as of anthropics/claude-code#43749; there the tool descriptions
   // carry the same message). It is the one place to say how the memory is
@@ -254,6 +259,18 @@ export function createServer(shared?: Engines): McpServer {
       'Questions about CRBRO itself (version, counts, whether semantic recall is on) are crbro_inspect view=status. Read one entry, not a whole neuron: view=neuron gives an index, entries=[ids] the text. ' +
       'Save with crbro_learn as you go, and close with crbro_consolidate before the conversation ends.',
   });
+
+  // A tool left out is registered and removed at once, so the rest of this
+  // function stays the same for every caller.
+  const fuera = new Set(options.excludeTools || []);
+  if (fuera.size) {
+    const registrar = server.registerTool.bind(server) as (...a: any[]) => any;
+    (server as any).registerTool = (name: string, ...rest: any[]) => {
+      const t = registrar(name, ...rest);
+      if (fuera.has(name)) t.remove();
+      return t;
+    };
+  }
 
   // ─── Engines: this server's own, or the ones the daemon shares ──
   const { brain, cortex, synapses, heatEngine, hippocampus, prefrontal, searchEngine, maintenance } = shared ?? createEngines();

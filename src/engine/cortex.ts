@@ -811,10 +811,12 @@ export class Cortex {
    * down recall, inspect or consolidate. Write paths use a strict read.
    */
   async peek(id: string): Promise<Neuron | null> {
+    // A reference with a path separator is a name ("CI/CD") or an attempt to leave the brain, never an id.
+    if (typeof id !== 'string' || !id || /[\\/:\0]/.test(id)) return null;
     try {
       return await readJSON<Neuron>(this.brain.paths.neuron(id));
     } catch (err) {
-      // A reference that is not a usable file name ("a:b" on Windows) is a miss, not a corrupt neuron.
+      // An existing file that does not parse is recorded; anything else is a miss.
       if (await fileExists(this.brain.paths.neuron(id))) await this.noteUnreadable(id, err);
       return null;
     }
