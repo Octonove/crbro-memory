@@ -661,6 +661,8 @@ export class Cortex {
    * Get a neuron by ID without updating access stats.
    */
   async peek(id: string): Promise<Neuron | null> {
+    // A reference with a path separator is a name ("CI/CD") or an attempt to leave the brain, never an id.
+    if (typeof id !== 'string' || !id || /[\\/:\0]/.test(id)) return null;
     return readJSON<Neuron>(this.brain.paths.neuron(id));
   }
 

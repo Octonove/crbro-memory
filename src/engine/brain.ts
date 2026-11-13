@@ -67,6 +67,11 @@ const CRBRO_VERSION = '1.0.0';
 
 // ─── Paths ───────────────────────────────────────────────────────
 
+function fileId(id: string): string {
+  if (typeof id !== 'string' || !id || /[\\/:\0]/.test(id)) throw new Error(`Invalid id: ${JSON.stringify(String(id).slice(0, 80))}`);
+  return id;
+}
+
 export class BrainPaths {
   readonly root: string;
   readonly cortex: string;
@@ -98,12 +103,14 @@ export class BrainPaths {
     return path.join(this.root, MANIFEST_FILE);
   }
 
+  // An id is a file name, never a path: "../../x" from a tool argument (and,
+  // with serve --http, from the network) must not read or write outside the brain.
   neuron(id: string): string {
-    return path.join(this.cortex, `${id}.json`);
+    return path.join(this.cortex, `${fileId(id)}.json`);
   }
 
   synapse(id: string): string {
-    return path.join(this.synapses, `${id}.json`);
+    return path.join(this.synapses, `${fileId(id)}.json`);
   }
 
   session(id: string): string {
