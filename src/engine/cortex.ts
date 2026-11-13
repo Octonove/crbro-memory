@@ -728,13 +728,6 @@ export class Cortex {
     return new Error(`Neuron "${id}" was deleted while this write was in progress. Nothing was written, so it was not brought back.`);
   }
 
-  /** Remove the neuron file, drop its chunks, and keep the manifest honest. */
-  private async deleteNeuronFile(id: string): Promise<void> {
-    await deleteJSON(this.brain.paths.neuron(id));
-    await this.unindex(id);
-    const manifest = await this.brain.getManifest();
-    await this.brain.updateManifest({ total_neurons: Math.max(0, manifest.total_neurons - 1) });
-  }
 
   private async emit(neuronId: string, change: Parameters<Emitter>[1]): Promise<void> {
     if (!this.emitter) return;
