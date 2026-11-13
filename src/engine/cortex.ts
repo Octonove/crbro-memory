@@ -2,8 +2,14 @@
 // Neuron CRUD — create, read, update, list neurons
 
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { readJSON, writeJSON, updateJSON, deleteJSON, listJSONFiles, now } from '../utils/fs.js';
-import { neuronId, inferNeuronType, toSnakeCase, legacySnakeCase } from '../utils/ids.js';
+import { promises as fsp } from 'node:fs';
+import path from 'node:path';
+import { readJSON, updateJSON, deleteJSON, listJSONFiles, fileExists, now, CorruptJSONError } from '../utils/fs.js';
+import { withLock } from '../utils/lock.js';
+import { neuronId, inferNeuronType, slugCandidates, typeOfIdShape } from '../utils/ids.js';
+import { writeQuarantine, readQuarantine, listQuarantine, entriesAsNeuron, isEntriesCopy, type QuarantineEntries } from './quarantine.js';
+import { listBackups, resolveBackupDir } from './backup.js';
+import { readHeatState } from './heat.js';
 import { factId } from '../utils/hash.js';
 import { entryId, normalizeText, type Op } from '../sync/ops.js';
 import { applyOps, type MergeReport } from '../sync/materialize.js';
@@ -24,8 +30,38 @@ const TYPE_PREFIX_RE = /^(project_|tech_|lang_|person_|domain_|process_|protocol
 const NEAR_DUP_THRESHOLD = 0.8;
 const NEAR_DUP_MIN_LENGTH = 60;
 
-/** Minimum similarity before we accept a near-miss as "the same topic". */
-const NAME_MATCH_THRESHOLD = 0.85;
+/**
+ * A neuron file that exists and cannot be parsed. Readers skip it and list it
+ * (Cortex.unreadable); writers refuse with this error, which names the file
+ * and where a good copy may be.
+ */
+export class UnreadableNeuronError extends Error {
+  constructor(public readonly neuronId: string, public readonly path: string, public readonly recovery: string, reason: string) {
+    super(`Neuron "${neuronId}" cannot be read (${reason}). Nothing was written. ${recovery}`);
+    this.name = 'UnreadableNeuronError';
+  }
+}
+
+export interface UnreadableNeuron {
+  id: string;
+  path: string;
+  error: string;
+  recovery: string;
+}
+
+/** How learn resolved a topic to a neuron (2.11). */
+export type ResolvedBy = 'neuron_id' | 'id' | 'name' | 'variant' | 'created';
+
+/**
+ * The same identifier written two ways: underscores dropped and each long
+ * word's plural folded ("widget_catalogs" ~ "widget catalog", "octo_chat" ~
+ * "octochat"). Nothing else. The bigram similarity this replaces merged
+ * "sprint_a" into "sprint_b" (0.857 ≥ 0.85) and any two long names one letter
+ * apart: a letter that differs is usually what tells two things apart.
+ */
+function nameVariantKey(slug: string): string {
+  return slug.split('_').filter(Boolean).map(t => (t.length > 4 && !/\d/.test(t) ? t.replace(/(es|s)$/, '') : t)).join('');
+}
 
 /**
  * `witnessed`: "<neuron>|<fact id>" of every fact this session stored or
@@ -48,27 +84,25 @@ export const sessionScope = new AsyncLocalStorage<{ tally: SessionTally; resumed
  * for "Widget Catalog" vs "widget_catalog", and — unlike substring containment —
  * it does not consider a 60-character walkthrough id a match for "SEO".
  */
-function similarity(a: string, b: string): number {
-  if (a === b) return 1;
-  if (a.length < 2 || b.length < 2) return 0;
+function bigramsOf(s: string): Map<string, number> {
+  const out = new Map<string, number>();
+  for (let i = 0; i < s.length - 1; i++) {
+    const g = s.slice(i, i + 2);
+    out.set(g, (out.get(g) || 0) + 1);
+  }
+  return out;
+}
 
-  const bigrams = (s: string) => {
-    const out = new Map<string, number>();
-    for (let i = 0; i < s.length - 1; i++) {
-      const g = s.slice(i, i + 2);
-      out.set(g, (out.get(g) || 0) + 1);
-    }
-    return out;
-  };
-
-  const A = bigrams(a);
-  const B = bigrams(b);
+/** Dice of a precomputed bigram map (text of length aLen) against b. */
+function diceFrom(A: Map<string, number>, aLen: number, b: string): number {
+  if (aLen < 2 || b.length < 2) return 0;
+  const B = bigramsOf(b);
   let shared = 0;
   for (const [g, countA] of A) {
     const countB = B.get(g);
     if (countB) shared += Math.min(countA, countB);
   }
-  return (2 * shared) / (a.length - 1 + b.length - 1);
+  return (2 * shared) / (aLen - 1 + b.length - 1);
 }
 
 /**
@@ -99,15 +133,18 @@ export function nearDuplicatesAmong(
 ): Array<{ id: string; similarity: number; text: string }> {
   if (content.length < NEAR_DUP_MIN_LENGTH) return [];
   const nuevo = content.toLowerCase();
+  // The new text's bigrams once, not once per candidate (2.11): on a 700-fact
+  // neuron that was the same map rebuilt hundreds of times per learn.
+  const bigramasNuevo = bigramsOf(nuevo);
   const out: Array<{ id: string; similarity: number; text: string }> = [];
   for (const c of candidates) {
     if (!c.text || c.text.length < NEAR_DUP_MIN_LENGTH) continue;
     // Dice over bigrams cannot reach the threshold when one side is much
     // longer: 2·min/(a+b) bounds it. A free filter before the real count.
-    const otro = c.text.toLowerCase();
-    const a = nuevo.length, b = otro.length;
+    const a = nuevo.length, b = c.text.length;
     if ((2 * Math.min(a, b)) / (a + b) < NEAR_DUP_THRESHOLD) continue;
-    const score = similarity(nuevo, otro);
+    const otro = c.text.toLowerCase();
+    const score = nuevo === otro ? 1 : diceFrom(bigramasNuevo, nuevo.length, otro);
     if (score >= NEAR_DUP_THRESHOLD) out.push({ id: c.id, similarity: Math.round(score * 100) / 100, text: c.text });
   }
   out.sort((x, y) => y.similarity - x.similarity);
@@ -588,22 +625,109 @@ export class Cortex {
   /**
    * Copy a whole neuron to .quarantine/ with a timestamp, before anything
    * destructive. Same stamp format everywhere, so restoreNeuron can pick the
-   * newest copy by name alone.
+   * newest copy by name alone. Sealed when encryption at rest is on; throws
+   * (and the caller removes nothing) when it is on and the key is missing.
    */
   private async quarantine(neuron: Neuron): Promise<string> {
-    const sello = now().replace(/[:.]/g, '-');
-    const backup = `${this.brain.paths.quarantine}/${neuron.id}.${sello}.json`;
-    await writeJSON(backup, neuron);
-    return backup;
+    return writeQuarantine(this.brain.paths.quarantine, neuron.id, neuron, 'whole');
   }
 
-  /** Remove the neuron file, drop its chunks, and keep the manifest honest. */
-  private async deleteNeuronFile(id: string): Promise<void> {
-    await deleteJSON(this.brain.paths.neuron(id));
-    await this.unindex(id);
-    const manifest = await this.brain.getManifest();
-    await this.brain.updateManifest({ total_neurons: Math.max(0, manifest.total_neurons - 1) });
+  /** Neuron files that exist and could not be parsed, seen by this process (2.11). */
+  private skipped = new Map<string, UnreadableNeuron>();
+
+  /** Where a good copy of a neuron may be: the newest backup, or a quarantine copy. */
+  async recoveryHint(id: string): Promise<string> {
+    const partes: string[] = [];
+    try {
+      const copias = (await listQuarantine(this.brain.paths.quarantine, id)).filter(c => c.kind === 'whole');
+      if (copias.length) partes.push(`a whole copy is in quarantine (${path.join(this.brain.paths.quarantine, copias[0].file)}; crbro_forget restore:true brings it back once the bad file is moved aside)`);
+    } catch { /* no quarantine */ }
+    try {
+      const dir = resolveBackupDir(this.brain.paths.root);
+      const b = (await listBackups(dir))[0];
+      if (b) partes.push(`the newest backup is ${b.path} (npx crbro-memory backup restore "${b.file}" --into <empty folder>, then copy cortex/${id}.json back)`);
+    } catch { /* no backups */ }
+    const donde = partes.length ? `Recovery: ${partes.join('; or ')}.` : 'No backup or quarantine copy was found.';
+    return `${donde} Or fix the JSON by hand (a UTF-8 byte-order mark is accepted since 2.11).`;
   }
+
+  private async noteUnreadable(id: string, err: unknown): Promise<UnreadableNeuron> {
+    const info: UnreadableNeuron = {
+      id,
+      path: this.brain.paths.neuron(id),
+      error: err instanceof CorruptJSONError ? err.reason : (err as Error)?.message || String(err),
+      recovery: await this.recoveryHint(id),
+    };
+    this.skipped.set(id, info);
+    return info;
+  }
+
+  /**
+   * Unreadable neuron files: the ones readers met and skipped since this
+   * process started (default), or every one on disk now (`scan: true`).
+   * Callers that list or search the cortex surface these instead of failing.
+   */
+  async unreadable(options?: { scan?: boolean }): Promise<UnreadableNeuron[]> {
+    if (options?.scan) {
+      for (const id of await listJSONFiles(this.brain.paths.cortex)) {
+        try {
+          await readJSON<Neuron>(this.brain.paths.neuron(id));
+          this.skipped.delete(id);
+        } catch (err) {
+          await this.noteUnreadable(id, err);
+        }
+      }
+    }
+    // A file fixed since it was seen is no longer reported.
+    const out: UnreadableNeuron[] = [];
+    for (const [id, info] of this.skipped) {
+      try {
+        await readJSON<Neuron>(this.brain.paths.neuron(id));
+        this.skipped.delete(id);
+      } catch {
+        out.push(info);
+      }
+    }
+    return out.sort((a, b) => (a.id < b.id ? -1 : 1));
+  }
+
+  /** A strict read for write paths: null when absent, UnreadableNeuronError when corrupt. */
+  private async readStrict(id: string): Promise<Neuron | null> {
+    try {
+      return await readJSON<Neuron>(this.brain.paths.neuron(id));
+    } catch (err) {
+      if (!(await fileExists(this.brain.paths.neuron(id)))) return null;
+      const info = await this.noteUnreadable(id, err);
+      throw new UnreadableNeuronError(id, info.path, info.recovery, info.error);
+    }
+  }
+
+  /**
+   * updateJSON on a neuron, with a corrupt file turned into an error that
+   * names it and says where a good copy is.
+   */
+  private async updateNeuron(id: string, mutate: (current: Neuron | null) => Promise<Neuron | null> | Neuron | null): Promise<Neuron | null> {
+    try {
+      return await updateJSON<Neuron>(this.brain.paths.neuron(id), mutate);
+    } catch (err) {
+      if (err instanceof CorruptJSONError) {
+        const info = await this.noteUnreadable(id, err);
+        throw new UnreadableNeuronError(id, info.path, info.recovery, info.error);
+      }
+      throw err;
+    }
+  }
+
+  /** Resolution for write paths: exact id first, then the name; a corrupt match is an error, not a miss. */
+  private async resolveForWrite(ref: string): Promise<Neuron | null> {
+    return (await this.readStrict(ref)) || (await this.findByName(ref, { strict: true }));
+  }
+
+  /** The neuron was deleted between resolution and the lock: a write must not bring it back. */
+  private deletedMeanwhile(id: string): Error {
+    return new Error(`Neuron "${id}" was deleted while this write was in progress. Nothing was written, so it was not brought back.`);
+  }
+
 
   private async emit(neuronId: string, change: Parameters<Emitter>[1]): Promise<void> {
     if (!this.emitter) return;
@@ -623,7 +747,7 @@ export class Cortex {
   async mergeFromSync(nid: string, ops: Op[]): Promise<{ report: MergeReport; created: boolean }> {
     let report!: MergeReport;
     let created = false;
-    const saved = await updateJSON<Neuron>(this.brain.paths.neuron(nid), current => {
+    const saved = await this.updateNeuron(nid, current => {
       created = current === null;
       const merged = applyOps(current, ops, { id: nid });
       report = merged.report;
@@ -637,10 +761,32 @@ export class Cortex {
   private async reindex(neuron: Neuron): Promise<void> {
     if (!this.indexer) return;
     try {
-      await this.indexer(neuron);
+      // Heat lives in the derived heat state since 2.11 and is no longer
+      // rewritten into every neuron file; the index gets the current value.
+      const h = (await this.heatMap()).get(neuron.id);
+      await this.indexer(h === undefined || h === neuron.heat ? neuron : { ...neuron, heat: h });
     } catch {
       // Indexing must never break a write. The index is derived data.
     }
+  }
+
+  private heatCache: { mtime: number; map: Map<string, number> } | null = null;
+
+  /**
+   * id → heat from the derived heat state (prefrontal/heat_state.json),
+   * cached on the file's mtime. Empty when it was never computed: readers
+   * then fall back to the heat stored in the neuron, as before 2.11.
+   */
+  async heatMap(): Promise<Map<string, number>> {
+    const file = path.join(this.brain.paths.prefrontal, 'heat_state.json');
+    let mtime = 0;
+    try { mtime = (await fsp.stat(file)).mtimeMs; } catch { return new Map(); }
+    if (this.heatCache && this.heatCache.mtime === mtime) return this.heatCache.map;
+    const state = await readHeatState(this.brain).catch(() => null);
+    const map = new Map<string, number>();
+    for (const [id, e] of Object.entries(state?.neurons || {})) map.set(id, e.heat);
+    this.heatCache = { mtime, map };
+    return map;
   }
 
   /**
@@ -649,7 +795,7 @@ export class Cortex {
   async get(id: string): Promise<Neuron | null> {
     // Even a read touches the file (access time and count), so it goes through
     // the same locked read-modify-write as everything else.
-    return updateJSON<Neuron>(this.brain.paths.neuron(id), current => {
+    return this.updateNeuron(id, current => {
       if (!current) return null;
       current.last_accessed = now();
       current.access_count = (current.access_count || 0) + 1;
@@ -659,9 +805,19 @@ export class Cortex {
 
   /**
    * Get a neuron by ID without updating access stats.
+   *
+   * Tolerant (2.11): a file that exists and cannot be parsed reads as null
+   * and is recorded in unreadable(), so one truncated neuron no longer takes
+   * down recall, inspect or consolidate. Write paths use a strict read.
    */
   async peek(id: string): Promise<Neuron | null> {
-    return readJSON<Neuron>(this.brain.paths.neuron(id));
+    try {
+      return await readJSON<Neuron>(this.brain.paths.neuron(id));
+    } catch (err) {
+      // A reference that is not a usable file name ("a:b" on Windows) is a miss, not a corrupt neuron.
+      if (await fileExists(this.brain.paths.neuron(id))) await this.noteUnreadable(id, err);
+      return null;
+    }
   }
 
   /**
@@ -676,49 +832,70 @@ export class Cortex {
    * wrong neuron, and no amount of index tuning repairs that. A wrong guess
    * is worse than a new neuron.
    */
-  async findByName(name: string): Promise<Neuron | null> {
+  async findByName(name: string, options?: { type?: NeuronType; strict?: boolean }): Promise<Neuron | null> {
+    const r = await this.resolveTopic(name, options);
+    if (!r) return null;
+    return options?.strict ? this.readStrict(r.id) : this.peek(r.id);
+  }
+
+  /**
+   * Which existing neuron a topic names, without reading any neuron unless
+   * two candidates tie. In order, for each slug the name may be filed under
+   * (current rule, the 2.10 rule, the pre-1.x accent-mangling rule):
+   *
+   *  1. `id`   — the slug IS an existing id ("project_crbro");
+   *  2. `name` — an id minus its type prefix equals the slug;
+   *  3. `variant` — the same identifier written with or without underscores
+   *     or a plural (see nameVariantKey). Never a letter or a number apart.
+   *
+   * Several neurons of different types on one name (project_react and
+   * tech_react): the requested type wins, then the type an id-shaped topic
+   * names, then the type the name implies; failing that the most used, and
+   * the others come back in `ambiguous` so the caller can say so.
+   */
+  async resolveTopic(name: string, options?: { type?: NeuronType }): Promise<{ id: string; resolved_by: 'id' | 'name' | 'variant'; ambiguous?: string[] } | null> {
+    const cands = slugCandidates(name);
+    if (cands.length === 0) return null;
     const ids = await listJSONFiles(this.brain.paths.cortex);
-    const slug = toSnakeCase(name);
-    if (!slug) return null;
+    const idSet = new Set(ids);
+    const bareOf = (id: string) => id.replace(TYPE_PREFIX_RE, '');
+    const typeOf = (id: string): NeuronType | null => typeOfIdShape(id);
+    const prefer: NeuronType[] = [];
+    if (options?.type) prefer.push(options.type);
+    const shape = typeOfIdShape(cands[0]);
+    if (shape) prefer.push(shape);
+    prefer.push(inferNeuronType(name));
 
-    // Neurons created before accents were folded live under a mangled name
-    // ("bsqueda" for "búsqueda"). Try the correct slug first, then that one,
-    // so upgrading does not orphan them.
-    const legacy = legacySnakeCase(name);
-    const candidatos = legacy && legacy !== slug ? [slug, legacy] : [slug];
-
-    // 1. Exact: the id itself, or the id minus its type prefix.
-    for (const buscado of candidatos) {
-      for (const id of ids) {
-        if (id === buscado || id.replace(TYPE_PREFIX_RE, '') === buscado) {
-          return this.peek(id);
-        }
+    const pick = async (matches: string[], resolved_by: 'name' | 'variant') => {
+      if (matches.length === 1) return { id: matches[0], resolved_by };
+      for (const t of prefer) {
+        const delTipo = matches.filter(id => typeOf(id) === t);
+        if (delTipo.length === 1) return { id: delTipo[0], resolved_by, ambiguous: matches.filter(m => m !== delTipo[0]) };
       }
-    }
-
-    // 2. Near-miss, but only a real one. Ties go to the most used neuron.
-    const candidates: Array<{ id: string; score: number }> = [];
-    for (const id of ids) {
-      const bare = id.replace(TYPE_PREFIX_RE, '');
-      const score = similarity(slug, bare);
-      if (score >= NAME_MATCH_THRESHOLD && sameNumbers(slug, bare)) {
-        candidates.push({ id, score });
+      let best: { id: string; uses: number } | null = null;
+      for (const id of [...matches].sort()) {
+        const n = await this.peek(id);
+        const uses = n?.access_count || 0;
+        if (!best || uses > best.uses) best = { id, uses };
       }
-    }
-    if (candidates.length === 0) return null;
+      return { id: best!.id, resolved_by, ambiguous: matches.filter(m => m !== best!.id) };
+    };
 
-    candidates.sort((a, b) => b.score - a.score);
-    const top = candidates[0].score;
-    const tied = candidates.filter(c => c.score >= top - 0.001);
-    if (tied.length === 1) return this.peek(tied[0].id);
-
-    let best: Neuron | null = null;
-    for (const c of tied) {
-      const n = await this.peek(c.id);
-      if (!n) continue;
-      if (!best || (n.access_count || 0) > (best.access_count || 0)) best = n;
+    for (const s of cands) {
+      if (idSet.has(s)) return { id: s, resolved_by: 'id' as const };
+      // An id-shaped slug also matches an id that carries its prefix twice
+      // ("project_x" → project_project_x, made by 2.10 from such a topic):
+      // that one's bare id is the slug itself.
+      const bare = ids.filter(id => bareOf(id) === s);
+      if (bare.length) return pick(bare, 'name');
     }
-    return best;
+
+    const key = nameVariantKey(cands[0].replace(TYPE_PREFIX_RE, ''));
+    if (key.length >= 4) {
+      const variantes = ids.filter(id => nameVariantKey(bareOf(id)) === key);
+      if (variantes.length) return pick(variantes, 'variant');
+    }
+    return null;
   }
 
   /**
@@ -732,7 +909,7 @@ export class Cortex {
     // Check-then-create has to happen inside the lock, or two clients starting
     // the same topic at the same moment both think they are the first.
     let creada = false;
-    const neuron = await updateJSON<Neuron>(this.brain.paths.neuron(id), current => {
+    const neuron = await this.updateNeuron(id, current => {
       if (current) return null;
       creada = true;
       return {
@@ -845,6 +1022,10 @@ export class Cortex {
     reconfirmed?: boolean;
     /** An explicit shelf_life was replaced by a less volatile one (team merge restores the more volatile value). */
     shelf_lengthened?: boolean;
+    /** How the topic was resolved (2.11): neuron_id, id, name, variant or created. */
+    resolved_by?: ResolvedBy;
+    /** Other neurons the same name could mean (several types share it); the chosen one is neuron. */
+    ambiguous?: string[];
   }> {
     const reference = options?.reference === undefined ? undefined : sanitizeReference(options.reference);
     const temporal = sanitizeTemporal(options?.temporal);
@@ -854,35 +1035,64 @@ export class Cortex {
     const limpio = redact(content);
     content = limpio.text;
 
-    let neuron: Neuron | null = null;
     let action: 'created' | 'updated' | 'skipped' | 'skipped_retired' = 'updated';
+    let targetId: string;
+    let resolvedBy: ResolvedBy;
+    let ambiguous: string[] | undefined;
 
+    // Resolution reads no neuron (2.11): only the id is needed here, and the
+    // lock below reads the file anyway. On a 1 MB neuron that was a whole
+    // extra parse per learn.
     if (options?.neuronId) {
-      neuron = await this.peek(options.neuronId);
-    }
-    if (!neuron) {
-      neuron = await this.findByName(topic);
-    }
-
-    if (!neuron) {
-      if (options?.createIfMissing === false) {
-        return {
-          neuron: null, action: 'skipped', superseded: 0,
-          supersedes_unmatched: options?.supersedes || [], near_duplicates: [], redacted: limpio.found,
-          duplicate: false, updated_in_place: false, skipped_retired: null,
-        };
+      // An explicit id is a promise about where the knowledge goes. A typo in
+      // it used to fall back to the topic and write somewhere else, silently.
+      const nid = options.neuronId.trim();
+      const existe = !!nid && !/[\\/]/.test(nid) && await fileExists(this.brain.paths.neuron(nid));
+      // The one case an absent id is created: it is exactly the id the topic
+      // itself makes ("Tienda" + project_tienda). Anything else would be the
+      // knowledge landing somewhere the caller did not name.
+      const tipoDelId = existe ? null : typeOfIdShape(nid);
+      const mismoId = !!tipoDelId && !!topic.trim() && neuronId(topic, tipoDelId) === nid;
+      if (existe) {
+        targetId = nid;
+        resolvedBy = 'neuron_id';
+      } else if (mismoId && options.createIfMissing !== false) {
+        targetId = (await this.create(topic, tipoDelId!, options.domain || 'general')).id;
+        action = 'created';
+        resolvedBy = 'created';
+      } else {
+        throw new Error(`No neuron with id "${options.neuronId}". Nothing was written. ` +
+          'Find the right id with crbro_recall or crbro_inspect view=neurons, or pass only topic to resolve it by name.');
       }
-      const nType = options?.neuronType || inferNeuronType(topic);
-      const domain = options?.domain || 'general';
-      neuron = await this.create(topic, nType, domain);
-      action = 'created';
+    } else {
+      const r = await this.resolveTopic(topic, { type: options?.neuronType });
+      if (r) {
+        targetId = r.id;
+        resolvedBy = r.resolved_by;
+        ambiguous = r.ambiguous;
+      } else {
+        if (options?.createIfMissing === false) {
+          return {
+            neuron: null, action: 'skipped', superseded: 0,
+            supersedes_unmatched: options?.supersedes || [], near_duplicates: [], redacted: limpio.found,
+            duplicate: false, updated_in_place: false, skipped_retired: null,
+          };
+        }
+        const nType = options?.neuronType || inferNeuronType(topic);
+        const domain = options?.domain || 'general';
+        targetId = (await this.create(topic, nType, domain)).id;
+        action = 'created';
+        resolvedBy = 'created';
+      }
     }
 
     let superseded = 0;
-    // Stays empty unless retire() actually runs: a duplicate fact skips the
-    // whole block, and warning "still live" about targets nobody touched is
-    // a false alarm on every idempotent retry.
+    // Only targets that matched nothing, live or already retired: a retry of
+    // a supersedes that already ran finds its target retired, and warning
+    // "still live" about it would be a false alarm.
     let supersedesUnmatched: string[] = [];
+    let retiradosAhora: string[] = [];
+    let gone = false;
     let nearDuplicates: Array<{ id: string; similarity: number; preview: string }> = [];
     let emitir: Parameters<Emitter>[1] | null = null;
     let duplicate = false;
@@ -926,18 +1136,52 @@ export class Cortex {
       }
     };
 
-    const actualizada = await updateJSON<Neuron>(
-      this.brain.paths.neuron(neuron.id),
+    // One identity rule for every kind (2.11): the normalised text entryId
+    // hashes — whitespace runs collapsed, NFC. Before, a pattern differing by
+    // a line break was stored twice under one sidecar key, and a fact with a
+    // trailing newline became a second fact.
+    const clave = normalizeText(content);
+    const mismaEntrada = (t: string) => t === content || normalizeText(t) === clave;
+    const claveLower = clave.toLowerCase();
+    const contentLower = content.toLowerCase();
+    const mismoHecho = (t: string): boolean => {
+      if (t.length === content.length && t.toLowerCase() === contentLower) return true;
+      // Normalising only shrinks a text, so a shorter one cannot match.
+      if (t.length < clave.length || t.length > clave.length * 2 + 16) return false;
+      return normalizeText(t).toLowerCase() === claveLower;
+    };
+    const supersedeDesde = (n: Neuron, propio: { id: string; text: string }) => {
+      if (!options?.supersedes?.length) return;
+      // A fact never supersedes itself, whatever the caller listed.
+      const objetivos = options.supersedes.filter(t =>
+        t.trim().toLowerCase() !== propio.id.toLowerCase() && !mismoHecho(t.trim()));
+      const r = this.retire(n, objetivos, propio.id, 'superseded');
+      superseded = r.count;
+      retiradosAhora = r.ids;
+      // A target that is already retired was found: a retry of a supersedes
+      // that already ran is not a miss.
+      const yaRetirado = (t: string) => {
+        const w = t.trim().toLowerCase();
+        return n.facts.some(f => (f.status === 'superseded' || f.status === 'retracted')
+          && ((f.id || factId(f.text)).toLowerCase() === w || f.text.trim().toLowerCase() === w));
+      };
+      supersedesUnmatched = r.unmatched.filter(t => !yaRetirado(t));
+    };
+
+    const actualizada = await this.updateNeuron(
+      targetId,
       current => {
-        const n = current || neuron;
+        if (!current) {
+          gone = true;
+          return null;
+        }
+        const n = current;
 
         switch (type) {
           case 'fact': {
             const id = factId(content);
             const keys = normalizeKeys(options?.keys);
-            const existente = n.facts.find(
-              f => f.text.toLowerCase() === content.toLowerCase()
-            );
+            const existente = n.facts.find(f => mismoHecho(f.text));
             if (existente && (existente.status === 'superseded' || existente.status === 'retracted')) {
               // The same line was deliberately retired. Re-adding it would
               // undo that revision by accident; report it and write nothing.
@@ -1029,13 +1273,13 @@ export class Cortex {
                          ...(existente.shelf_life ? { shelf: existente.shelf_life } : {}) };
               const sv = shelfOfFact(existente);
               shelf = { shelf_life: sv.shelf, inferred: sv.inferred, ...(sv.reason ? { reason: sv.reason } : {}) };
+              // The same line again WITH supersedes: the retry after fixing a
+              // mistyped id. It used to skip the retirement in silence, and
+              // the old value stayed live while the caller believed it gone.
+              supersedeDesde(n, { id: existente.id || factId(existente.text), text: existente.text });
             }
             if (!isDuplicate) {
-              if (options?.supersedes?.length) {
-                const retirado = this.retire(n, options.supersedes, id, 'superseded');
-                superseded = retirado.count;
-                supersedesUnmatched = retirado.unmatched;
-              }
+              supersedeDesde(n, { id, text: content });
               // Near-duplicate check, against what will still be active
               // AFTER supersedes ran — retiring the old telling is exactly
               // the fix this warning exists to suggest, so a properly
@@ -1070,6 +1314,12 @@ export class Cortex {
           }
           case 'decision': {
             if (retirada(n, content)) return null;
+            // A retry no longer adds a second copy under the same entry id.
+            const previa = n.decisions.find(d => mismaEntrada(d.text || ''));
+            if (previa) {
+              emitir = { kind: 'decision' as const, text: previa.text, why: previa.rationale || undefined, at: previa.date || now() };
+              break;
+            }
             const decision: Decision = {
               text: content,
               date: now(),
@@ -1085,16 +1335,18 @@ export class Cortex {
           }
           case 'pattern': {
             if (retirada(n, content)) return null;
-            if (!n.patterns.includes(content)) {
+            const previo = n.patterns.find(mismaEntrada);
+            if (previo === undefined) {
               n.patterns.push(content);
               fechar(n, content);
               origen(n, content);
             }
-            emitir = { kind: 'pattern' as const, text: content, at: n.entry_dates?.[entryId(content)] || now() };
+            const texto = previo ?? content;
+            emitir = { kind: 'pattern' as const, text: texto, at: n.entry_dates?.[entryId(texto)] || now() };
             break;
           }
           case 'preference': {
-            if (!n.preferences.includes(content)) {
+            if (!n.preferences.some(mismaEntrada)) {
               n.preferences.push(content);
               fechar(n, content);
             }
@@ -1103,25 +1355,29 @@ export class Cortex {
           case 'error': {
             if (retirada(n, content)) return null;
             if (!n.errors) n.errors = [];
-            if (!n.errors.includes(content)) {
+            const previo = n.errors.find(mismaEntrada);
+            if (previo === undefined) {
               n.errors.push(content);
               fechar(n, content);
               origen(n, content);
               this.tally.topics.add(n.id);
             }
-            emitir = { kind: 'error' as const, text: content, at: n.entry_dates?.[entryId(content)] || now() };
+            const texto = previo ?? content;
+            emitir = { kind: 'error' as const, text: texto, at: n.entry_dates?.[entryId(texto)] || now() };
             break;
           }
           case 'debt': {
             if (retirada(n, content)) return null;
             if (!n.debts) n.debts = [];
-            if (!n.debts.includes(content)) {
+            const previo = n.debts.find(mismaEntrada);
+            if (previo === undefined) {
               n.debts.push(content);
               fechar(n, content);
               origen(n, content);
               this.tally.topics.add(n.id);
             }
-            emitir = { kind: 'debt' as const, text: content, at: n.entry_dates?.[entryId(content)] || now() };
+            const texto = previo ?? content;
+            emitir = { kind: 'debt' as const, text: texto, at: n.entry_dates?.[entryId(texto)] || now() };
             break;
           }
         }
@@ -1137,19 +1393,27 @@ export class Cortex {
       }
     );
 
-    const final = (actualizada || neuron) as Neuron;
+    if (gone || !actualizada) throw this.deletedMeanwhile(targetId);
+    const final = actualizada;
     if (skippedRetired) {
       // Nothing was written, so nothing to index, emit or tally.
       return {
         neuron: final, action: 'skipped_retired', superseded: 0, supersedes_unmatched: [],
         near_duplicates: [], redacted: limpio.found,
         duplicate: false, updated_in_place: false, skipped_retired: skippedRetired,
+        resolved_by: resolvedBy, ...(ambiguous?.length ? { ambiguous } : {}),
       };
     }
     await this.reindex(final);
     // Preferences are never emitted: they are the field most likely to hold a
     // key and the least likely to be worth sharing.
     if (emitir) await this.emit(final.id, emitir);
+    // The retirement travels too (2.11), exactly as crbro_revise sends it:
+    // before, teammates got the new value and kept the old one as current.
+    for (const fid of retiradosAhora) {
+      const f = final.facts.find(x => x.id === fid);
+      await this.emit(final.id, { kind: 'status', fid, to: 'superseded', at: f?.revised || now() });
+    }
     return {
       neuron: final, action, superseded, supersedes_unmatched: supersedesUnmatched,
       near_duplicates: nearDuplicates, redacted: limpio.found,
@@ -1157,6 +1421,7 @@ export class Cortex {
       ...(confirmations !== undefined ? { confirmations } : {}),
       ...(shelf ? { shelf } : {}),
       ...(shelfLengthened ? { shelf_lengthened: true } : {}),
+      resolved_by: resolvedBy, ...(ambiguous?.length ? { ambiguous } : {}),
     };
   }
 
@@ -1175,16 +1440,16 @@ export class Cortex {
     options?: { status?: FactStatus; note?: string; replacedBy?: string }
   ): Promise<{ neuron: Neuron | null; revised: number; unmatched: string[] }> {
     const neuron =
-      (await this.peek(neuronRef)) || (await this.findByName(neuronRef));
+      await this.resolveForWrite(neuronRef);
     if (!neuron) return { neuron: null, revised: 0, unmatched: targets.slice() };
 
     const status: FactStatus = options?.status || 'superseded';
     let revised = 0;
     let unmatched: string[] = targets.slice();
-    const actualizada = await updateJSON<Neuron>(
-      this.brain.paths.neuron(neuron.id),
+    const actualizada = await this.updateNeuron(neuron.id,
       current => {
-        const n = current || neuron;
+        if (!current) return null;   // deleted meanwhile: never resurrect it (2.11)
+        const n = current;
         const retirado = status === 'active'
           ? this.reactivate(n, targets, options?.note)
           : this.retire(n, targets, options?.replacedBy, status, options?.note);
@@ -1246,7 +1511,7 @@ export class Cortex {
     const evidence = makeVerification(targets.evidence, now());
     const facts = (targets.facts || []).filter(t => typeof t === 'string');
     const entries = (targets.entries || []).filter(t => typeof t === 'string');
-    const neuron = (await this.peek(neuronRef)) || (await this.findByName(neuronRef));
+    const neuron = await this.resolveForWrite(neuronRef);
     if (!neuron) return { neuron: null, verified: [], unmatched: [...facts, ...entries], retired: [] };
 
     const verified: string[] = [];
@@ -1254,8 +1519,9 @@ export class Cortex {
     let retired: Array<{ target: string; id: string; status: 'superseded' | 'retracted' }> = [];
     const emitir: Array<{ eid: string; ekind: 'fact' | 'entry'; at: string; verification: Verification }> = [];
 
-    const actualizada = await updateJSON<Neuron>(this.brain.paths.neuron(neuron.id), current => {
-      const n = current || neuron;
+    const actualizada = await this.updateNeuron(neuron.id, current => {
+      if (!current) return null;   // deleted meanwhile: never resurrect it (2.11)
+        const n = current;
       const cuando = now();
       verified.length = 0; unmatched = []; retired = []; emitir.length = 0;
 
@@ -1351,10 +1617,11 @@ export class Cortex {
     replacedBy: string | undefined,
     status: FactStatus,
     note?: string
-  ): { count: number; unmatched: string[] } {
+  ): { count: number; unmatched: string[]; ids: string[] } {
     let count = 0;
     const wanted = targets.map(t => t.trim().toLowerCase());
     const hit = new Set<number>();
+    const ids: string[] = [];
 
     for (const fact of neuron.facts) {
       if (fact.status === 'superseded' || fact.status === 'retracted') continue;
@@ -1372,9 +1639,10 @@ export class Cortex {
       if (replacedBy) fact.superseded_by = replacedBy;
       if (note) fact.revision_note = note;
       count++;
+      ids.push(fid);
     }
 
-    return { count, unmatched: targets.filter((_, i) => !hit.has(i)) };
+    return { count, unmatched: targets.filter((_, i) => !hit.has(i)), ids };
   }
 
   /**
@@ -1429,7 +1697,7 @@ export class Cortex {
     options?: { status?: FactStatus; note?: string }
   ): Promise<{ neuron: Neuron | null; revised: number; unmatched: string[] }> {
     const neuron =
-      (await this.peek(neuronRef)) || (await this.findByName(neuronRef));
+      await this.resolveForWrite(neuronRef);
     if (!neuron) return { neuron: null, revised: 0, unmatched: targets.slice() };
 
     const status: FactStatus = options?.status || 'superseded';
@@ -1437,10 +1705,10 @@ export class Cortex {
     let revised = 0;
     let unmatched: string[] = targets.slice();
 
-    const actualizada = await updateJSON<Neuron>(
-      this.brain.paths.neuron(neuron.id),
+    const actualizada = await this.updateNeuron(neuron.id,
       current => {
-        const n = current || neuron;
+        if (!current) return null;   // deleted meanwhile: never resurrect it (2.11)
+        const n = current;
         const estados: Record<string, EntryRetirement> = n.entry_status || {};
         const hit = new Set<number>();
         const cuando = now();
@@ -1503,7 +1771,7 @@ export class Cortex {
     meta: { summary?: string; domain?: string; tags?: string[]; name?: string }
   ): Promise<{ neuron: Neuron | null; changed: Array<'summary' | 'domain' | 'tags' | 'name'>; redacted: string[] }> {
     const neuron =
-      (await this.peek(neuronRef)) || (await this.findByName(neuronRef));
+      await this.resolveForWrite(neuronRef);
     if (!neuron) return { neuron: null, changed: [], redacted: [] };
 
     let redacted: string[] = [];
@@ -1520,10 +1788,10 @@ export class Cortex {
     const name = meta.name === undefined ? undefined : meta.name.trim();
 
     const changed: Array<'summary' | 'domain' | 'tags' | 'name'> = [];
-    const actualizada = await updateJSON<Neuron>(
-      this.brain.paths.neuron(neuron.id),
+    const actualizada = await this.updateNeuron(neuron.id,
       current => {
-        const n = current || neuron;
+        if (!current) return null;   // deleted meanwhile: never resurrect it (2.11)
+        const n = current;
         if (summary !== undefined && summary !== n.summary) {
           n.summary = summary;
           changed.push('summary');
@@ -1575,7 +1843,7 @@ export class Cortex {
     // The other way round, an exact neuron id could land on a near-miss whose
     // prefix-stripped id matches first, and the map would be written to one
     // neuron while every reader resolves the other.
-    let neuron = (await this.peek(neuronRef)) || (await this.findByName(neuronRef));
+    let neuron = await this.resolveForWrite(neuronRef);
     let action: 'created' | 'updated' = 'updated';
     if (!neuron) {
       const nType = options?.neuronType || inferNeuronType(neuronRef);
@@ -1585,10 +1853,10 @@ export class Cortex {
 
     const cuando = now();
     const vaciar = content.trim() === '';
-    const actualizada = await updateJSON<Neuron>(
-      this.brain.paths.neuron(neuron.id),
+    const actualizada = await this.updateNeuron(neuron.id,
       current => {
-        const n = current || neuron!;
+        if (!current) return null;   // deleted meanwhile: never resurrect it (2.11)
+        const n = current;
         // An empty map is not a map: writing '' clears it outright, so the
         // reader never meets a document that exists but says nothing.
         if (vaciar) delete n.map;
@@ -1599,7 +1867,8 @@ export class Cortex {
       }
     );
 
-    const final = (actualizada || neuron) as Neuron;
+    if (!actualizada) throw this.deletedMeanwhile(neuron.id);
+    const final = actualizada;
     await this.reindex(final);
     // Clearing emits too: an empty map op is the tombstone that wins the LWW
     // on every machine, so a stale copy cannot resurrect the cleared map.
@@ -1621,11 +1890,12 @@ export class Cortex {
     min_heat?: number;
     limit?: number;
     offset?: number;
-  }): Promise<{ total: number; rows: Awaited<ReturnType<Cortex['list']>> }> {
-    const all = await this.list({ ...options, limit: Number.MAX_SAFE_INTEGER, offset: 0 });
+  }): Promise<{ total: number; rows: Awaited<ReturnType<Cortex['list']>>; unreadable: UnreadableNeuron[] }> {
+    const unreadable: UnreadableNeuron[] = [];
+    const all = await this.list({ ...options, limit: Number.MAX_SAFE_INTEGER, offset: 0 }, unreadable);
     const limit = options?.limit || 50;
     const offset = Math.max(0, options?.offset || 0);
-    return { total: all.length, rows: all.slice(offset, offset + limit) };
+    return { total: all.length, rows: all.slice(offset, offset + limit), unreadable };
   }
 
   /**
@@ -1638,7 +1908,7 @@ export class Cortex {
     limit?: number;
     /** Rows to skip after the heat sort, for paging. Default 0. */
     offset?: number;
-  }): Promise<Array<{
+  }, unreadable?: UnreadableNeuron[]): Promise<Array<{
     id: string;
     name: string;
     domain: string;
@@ -1658,23 +1928,33 @@ export class Cortex {
       facts_count: number;
     }> = [];
 
+    const calor = await this.heatMap();
     for (const id of ids) {
-      const neuron = await readJSON<Neuron>(this.brain.paths.neuron(id));
+      let neuron: Neuron | null;
+      try {
+        neuron = await readJSON<Neuron>(this.brain.paths.neuron(id));
+      } catch (err) {
+        // One unreadable file is listed apart, never the end of the listing.
+        const info = await this.noteUnreadable(id, err);
+        unreadable?.push(info);
+        continue;
+      }
       if (!neuron) continue;
+      const heat = calor.get(neuron.id) ?? neuron.heat;
 
       // Apply filters
       if (options?.domain && neuron.domain !== options.domain) continue;
       if (options?.type && neuron.type !== options.type) continue;
-      if (options?.min_heat && neuron.heat < options.min_heat) continue;
+      if (options?.min_heat && heat < options.min_heat) continue;
 
       neurons.push({
         id: neuron.id,
         name: neuron.name,
         domain: neuron.domain,
         type: neuron.type,
-        heat: neuron.heat,
+        heat,
         last_accessed: neuron.last_accessed,
-        facts_count: neuron.facts.length,
+        facts_count: (neuron.facts || []).length,
       });
     }
 
@@ -1691,7 +1971,7 @@ export class Cortex {
    * Update a neuron's summary.
    */
   async updateSummary(id: string, summary: string): Promise<Neuron | null> {
-    const neuron = await updateJSON<Neuron>(this.brain.paths.neuron(id), current => {
+    const neuron = await this.updateNeuron(id, current => {
       if (!current) return null;
       current.summary = summary;
       current.last_accessed = now();
@@ -1706,7 +1986,7 @@ export class Cortex {
    * Add tags to a neuron.
    */
   async addTags(id: string, tags: string[]): Promise<Neuron | null> {
-    const neuron = await updateJSON<Neuron>(this.brain.paths.neuron(id), current => {
+    const neuron = await this.updateNeuron(id, current => {
       if (!current) return null;
       for (const tag of tags) {
         if (!current.tags.includes(tag)) current.tags.push(tag);
@@ -1730,11 +2010,10 @@ export class Cortex {
     neuronRef: string,
     targets: string[]
   ): Promise<{ neuron_id: string | null; removed: number; backup: string | null }> {
-    const found = (await this.peek(neuronRef)) || (await this.findByName(neuronRef));
+    const found = await this.resolveForWrite(neuronRef);
     if (!found) return { neuron_id: null, removed: 0, backup: null };
 
-    const backup = await this.quarantine(found);
-
+    let backup: string | null = null;
     let removed = 0;
     const wanted = targets.map(t => t.trim().toLowerCase());
     // An entry goes when a target names its text or its id: the entryId the
@@ -1747,46 +2026,72 @@ export class Cortex {
       return wanted.includes(t) || wanted.includes(entryId(text!).toLowerCase())
         || (!!ownId && wanted.includes(ownId.toLowerCase()));
     };
+    const factMatches = (f: Fact) => {
+      const fid = (f.id || factId(f.text)).toLowerCase();
+      return wanted.includes(fid) || wanted.includes(f.text.trim().toLowerCase());
+    };
+    // What left, read inside the lock: the quarantine copy and the emitted
+    // removals describe exactly what this call took out, not a snapshot read
+    // before somebody else wrote.
+    let quitado: QuarantineEntries | null = null;
 
-    const after = await updateJSON<Neuron>(this.brain.paths.neuron(found.id), current => {
+    const after = await this.updateNeuron(found.id, async current => {
       if (!current) return null;
-      const antes =
-        current.facts.length + current.decisions.length +
-        current.patterns.length + current.preferences.length;
+      const q: QuarantineEntries = {
+        quarantine_format: 2, kind: 'entries',
+        neuron_id: current.id, name: current.name, type: current.type, domain: current.domain, taken_at: now(),
+        facts: (current.facts || []).filter(factMatches).map(copyFact),
+        decisions: (current.decisions || []).filter(d => matches(d.text, d.id)).map(d => ({ ...d })),
+        patterns: (current.patterns || []).filter(p => matches(p)),
+        preferences: (current.preferences || []).filter(p => matches(p)),
+        errors: (current.errors || []).filter(e => matches(e)),
+        debts: (current.debts || []).filter(d => matches(d)),
+        ...(current.map && wanted.includes(current.map.text.trim().toLowerCase()) ? { map: { ...current.map } } : {}),
+      };
+      removed = q.facts.length + q.decisions.length + q.patterns.length + q.preferences.length
+        + q.errors.length + q.debts.length + (q.map ? 1 : 0);
+      // Nothing matched: nothing is written, and no copy is kept either.
+      if (removed === 0) return null;
+
+      // The sidecars of what leaves travel with it, so restore puts each entry
+      // back with its date, retirement, provenance and check.
+      const llaves = new Set([...q.decisions.map(d => d.text), ...q.patterns, ...q.preferences, ...q.errors, ...q.debts].map(entryId));
+      const parte = <T>(rec: Record<string, T> | undefined): Record<string, T> | undefined => {
+        if (!rec) return undefined;
+        const out: Record<string, T> = {};
+        for (const k of Object.keys(rec)) if (llaves.has(k)) out[k] = rec[k];
+        return Object.keys(out).length ? out : undefined;
+      };
+      const fechas = parte(current.entry_dates); if (fechas) q.entry_dates = fechas;
+      const estados = parte(current.entry_status); if (estados) q.entry_status = estados;
+      const origenes = parte(current.entry_source); if (origenes) q.entry_source = origenes;
+      const verificadas = parte(current.entry_verified); if (verificadas) q.entry_verified = verificadas;
+      const evidencias = parte(current.entry_verification); if (evidencias) q.entry_verification = evidencias;
+
+      // The copy first, inside the lock: if it cannot be written (a full disk,
+      // encryption on without its key) nothing is removed.
+      backup = await writeQuarantine(this.brain.paths.quarantine, current.id, q, 'entries');
+      quitado = q;
+
       // Dated entries before the removal, so their dates can go with them.
       const fechadasAntes = [
         ...current.patterns, ...current.preferences,
         ...(current.errors || []), ...(current.debts || []),
       ];
 
-      current.facts = current.facts.filter(f => {
-        const fid = (f.id || factId(f.text)).toLowerCase();
-        return !(wanted.includes(fid) || wanted.includes(f.text.trim().toLowerCase()));
-      });
+      current.facts = current.facts.filter(f => !factMatches(f));
       // Decisions, patterns and preferences too. A credential is no less
       // exposed for sitting in one of those, and nothing else could remove it.
       current.decisions = current.decisions.filter(d => !matches(d.text, d.id));
       current.patterns = current.patterns.filter(p => !matches(p));
       current.preferences = current.preferences.filter(p => !matches(p));
-      const erroresAntes = (current.errors || []).length;
       if (current.errors) {
         current.errors = current.errors.filter(e => !matches(e));
       }
-      const deudasAntes = (current.debts || []).length;
       if (current.debts) {
         current.debts = current.debts.filter(d => !matches(d));
       }
-      let mapaBorrado = 0;
-      if (current.map && wanted.includes(current.map.text.trim().toLowerCase())) {
-        delete current.map;
-        mapaBorrado = 1;
-      }
-
-      removed = antes - (
-        current.facts.length + current.decisions.length +
-        current.patterns.length + current.preferences.length
-      ) + (erroresAntes - (current.errors || []).length) + (deudasAntes - (current.debts || []).length) + mapaBorrado;
-      if (removed === 0) return null;
+      if (q.map) delete current.map;
 
       // Drop the dates of what left, so the sidecar never outlives its entry.
       if (current.entry_dates) {
@@ -1836,7 +2141,8 @@ export class Cortex {
       return current;
     });
 
-    if (removed > 0 && after) {
+    const q = quitado as QuarantineEntries | null;
+    if (removed > 0 && after && q) {
       await this.reindex(after);
       // The removal must travel, or the next sync resurrects from the team
       // log exactly what the user asked to destroy. Facts retract (status
@@ -1844,33 +2150,22 @@ export class Cortex {
       // a purge op keyed by content hash; a cleared map emits the empty-map
       // tombstone that wins the LWW. The emitter no-ops on unshared neurons.
       const cuando = now();
-      for (const f of found.facts || []) {
-        const fid = (f.id || factId(f.text)).toLowerCase();
-        if (wanted.includes(fid) || wanted.includes(f.text.trim().toLowerCase())) {
-          await this.emit(found.id, { kind: 'status', fid: f.id || factId(f.text), to: 'retracted', at: cuando, why: 'forgotten' });
-        }
+      for (const f of q.facts) {
+        await this.emit(found.id, { kind: 'status', fid: f.id || factId(f.text), to: 'retracted', at: cuando, why: 'forgotten' });
       }
-      for (const d of found.decisions || []) {
-        if (matches(d.text, d.id)) {
-          await this.emit(found.id, { kind: 'decision_purge', key: entryId(d.text), at: cuando });
-        }
+      for (const d of q.decisions) {
+        await this.emit(found.id, { kind: 'decision_purge', key: entryId(d.text), at: cuando });
       }
-      for (const p of found.patterns || []) {
-        if (matches(p)) {
-          await this.emit(found.id, { kind: 'pattern_purge', key: entryId(p), at: cuando });
-        }
+      for (const p of q.patterns) {
+        await this.emit(found.id, { kind: 'pattern_purge', key: entryId(p), at: cuando });
       }
-      for (const e of found.errors || []) {
-        if (matches(e)) {
-          await this.emit(found.id, { kind: 'error_purge', key: entryId(e), at: cuando });
-        }
+      for (const e of q.errors) {
+        await this.emit(found.id, { kind: 'error_purge', key: entryId(e), at: cuando });
       }
-      for (const d of found.debts || []) {
-        if (matches(d)) {
-          await this.emit(found.id, { kind: 'debt_purge', key: entryId(d), at: cuando });
-        }
+      for (const d of q.debts) {
+        await this.emit(found.id, { kind: 'debt_purge', key: entryId(d), at: cuando });
       }
-      if (found.map && wanted.includes(found.map.text.trim().toLowerCase())) {
+      if (q.map) {
         await this.emit(found.id, { kind: 'map', text: '', at: cuando });
       }
     }
@@ -1892,40 +2187,59 @@ export class Cortex {
     backup: string | null;
     counts: { facts: number; decisions: number; patterns: number; preferences: number; errors: number; debts: number; connections: number };
   }> {
-    const found = (await this.peek(neuronRef)) || (await this.findByName(neuronRef));
-    if (!found) {
-      return {
-        neuron_id: null, backup: null,
-        counts: { facts: 0, decisions: 0, patterns: 0, preferences: 0, errors: 0, debts: 0, connections: 0 },
-      };
-    }
+    const vacio = { facts: 0, decisions: 0, patterns: 0, preferences: 0, errors: 0, debts: 0, connections: 0 };
+    const found = await this.resolveForWrite(neuronRef);
+    if (!found) return { neuron_id: null, backup: null, counts: vacio };
 
-    const backup = await this.quarantine(found);
-    await this.deleteNeuronFile(found.id);
-
+    // Copy and delete under the neuron's lock (2.11): a learn landing between
+    // the copy and the unlink used to be deleted without being in the copy.
+    const r = await this.quarantineAndDelete(found.id);
+    if (!r) return { neuron_id: null, backup: null, counts: vacio };
+    const n = r.neuron;
     return {
-      neuron_id: found.id,
-      backup,
+      neuron_id: n.id,
+      backup: r.backup,
       counts: {
-        facts: (found.facts || []).length,
-        decisions: (found.decisions || []).length,
-        patterns: (found.patterns || []).length,
-        preferences: (found.preferences || []).length,
-        errors: (found.errors || []).length,
-        debts: (found.debts || []).length,
-        connections: (found.connections || []).length,
+        facts: (n.facts || []).length,
+        decisions: (n.decisions || []).length,
+        patterns: (n.patterns || []).length,
+        preferences: (n.preferences || []).length,
+        errors: (n.errors || []).length,
+        debts: (n.debts || []).length,
+        connections: (n.connections || []).length,
       },
     };
   }
 
   /**
-   * Quarantine copies of one neuron, newest first. Stamps sort lexically, so
-   * the file name alone orders them.
+   * Under the neuron's lock: read it as it is now, copy it whole to
+   * quarantine, delete the file. Null when it is already gone. If the copy
+   * cannot be written (encryption on without its key, a full disk) nothing is
+   * deleted. Index and manifest follow outside the lock.
    */
-  private async quarantineCopies(neuronId: string): Promise<string[]> {
-    const prefijo = `${neuronId}.`;
-    const files = await listJSONFiles(this.brain.paths.quarantine);
-    return files.filter(f => f.startsWith(prefijo)).sort().reverse();
+  private async quarantineAndDelete(id: string): Promise<{ neuron: Neuron; backup: string } | null> {
+    const file = this.brain.paths.neuron(id);
+    const r = await withLock(file, async () => {
+      const current = await this.readStrict(id);
+      if (!current) return null;
+      const backup = await this.quarantine(current);
+      await deleteJSON(file);
+      return { neuron: current, backup };
+    });
+    if (!r) return null;
+    await this.unindex(id);
+    const manifest = await this.brain.getManifest();
+    await this.brain.updateManifest({ total_neurons: Math.max(0, manifest.total_neurons - 1) });
+    return r;
+  }
+
+  /**
+   * Quarantine copies of one neuron, newest first: whole copies and copies of
+   * forgotten entries, clear or sealed. Stamps sort lexically, so the file
+   * name alone orders them; `base` is what restore's `file` option takes.
+   */
+  private async quarantineCopies(neuronId: string): Promise<Array<{ base: string; file: string }>> {
+    return (await listQuarantine(this.brain.paths.quarantine, neuronId)).map(c => ({ base: c.base, file: c.file }));
   }
 
   /**
@@ -1936,6 +2250,11 @@ export class Cortex {
    * (a forget of facts, or the topic was re-created since) the copy is
    * unioned into it. The quarantine file stays where it is, so a restore is
    * repeatable. Nothing is emitted.
+   *
+   * A copy of forgotten entries (2.11) holds those entries and their
+   * sidecars, not the neuron: unioned into the neuron when it exists, or
+   * written as a neuron of its own name, type and domain when it does not.
+   * Sealed copies are opened with the at-rest key.
    */
   async restoreNeuron(neuronId: string, options?: { file?: string }): Promise<{
     neuron: Neuron | null;
@@ -1944,31 +2263,34 @@ export class Cortex {
     moved: ReturnType<typeof unionNeuron>['moved'] | null;
   }> {
     const nada = { neuron: null, restored_from: null, merged_into_existing: false, moved: null };
-    let basename: string | null = null;
+    const copias = await this.quarantineCopies(neuronId);
+    let elegida: { base: string; file: string } | undefined;
     if (options?.file) {
-      const pedido = options.file.replace(/\.json$/i, '');
-      const copias = await this.quarantineCopies(neuronId);
-      basename = copias.includes(pedido) ? pedido : null;
+      const pedido = options.file.replace(/\.json(\.enc)?$/i, '');
+      elegida = copias.find(c => c.base === pedido);
     } else {
-      basename = (await this.quarantineCopies(neuronId))[0] || null;
+      elegida = copias[0];
     }
-    if (!basename) return nada;
+    if (!elegida) return nada;
 
-    const ruta = `${this.brain.paths.quarantine}/${basename}.json`;
-    const copia = await readJSON<Neuron>(ruta);
-    if (!copia || !copia.id) return nada;
+    const ruta = path.join(this.brain.paths.quarantine, elegida.file);
+    const leida = await readQuarantine<unknown>(ruta);
+    let copia: Neuron | null = null;
+    if (isEntriesCopy(leida)) copia = entriesAsNeuron(leida);
+    else if (leida && typeof leida === 'object' && (leida as Neuron).id) copia = leida as Neuron;
+    if (!copia) return nada;
     copia.id = neuronId;
 
     // Decide inside the lock, like create: whether the neuron exists again is
     // only known for sure while nobody else can write it.
     let escrita = false;
     let moved: ReturnType<typeof unionNeuron>['moved'] | null = null;
-    const saved = await updateJSON<Neuron>(this.brain.paths.neuron(neuronId), current => {
+    const saved = await this.updateNeuron(neuronId, current => {
       if (!current) {
         escrita = true;
         return copia;
       }
-      const r = unionNeuron(current, copia);
+      const r = unionNeuron(current, copia!);
       moved = r.moved;
       return r.neuron;
     });
@@ -1998,29 +2320,44 @@ export class Cortex {
     backup: string | null;
     moved: ReturnType<typeof unionNeuron>['moved'] | null;
   }> {
-    const from = (await this.peek(fromRef)) || (await this.findByName(fromRef));
-    const into = (await this.peek(intoRef)) || (await this.findByName(intoRef));
+    const from = await this.resolveForWrite(fromRef);
+    const into = await this.resolveForWrite(intoRef);
     if (!from || !into || from.id === into.id) {
       return { from: from?.id ?? null, into: into?.id ?? null, backup: null, moved: null };
     }
 
-    const backup = await this.quarantine(from);
-
+    // Under the source's lock (2.11): what is copied, unioned and deleted is
+    // the source as it is at that moment, so a learn into it meanwhile is
+    // either in all three or waits and then finds it gone.
     let antes: Neuron = into;
     let moved: ReturnType<typeof unionNeuron>['moved'] | null = null;
-    const saved = await updateJSON<Neuron>(this.brain.paths.neuron(into.id), current => {
-      antes = current || into;
-      const r = unionNeuron(antes, from);
-      moved = r.moved;
-      return r.neuron;
+    let intoGone = false;
+    const hecho = await withLock(this.brain.paths.neuron(from.id), async () => {
+      const fuente = await this.readStrict(from.id);
+      if (!fuente) return null;
+      const backup = await this.quarantine(fuente);
+      const saved = await this.updateNeuron(into.id, current => {
+        if (!current) { intoGone = true; return null; }
+        antes = current;
+        const r = unionNeuron(current, fuente);
+        moved = r.moved;
+        return r.neuron;
+      });
+      if (!saved || intoGone) return { backup, final: null };
+      await deleteJSON(this.brain.paths.neuron(from.id));
+      return { backup, final: saved };
     });
-    const final = (saved || into) as Neuron;
+    if (!hecho) return { from: null, into: into.id, backup: null, moved: null };
+    if (!hecho.final) throw this.deletedMeanwhile(into.id);
+    const final = hecho.final;
     await this.reindex(final);
     await this.emitAdded(antes, final);
 
-    await this.deleteNeuronFile(from.id);
+    await this.unindex(from.id);
+    const manifest = await this.brain.getManifest();
+    await this.brain.updateManifest({ total_neurons: Math.max(0, manifest.total_neurons - 1) });
 
-    return { from: from.id, into: into.id, backup, moved };
+    return { from: from.id, into: into.id, backup: hecho.backup, moved };
   }
 
   /**
@@ -2099,7 +2436,7 @@ export class Cortex {
     unmatched: string[];
     backup: string | null;
   }> {
-    const from = (await this.peek(fromRef)) || (await this.findByName(fromRef));
+    const from = await this.resolveForWrite(fromRef);
     if (!from) return { from: null, into: null, created: false, moved: 0, unmatched: targets, backup: null };
 
     const wanted = new Set(targets.map(t => t.trim().toLowerCase()).filter(Boolean));
@@ -2133,7 +2470,7 @@ export class Cortex {
     const unmatched = targets.filter(t => !usados.has(t.trim().toLowerCase()));
     if (textos.length === 0) return { from: from.id, into: null, created: false, moved: 0, unmatched, backup: null };
 
-    let into = (await this.peek(intoRef)) || (await this.findByName(intoRef));
+    let into = await this.resolveForWrite(intoRef);
     let created = false;
     if (!into) {
       into = await this.create(intoRef, from.type, options?.domain || from.domain);
@@ -2142,7 +2479,7 @@ export class Cortex {
     if (into.id === from.id) return { from: from.id, into: into.id, created: false, moved: 0, unmatched, backup: null };
 
     let antes: Neuron = into;
-    const saved = await updateJSON<Neuron>(this.brain.paths.neuron(into.id), current => {
+    const saved = await this.updateNeuron(into.id, current => {
       antes = current || into!;
       return unionNeuron(antes, parte).neuron;
     });
@@ -2190,8 +2527,9 @@ export class Cortex {
     const targetId = target.id;
     for (const n of sources) await this.quarantine(n);
 
-    const saved = await updateJSON<Neuron>(this.brain.paths.neuron(targetId), current => {
-      let acc = (current || target) as Neuron;
+    const saved = await this.updateNeuron(targetId, current => {
+      if (!current) return null;   // deleted meanwhile: never resurrect it (2.11)
+      let acc = current;
       for (const n of sources) {
         if (n.id === targetId) continue;
         const pistas = normalizeKeys(n.name.split(/[^\p{L}\p{N}]+/u).filter(w => w.length >= 4).slice(0, 8));
@@ -2204,13 +2542,26 @@ export class Cortex {
       }
       return acc;
     });
-    const final = (saved || target) as Neuron;
+    if (!saved) throw this.deletedMeanwhile(targetId);
+    const final = saved;
     await this.reindex(final);
 
     const folded: string[] = [];
     for (const n of sources) {
       if (n.id === targetId) continue;
-      await this.deleteNeuronFile(n.id);
+      // Delete only the source as it was read: one written since keeps its
+      // file (its old line is in the digest too — a duplicate, never a loss).
+      const borrada = await withLock(this.brain.paths.neuron(n.id), async () => {
+        let ahora: Neuron | null = null;
+        try { ahora = await readJSON<Neuron>(this.brain.paths.neuron(n.id)); } catch { return false; }
+        if (!ahora || JSON.stringify(ahora) !== JSON.stringify(n)) return false;
+        await deleteJSON(this.brain.paths.neuron(n.id));
+        return true;
+      });
+      if (!borrada) { skipped.push(n.id); continue; }
+      await this.unindex(n.id);
+      const manifest = await this.brain.getManifest();
+      await this.brain.updateManifest({ total_neurons: Math.max(0, manifest.total_neurons - 1) });
       folded.push(n.id);
     }
     const entries = final.facts.length + final.decisions.length + final.patterns.length
@@ -2241,7 +2592,7 @@ export class Cortex {
     }> = [];
 
     for (const id of await listJSONFiles(this.brain.paths.cortex)) {
-      const n = await readJSON<Neuron>(this.brain.paths.neuron(id));
+      const n = await this.peek(id);   // an unreadable file is skipped and listed in unreadable()
       if (!n) continue;
 
       const kinds = new Set<string>();

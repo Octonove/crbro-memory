@@ -360,21 +360,25 @@ export class Brain {
       for (const file of files) {
         if (!file.startsWith('protocol_') || !file.endsWith('.json')) continue;
 
-        const neuron = await readJSON<Neuron>(path.join(cortexDir, file));
+        // One unreadable protocol file costs that protocol only (2.11): it
+        // used to end the loop, and every protocol after it left the boot.
+        let neuron: Neuron | null = null;
+        try { neuron = await readJSON<Neuron>(path.join(cortexDir, file)); } catch { continue; }
         if (!neuron) continue;
+        const tags = Array.isArray(neuron.tags) ? neuron.tags : [];
 
         // Extract priority from tags (e.g., "priority:10")
-        const priorityTag = neuron.tags.find(t => t.startsWith('priority:'));
+        const priorityTag = tags.find(t => t.startsWith('priority:'));
         const priority = priorityTag ? parseInt(priorityTag.split(':')[1]) : 5;
 
         // Extract source from tags (e.g., "source:zero-deck")
-        const sourceTag = neuron.tags.find(t => t.startsWith('source:'));
+        const sourceTag = tags.find(t => t.startsWith('source:'));
         const source = sourceTag ? sourceTag.split(':')[1] : 'manual';
 
         // Combine the ACTIVE facts into a single instruction block. Without
         // the filter, correcting a protocol via supersedes injected both the
         // old and the new wording into every session, side by side.
-        const instructions = neuron.facts
+        const instructions = (neuron.facts || [])
           .filter(f => !f.status || f.status === 'active')
           .map(f => f.text)
           .join('\n\n');

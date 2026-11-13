@@ -110,13 +110,29 @@ const VERSIONED = [
 const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const VERSIONED_RE = new RegExp(`(?:^|[^a-z0-9.])(?:${VERSIONED.map(escape).join('|')})[\\s-]?v?\\d+(?:\\.\\d+)*(?![\\d.]*\\d)`, 'i');
 
+/**
+ * X.Y.Z as a version, but not a thousands-separated number: in Spanish
+ * "1.200.000 visitas" is a count, and it made the fact volatile (2.11).
+ * Every group after the first exactly three digits = a number, not a version.
+ */
+function semverLike(t: string): boolean {
+  const re = /(?:^|[^\d.])(\d{1,3}(?:\.\d{1,3}){2,})(?:-[0-9a-z.]+)?(?![\d.]*\d)/g;
+  for (const m of t.matchAll(re)) {
+    const grupos = m[1].split('.');
+    if (grupos.length !== 3) continue;
+    if (grupos.slice(1).every(g => g.length === 3)) continue;   // 1.200.000
+    return true;
+  }
+  return false;
+}
+
 const RULES: Array<{ reason: ShelfReason; test: (raw: string, folded: string) => boolean }> = [
   {
     reason: 'version',
     test: (_raw, t) =>
       /\bv\d+(?:\.\d+)+\b/.test(t)                                              // v2.3
       || /\b(?:version|release)\s*:?\s*v?\d+(?:\.\d+)*/.test(t)                  // version 3.6, versión 5
-      || /(?:^|[^\d.])\d{1,3}\.\d{1,3}\.\d{1,3}(?:-[0-9a-z.]+)?(?![\d.]*\d)/.test(t)  // 2.8.0, 1.4.2-beta (not a dd.mm.yyyy day)
+      || semverLike(t)                                                            // 2.8.0, 1.4.2-beta (not a dd.mm.yyyy day, not 1.200.000)
       || VERSIONED_RE.test(t),                                                    // PostgreSQL 14, Node 22
   },
   {
@@ -124,7 +140,10 @@ const RULES: Array<{ reason: ShelfReason; test: (raw: string, folded: string) =>
     test: (_raw, t) =>
       /[€$£¥]\s?\d|\d(?:[.,]\d+)?\s?[€$£¥]/.test(t)                                // $49, 29 €
       || /\b\d+(?:[.,]\d+)?\s*(?:euros?|eur|usd|dollars?|dolares|libras|pounds?|gbp|mxn|pesos)\b/.test(t)
-      || /\d[^.\n]{0,40}(?:\bal mes\b|\bpor mes\b|\/mes\b|\bper month\b|\ba month\b|\/month\b|\/mo\b|\bal ano\b|\bpor ano\b|\bper year\b|\/year\b|\/yr\b|\bmensuales?\b|\banuales?\b)/.test(t)
+      // A number right before the period ("29 al mes", "29/mes", "9.99 per month"). Not
+      // "3 informes mensuales" or "4 informes al mes" (2.11): a count of things is no
+      // price, and with money in the sentence the currency rules above already fire.
+      || /\d(?:[.,]\d+)?\s?(?:k\s?)?(?:al mes\b|por mes\b|\/mes\b|per month\b|a month\b|\/month\b|\/mo\b|al ano\b|por ano\b|per year\b|\/year\b|\/yr\b)/.test(t)
       || /\b(?:price|pricing|precio|precios|tarifa|tarifas|cuesta|cuestan|cost|costs|fee|cuota)\b[^.\n]{0,30}\d/.test(t),
   },
   {
@@ -158,7 +177,9 @@ const RULES: Array<{ reason: ShelfReason; test: (raw: string, folded: string) =>
       /\b[A-Z][A-Z0-9]*_[A-Z0-9_]+\s*=\s*\S+/.test(raw)                            // KEY_NAME=value
       || /(?:^|\s)--[a-z][\w-]*=\S+/.test(raw)                                     // --max-old-space-size=4096
       || /\b[a-z][a-z0-9]*_[a-z0-9_]+\b\s*(?:=|:|de|a|en|to|at|is|es)?\s*\d/.test(t)  // memory_limit de 512M
-      || /\b(?:set to|configured (?:to|as|at)|configurad[oa]s? (?:a|en|como)|fijad[oa]s? (?:a|en)|establecid[oa]s? (?:a|en)|timeout|time-out|ttl|rate limit|limit|limite|max|maximo|maximum|minimo|minimum|retries|reintentos|threshold|umbral|batch size|pool size|flag)\b[^.\n]{0,25}?\d/.test(t),
+      || /\b(?:set to|configured (?:to|as|at)|configurad[oa]s? (?:a|en|como)|fijad[oa]s? (?:a|en)|establecid[oa]s? (?:a|en)|timeout|time-out|ttl|rate limit|limit|limite|maximo|maximum|minimo|minimum|retries|reintentos|threshold|umbral|batch size|pool size|flag)\b[^.\n]{0,25}?\d/.test(t)
+      // "max" only as written in lower case: "Max Planck nacio en 1858" is a name (2.11).
+      || /\b(?:max|MAX)\b[^.\n]{0,25}?\d/.test(raw),
   },
 ];
 

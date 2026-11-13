@@ -1,8 +1,10 @@
 // ─── CRBRO Synapses Engine ───────────────────────────────────────
 // Connection management between neurons with strength decay
 
-import { readJSON, writeJSON, listJSONFiles, deleteJSON, now } from '../utils/fs.js';
+import { readJSON, updateJSON, listJSONFiles, deleteJSON, now, CorruptJSONError } from '../utils/fs.js';
+import { withLock } from '../utils/lock.js';
 import { synapseId } from '../utils/ids.js';
+import { writeQuarantine } from './quarantine.js';
 import type { Brain } from './brain.js';
 import type { Synapse, SynapseType, Neuron } from '../types/index.js';
 
@@ -12,11 +14,38 @@ function clampStrength(value: number): number {
   return Math.round(v * 1000) / 1000;
 }
 
+const DAY_MS = 86_400_000;
+
+/**
+ * Weekly decay factor by how long the link has been idle. Applied for the
+ * time actually elapsed since the last decay (2.11): until then the same
+ * factor hit on EVERY maintenance run, so a brain maintained daily pruned an
+ * idle link in a week and one maintained monthly in eight months.
+ */
+export function weeklyDecayFactor(idleDays: number): number {
+  if (idleDays > 90) return 0.8;
+  if (idleDays > 30) return 0.9;
+  if (idleDays > 7) return 0.95;
+  return 1;
+}
+
+/** Strength after `elapsedDays` of decay at the rate an `idleDays` idle link gets. */
+export function decayedStrength(strength: number, idleDays: number, elapsedDays: number): number {
+  const f = weeklyDecayFactor(idleDays);
+  if (f === 1 || elapsedDays <= 0) return strength;
+  return Math.round(strength * Math.pow(f, elapsedDays / 7) * 1000) / 1000;
+}
+
 export class Synapses {
   constructor(private brain: Brain) {}
 
   /**
    * Create or strengthen a synapse between two neurons.
+   *
+   * Every write goes through the same locked read-modify-write as the rest of
+   * the brain (2.11). Before, the synapse file and BOTH neurons were read and
+   * rewritten without a lock: a learn landing on a 1 MB neuron while
+   * consolidate linked it lost its fact, silently.
    */
   async connect(
     fromId: string,
@@ -37,44 +66,47 @@ export class Synapses {
     }
   ): Promise<{ synapse: Synapse; action: 'created' | 'strengthened' }> {
     const id = synapseId(fromId, toId);
-    let synapse = await readJSON<Synapse>(this.brain.paths.synapse(id));
-    let action: 'created' | 'strengthened';
+    let action = 'strengthened' as 'created' | 'strengthened';
     const absoluta = typeof options?.strength === 'number' ? clampStrength(options.strength) : undefined;
 
-    if (synapse) {
-      // Strengthen existing synapse
-      synapse.strength = absoluta !== undefined ? absoluta : Math.min(1.0, synapse.strength + 0.1);
-      synapse.co_access_count += 1;
-      synapse.last_co_access = now();
-      if (context && !(options?.keepExistingContext && synapse.context)) {
-        synapse.context = context;
+    const synapse = await updateJSON<Synapse>(this.brain.paths.synapse(id), existing => {
+      const cuando = now();
+      if (existing) {
+        // Strengthen existing synapse
+        existing.strength = absoluta !== undefined ? absoluta : Math.min(1.0, existing.strength + 0.1);
+        existing.co_access_count += 1;
+        existing.last_co_access = cuando;
+        // A fresh co-access restarts the decay clock.
+        existing.decayed_at = cuando;
+        if (context && !(options?.keepExistingContext && existing.context)) {
+          existing.context = context;
+        }
+        action = 'strengthened';
+        return existing;
       }
-      action = 'strengthened';
-    } else {
-      // Create new synapse
-      synapse = {
+      action = 'created';
+      return {
         id,
         nodes: [fromId, toId],
         strength: absoluta !== undefined ? absoluta : (options?.initialStrength ?? 0.5),
         type,
         context: context || '',
         co_access_count: 1,
-        last_co_access: now(),
+        last_co_access: cuando,
+        decayed_at: cuando,
       };
-      action = 'created';
+    });
 
-      // Update manifest
+    if (action === 'created') {
       const manifest = await this.brain.getManifest();
       await this.brain.updateManifest({ total_synapses: manifest.total_synapses + 1 });
     }
-
-    await writeJSON(this.brain.paths.synapse(id), synapse);
 
     // Update neuron connection lists
     await this.addConnectionToNeuron(fromId, toId);
     await this.addConnectionToNeuron(toId, fromId);
 
-    return { synapse, action };
+    return { synapse: synapse as Synapse, action };
   }
 
   /**
@@ -83,10 +115,14 @@ export class Synapses {
    */
   async disconnect(fromId: string, toId: string): Promise<{ synapse_id: string; removed: boolean }> {
     const id = synapseId(fromId, toId);
-    const synapse = await readJSON<Synapse>(this.brain.paths.synapse(id));
+    const file = this.brain.paths.synapse(id);
+    const synapse = await withLock(file, async () => {
+      const s = await readJSON<Synapse>(file).catch(() => null);
+      if (!s) return null;
+      await deleteJSON(file);
+      return s;
+    });
     if (!synapse) return { synapse_id: id, removed: false };
-
-    await deleteJSON(this.brain.paths.synapse(id));
 
     // Remove from neuron connection lists. Use the nodes the file recorded,
     // not the ids the caller passed: the id is order-free and prefix-free, so
@@ -107,11 +143,14 @@ export class Synapses {
    */
   async setStrength(fromId: string, toId: string, strength: number): Promise<Synapse | null> {
     const id = synapseId(fromId, toId);
-    const synapse = await readJSON<Synapse>(this.brain.paths.synapse(id));
-    if (!synapse) return null;
-    synapse.strength = clampStrength(strength);
-    await writeJSON(this.brain.paths.synapse(id), synapse);
-    return synapse;
+    let found = false;
+    const s = await updateJSON<Synapse>(this.brain.paths.synapse(id), current => {
+      if (!current) return null;
+      found = true;
+      current.strength = clampStrength(strength);
+      return current;
+    });
+    return found ? s : null;
   }
 
   /**
@@ -121,7 +160,7 @@ export class Synapses {
   async removeAllFor(neuronId: string): Promise<number> {
     let removed = 0;
     for (const id of await listJSONFiles(this.brain.paths.synapses)) {
-      const synapse = await readJSON<Synapse>(this.brain.paths.synapse(id));
+      const synapse = await this.readSynapse(id);
       if (!synapse || !synapse.nodes.includes(neuronId)) continue;
       const r = await this.disconnect(synapse.nodes[0], synapse.nodes[1]);
       if (r.removed) removed++;
@@ -142,7 +181,7 @@ export class Synapses {
     if (fromId === intoId) return out;
 
     for (const id of await listJSONFiles(this.brain.paths.synapses)) {
-      const synapse = await readJSON<Synapse>(this.brain.paths.synapse(id));
+      const synapse = await this.readSynapse(id);
       if (!synapse || !synapse.nodes.includes(fromId)) continue;
       const other = synapse.nodes[0] === fromId ? synapse.nodes[1] : synapse.nodes[0];
 
@@ -156,22 +195,21 @@ export class Synapses {
       const nuevoId = synapseId(intoId, other);
       // Ids drop the type prefix, so two neurons differing only by prefix
       // yield the same synapse id: then the file stays, only the nodes move.
-      const existente = nuevoId === id ? null : await readJSON<Synapse>(this.brain.paths.synapse(nuevoId));
-      if (existente) {
-        existente.strength = clampStrength(Math.max(existente.strength, synapse.strength));
-        existente.co_access_count = (existente.co_access_count || 0) + (synapse.co_access_count || 0);
-        if ((synapse.last_co_access || '') > (existente.last_co_access || '')) {
-          existente.last_co_access = synapse.last_co_access;
+      let fusion = false;
+      await updateJSON<Synapse>(this.brain.paths.synapse(nuevoId), existente => {
+        if (existente && nuevoId !== id) {
+          fusion = true;
+          existente.strength = clampStrength(Math.max(existente.strength, synapse.strength));
+          existente.co_access_count = (existente.co_access_count || 0) + (synapse.co_access_count || 0);
+          if ((synapse.last_co_access || '') > (existente.last_co_access || '')) {
+            existente.last_co_access = synapse.last_co_access;
+          }
+          return existente;
         }
-        await writeJSON(this.brain.paths.synapse(nuevoId), existente);
-        await deleteJSON(this.brain.paths.synapse(id));
-        out.merged++;
-      } else {
-        const movido: Synapse = { ...synapse, id: nuevoId, nodes: [intoId, other] };
-        await writeJSON(this.brain.paths.synapse(nuevoId), movido);
-        if (nuevoId !== id) await deleteJSON(this.brain.paths.synapse(id));
-        out.moved++;
-      }
+        return { ...synapse, id: nuevoId, nodes: [intoId, other] };
+      });
+      if (nuevoId !== id) await deleteJSON(this.brain.paths.synapse(id));
+      if (fusion) out.merged++; else out.moved++;
 
       await this.removeConnectionFromNeuron(other, fromId);
       await this.addConnectionToNeuron(other, intoId);
@@ -209,15 +247,16 @@ export class Synapses {
     }> = [];
 
     for (const id of ids) {
-      const synapse = await readJSON<Synapse>(this.brain.paths.synapse(id));
+      const synapse = await this.readSynapse(id);
       if (!synapse) continue;
       if (!synapse.nodes.includes(neuronId)) continue;
       if (minStrength && synapse.strength < minStrength) continue;
 
       const targetId = synapse.nodes[0] === neuronId ? synapse.nodes[1] : synapse.nodes[0];
 
-      // Get target neuron name
-      const targetNeuron = await readJSON<Neuron>(this.brain.paths.neuron(targetId));
+      // Get target neuron name. An unreadable neighbour shows by its id.
+      let targetNeuron: Neuron | null = null;
+      try { targetNeuron = await readJSON<Neuron>(this.brain.paths.neuron(targetId)); } catch { /* corrupt */ }
       const targetName = targetNeuron?.name || targetId;
 
       connections.push({
@@ -243,35 +282,56 @@ export class Synapses {
   }
 
   /**
-   * Decay all synapses based on time since last co-access.
-   * Returns number of pruned synapses (strength fell below threshold).
+   * Decay all synapses by the time elapsed since each was last decayed, and
+   * prune the ones that fall below the threshold (a quarantine copy first).
+   * Returns how many were pruned — or, with dryRun, how many would be, with
+   * nothing written.
+   *
+   * A synapse written before 2.11 has no decayed_at: the first pass only
+   * stamps it, so upgrading never applies a backlog of decay at once.
    */
-  async decay(pruneThreshold: number = 0.05): Promise<number> {
+  async decay(pruneThreshold: number = 0.05, options?: { dryRun?: boolean; now?: Date; skipNodes?: ReadonlySet<string> }): Promise<number> {
     const ids = await listJSONFiles(this.brain.paths.synapses);
+    const ahora = options?.now ?? new Date();
+    const ahoraIso = ahora.toISOString();
     let pruned = 0;
 
     for (const id of ids) {
-      const synapse = await readJSON<Synapse>(this.brain.paths.synapse(id));
-      if (!synapse) continue;
+      const file = this.brain.paths.synapse(id);
+      const leida = await this.readSynapse(id);
+      if (!leida) continue;
+      // An archived neuron's links wait for it, untouched (2.11).
+      if (options?.skipNodes && leida.nodes.some(n => options.skipNodes!.has(n))) continue;
+      const idle = (ahora.getTime() - new Date(leida.last_co_access).getTime()) / DAY_MS;
+      const desde = leida.decayed_at ? Date.parse(leida.decayed_at) : NaN;
+      const elapsed = Number.isFinite(desde) ? (ahora.getTime() - desde) / DAY_MS : 0;
+      const nueva = decayedStrength(leida.strength, idle, elapsed);
 
-      // Calculate decay
-      const lastAccess = new Date(synapse.last_co_access).getTime();
-      const diffDays = (Date.now() - lastAccess) / (1000 * 60 * 60 * 24);
-
-      let decayFactor = 1.0;
-      if (diffDays > 90) decayFactor = 0.8;
-      else if (diffDays > 30) decayFactor = 0.9;
-      else if (diffDays > 7) decayFactor = 0.95;
-
-      synapse.strength = Math.round(synapse.strength * decayFactor * 1000) / 1000;
-
-      if (synapse.strength < pruneThreshold) {
-        // Prune weak synapse: same path as an explicit disconnect.
-        const r = await this.disconnect(synapse.nodes[0], synapse.nodes[1]);
+      if (nueva < pruneThreshold) {
+        if (options?.dryRun) { pruned++; continue; }
+        // Prune weak synapse: same path as an explicit disconnect, after a
+        // copy — a link that took months to build is not deleted outright.
+        await writeQuarantine(this.brain.paths.quarantine, leida.id || id, { ...leida, strength: nueva, pruned_at: ahoraIso }, 'whole');
+        const r = await this.disconnect(leida.nodes[0], leida.nodes[1]);
         if (r.removed) pruned++;
-      } else {
-        await writeJSON(this.brain.paths.synapse(id), synapse);
+        continue;
       }
+      if (options?.dryRun) continue;
+      // Write only when something changes: the strength, or the first stamp.
+      // Unchanged, decayed_at stays where it was and the elapsed time keeps
+      // accumulating, so slow decay is not rounded away run after run.
+      if (nueva === leida.strength && leida.decayed_at) continue;
+      await updateJSON<Synapse>(file, current => {
+        if (!current) return null;
+        // Re-derived from the fresh read under the lock: a strengthen that
+        // landed meanwhile restarted the clock and is not undone.
+        const idleNow = (ahora.getTime() - new Date(current.last_co_access).getTime()) / DAY_MS;
+        const d = current.decayed_at ? Date.parse(current.decayed_at) : NaN;
+        const el = Number.isFinite(d) ? (ahora.getTime() - d) / DAY_MS : 0;
+        current.strength = Math.max(pruneThreshold, decayedStrength(current.strength, idleNow, el));
+        current.decayed_at = ahoraIso;
+        return current;
+      });
     }
 
     return pruned;
@@ -287,21 +347,42 @@ export class Synapses {
 
   // ─── Private helpers ────────────────────────────────────────────
 
-  private async addConnectionToNeuron(neuronId: string, connectedId: string): Promise<void> {
-    const neuron = await readJSON<Neuron>(this.brain.paths.neuron(neuronId));
-    if (!neuron) return;
-
-    if (!neuron.connections.includes(connectedId)) {
-      neuron.connections.push(connectedId);
-      await writeJSON(this.brain.paths.neuron(neuronId), neuron);
+  /** A synapse file, or null when absent or unreadable (the integrity check names those). */
+  private async readSynapse(id: string): Promise<Synapse | null> {
+    try {
+      const s = await readJSON<Synapse>(this.brain.paths.synapse(id));
+      return s && Array.isArray(s.nodes) && s.nodes.length === 2 ? s : null;
+    } catch {
+      return null;
     }
   }
 
-  private async removeConnectionFromNeuron(neuronId: string, connectedId: string): Promise<void> {
-    const neuron = await readJSON<Neuron>(this.brain.paths.neuron(neuronId));
-    if (!neuron) return;
+  /**
+   * Locked, and never creating: a neuron deleted meanwhile is not brought
+   * back by a connection list. A corrupt neuron file throws — linking to it
+   * would mean rewriting a file nobody can read.
+   */
+  private async addConnectionToNeuron(neuronId: string, connectedId: string): Promise<void> {
+    await updateJSON<Neuron>(this.brain.paths.neuron(neuronId), current => {
+      if (!current) return null;
+      if (!Array.isArray(current.connections)) current.connections = [];
+      if (current.connections.includes(connectedId)) return null;
+      current.connections.push(connectedId);
+      return current;
+    });
+  }
 
-    neuron.connections = neuron.connections.filter(c => c !== connectedId);
-    await writeJSON(this.brain.paths.neuron(neuronId), neuron);
+  /** Locked; a missing or unreadable neuron is left alone, never a reason to stop a disconnect. */
+  private async removeConnectionFromNeuron(neuronId: string, connectedId: string): Promise<void> {
+    try {
+      await updateJSON<Neuron>(this.brain.paths.neuron(neuronId), current => {
+        if (!current) return null;
+        const antes = (current.connections || []).length;
+        current.connections = (current.connections || []).filter(c => c !== connectedId);
+        return current.connections.length === antes ? null : current;
+      });
+    } catch (err) {
+      if (!(err instanceof CorruptJSONError)) throw err;
+    }
   }
 }

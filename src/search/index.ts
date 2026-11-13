@@ -24,6 +24,7 @@ import { queryTerms, variants, createIndexTokenizer } from './tokenize.js';
 import { SemanticIndex, semanticEnabled, semanticModel, type SemanticHit } from './semantic.js';
 import { entryId } from '../sync/ops.js';
 import { stalenessContextOf, factStaleness, entryStaleness, type StalenessContext, type StaleInfo } from '../engine/shelf.js';
+import { readHeatState } from '../engine/heat.js';
 import type { Brain } from '../engine/brain.js';
 import type { Neuron, SearchResult, Fact } from '../types/index.js';
 
@@ -722,6 +723,7 @@ export class SearchEngine {
 
     const ids = await listJSONFiles(this.brain.paths.cortex);
     const vivos = new Set(ids);
+    let conCalor: ((n: Neuron) => Neuron) | null = null;
     for (const id of ids) {
       // Unchanged AND already in the index. A neuron with no chunks at all is
       // not indexed, whatever its date says: every neuron has at least its
@@ -733,7 +735,8 @@ export class SearchEngine {
       try {
         const neuron = await readJSON<Neuron>(this.brain.paths.neuron(id));
         if (!neuron) continue;
-        await this.reindexInPlace(neuron);
+        conCalor ??= await this.heatNow();
+        await this.reindexInPlace(conCalor(neuron));
         this.indexedMtime.set(id, mtime);
         reindexed++;
       } catch { /* unreadable: leave what we have */ }
@@ -797,6 +800,20 @@ export class SearchEngine {
     if (this.rebuilding) await this.rebuilding.catch(() => undefined);
   }
 
+  /**
+   * Heat as the derived heat state has it (2.11): neuron files are no longer
+   * rewritten when their heat moves, so the value stored in a file is only a
+   * fallback for a neuron the state does not know yet.
+   */
+  private async heatNow(): Promise<(n: Neuron) => Neuron> {
+    const estado = await readHeatState(this.brain);
+    const calor = estado?.neurons || {};
+    return (n: Neuron) => {
+      const h = calor[n.id]?.heat;
+      return typeof h === 'number' && h !== n.heat ? { ...n, heat: h } : n;
+    };
+  }
+
   private async doRebuild(): Promise<number> {
     this.syncedAt = Date.now();
     this.lastFullCheck = this.syncedAt;
@@ -807,6 +824,7 @@ export class SearchEngine {
     this.indexedMtime.clear();
 
     const ids = await listJSONFiles(this.brain.paths.cortex);
+    const conCalor = await this.heatNow();
 
     for (const id of ids) {
       try {
@@ -814,7 +832,7 @@ export class SearchEngine {
         const mtime = await fileMtime(this.brain.paths.neuron(id));
         const neuron = await readJSON<Neuron>(this.brain.paths.neuron(id));
         if (!neuron) continue;
-        await this.insertNeuronChunks(neuron);
+        await this.insertNeuronChunks(conCalor(neuron));
         this.indexedMtime.set(id, mtime);
       } catch {
         // Skip unreadable neuron, keep going.

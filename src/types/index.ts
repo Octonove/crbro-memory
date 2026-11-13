@@ -202,6 +202,8 @@ export interface Synapse {
   context: string;
   co_access_count: number;
   last_co_access: string;    // ISO date
+  /** When decay was last applied (2.11). Decay follows elapsed time, not how often maintenance ran. */
+  decayed_at?: string;
 }
 
 // ─── Hippocampus (Sessions) ──────────────────────────────────────

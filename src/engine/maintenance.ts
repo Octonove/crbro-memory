@@ -1,8 +1,10 @@
 // ─── CRBRO Maintenance Engine ────────────────────────────────────
 // Pruning, archiving, integrity checks, repair, and consolidation
 
-import { readJSON, updateJSON, listJSONFiles, moveFile, deleteJSON, fileExists, now, today } from '../utils/fs.js';
+import { readJSON, updateJSON, listJSONFiles, moveFile, deleteJSON, fileExists, now, today, CorruptJSONError } from '../utils/fs.js';
 import { sweepStaleLocks } from '../utils/lock.js';
+import { pruneQuarantine, quarantineDays, writeQuarantine, type QuarantineEntries } from './quarantine.js';
+import type { UnreadableNeuron } from './cortex.js';
 import { entryId } from '../sync/ops.js';
 import { inferEntryDay, isDayPrecision, datesInText } from './dates.js';
 import { fold } from '../search/tokenize.js';
@@ -72,7 +74,58 @@ export interface MaintenanceReport {
   compactable_neurons: number;
   /** Neurons folded by this run (0 unless compact:true and not a dry run). */
   compacted_neurons: number;
+  /**
+   * 2.11: neuron files that exist and do not parse. Every step skipped them
+   * and went on; each comes with its path and where a good copy may be.
+   */
+  unreadable_neurons: UnreadableNeuron[];
+  /** 2.11: the ids archive:true would move (dry run: all of them; otherwise at most 20). Protocols and shared neurons are never among them. */
+  archivable_ids: string[];
+  /** 2.11: synapses the decay would prune now (dry run only; a real run reports pruned_synapses). */
+  prunable_synapses?: number;
+  /** 2.11: quarantine copies older than CRBRO_QUARANTINE_DAYS removed by this run (dry run: that would be). */
+  quarantine_pruned: number;
+  /** 2.11: the retention in force, in days; 0 keeps the quarantine forever. */
+  quarantine_days: number;
+  /** 2.11, dry run only: a suggested partition for each split candidate (read-only hygiene report). */
+  split_partitions?: SplitPartition[];
+  /** 2.11, dry run only: neurons that look like they belong to another (read-only hygiene report). */
+  merge_candidates?: MergeCandidates;
+  /** 2.11, dry run only: large neurons with no summary, biggest first (read-only hygiene report). */
+  summary_missing?: { total: number; neurons: Array<{ neuron_id: string; name: string; entries: number }> };
   notes: string[];
+}
+
+export interface SplitPartition {
+  neuron_id: string;
+  name: string;
+  entries: number;
+  /** Each live entry assigned to the first group whose word it contains; `rest` stays. */
+  parts: Array<{ term: string; suggested_name: string; entries: number; entry_ids: string[] }>;
+  rest: number;
+}
+
+export interface MergeCandidates {
+  /** Neurons with one live entry and nothing else, oldest first (at most 30). */
+  single_entry: Array<{ neuron_id: string; name: string; domain: string; created: string; preview: string }>;
+  single_entry_total: number;
+  /** Ids that carry their type prefix twice ("project_project_x"), with the id they were meant to be. */
+  doubled_prefix: Array<{ neuron_id: string; meant: string; meant_exists: boolean }>;
+}
+
+/** Paging through every stale entry (crbro_maintenance stale_list). */
+export interface StalePage {
+  total: number;
+  offset: number;
+  returned: number;
+  has_more: boolean;
+  entries: StaleEntry[];
+}
+
+export interface StaleReviewResult {
+  action: 'verify' | 'superseded' | 'retracted';
+  done: Array<{ neuron_id: string; entry_id: string }>;
+  unmatched: Array<{ neuron_id: string; entry_id: string; why: string }>;
 }
 
 export interface ExpiredEntry {
@@ -135,6 +188,10 @@ const SPLIT_MAX_CANDIDATES = 8;
 const SPLIT_GROUPS = 5;
 const EXPIRED_SAMPLE = 10;
 const STALE_SAMPLE = 10;
+/** Hygiene report: a neuron this big with no summary is worth two lines describing it. */
+const SUMMARY_MISSING_MIN = 20;
+/** Entry ids listed per suggested part; the count is always whole. */
+const PARTITION_IDS = 50;
 /** Too common to name a subtopic. Short on purpose: the share bounds below do most of the work. */
 const SPLIT_STOP = new Set(('para como pero este esta estos estas desde hasta entre sobre cuando donde porque tambien todos todas cada '
   + 'tiene tienen hace hacer puede pueden debe deben usar solo antes despues ahora siempre nunca mismo misma nueva nuevo '
@@ -195,8 +252,14 @@ export class Maintenance {
       compact_groups: [],
       compactable_neurons: 0,
       compacted_neurons: 0,
+      unreadable_neurons: [],
+      archivable_ids: [],
+      quarantine_pruned: 0,
+      quarantine_days: quarantineDays(),
       notes: [],
     };
+    this.ilegibles.clear();
+    const compartidas = options?.sharedIds ?? new Set<string>();
 
     // 0. Bring neurons back from the archive, before anything else could
     // archive them again in the same pass.
@@ -237,20 +300,25 @@ export class Maintenance {
     // searchable and has no restore path. One routine call would have swallowed
     // 87% of the memory. Heat decays with time, so a brain that is merely old
     // looks identical to a brain that is worthless.
-    report.archivable_neurons = await this.countColdNeurons(recuperados);
+    // Protocols are injected at every boot and shared neurons come back on
+    // the next sync: neither is ever archived (2.11), however cold it looks.
+    const frias = await this.coldNeuronIds(recuperados, compartidas);
+    report.archivable_neurons = frias.length;
+    report.archivable_ids = dryRun ? frias : frias.slice(0, 20);
     if (options?.archive && !dryRun) {
-      report.archived_neurons = await this.archiveColdNeurons(recuperados);
+      report.archived_neurons = await this.archiveColdNeurons(recuperados, compartidas);
       report.notes.push(
         `Archived ${report.archived_neurons} cold neurons to ${this.brain.paths.archives}. ` +
-        'They are no longer searchable; pass unarchive:[ids] (or "all") to bring them back.'
+        'They are no longer searchable; their synapses and connections are kept. Pass unarchive:[ids] (or "all") to bring them back.'
       );
     } else if (report.archivable_neurons > 0) {
       report.notes.push(
-        `${report.archivable_neurons} neurons are cold enough to archive. Nothing was archived: ` +
+        `${report.archivable_neurons} neurons are cold enough to archive (archivable_ids${dryRun ? '' : ', first 20; dry_run lists all'}). Nothing was archived: ` +
         'pass archive:true if you have reviewed the list and really want them out of the way.'
       );
     }
-    report.archives_count = (await listJSONFiles(this.brain.paths.archives)).length;
+    const archivadas = await listJSONFiles(this.brain.paths.archives);
+    report.archives_count = archivadas.length;
 
     // 2b. Miner leftovers.
     //
@@ -277,23 +345,40 @@ export class Maintenance {
       report.stale_locks_swept = await sweepStaleLocks(this.brain.paths.cortex);
     }
 
-    // 3. Decay and prune weak synapses
+    // 3. Decay and prune weak synapses, by elapsed time. The synapses of an
+    // archived neuron are left alone: it is out of the way, not gone.
+    const enArchivo = new Set(archivadas);
     if (!dryRun) {
-      report.pruned_synapses = await this.synapses.decay(0.05);
+      report.pruned_synapses = await this.synapses.decay(0.05, { skipNodes: enArchivo });
+    } else {
+      report.prunable_synapses = await this.synapses.decay(0.05, { dryRun: true, skipNodes: enArchivo });
+    }
+
+    // 3b. Quarantine retention (2.11): copies older than CRBRO_QUARANTINE_DAYS.
+    try {
+      const q = await pruneQuarantine(this.brain.paths.quarantine, { days: report.quarantine_days, dryRun });
+      report.quarantine_pruned = q.pruned;
+      if (q.pruned > 0) {
+        report.notes.push(dryRun
+          ? `${q.pruned} quarantine cop${q.pruned === 1 ? 'y is' : 'ies are'} older than ${q.days} days and would be removed (CRBRO_QUARANTINE_DAYS; 0 keeps them forever).`
+          : `Removed ${q.pruned} quarantine cop${q.pruned === 1 ? 'y' : 'ies'} older than ${q.days} days (CRBRO_QUARANTINE_DAYS; 0 keeps them forever).`);
+      }
+    } catch (err) {
+      report.notes.push(`Quarantine retention skipped: ${(err as Error).message}`);
     }
 
     // 4. Integrity check
-    report.integrity_issues = await this.checkIntegrity();
+    report.integrity_issues = await this.checkIntegrity(enArchivo);
     report.repairable = report.integrity_issues.length;
 
     // 4b. Repair what the check found. Opt-in and never in a dry run.
     if (options?.repair && !dryRun) {
-      report.repairs = await this.repair();
+      report.repairs = await this.repair(enArchivo);
       report.repaired = report.repairs.length;
       if (report.repaired > 0) {
         report.notes.push(`Repaired ${report.repaired} integrity issue(s); see repairs[].`);
         // What is left after the fixes, so the report does not list issues that are gone.
-        report.integrity_issues = await this.checkIntegrity();
+        report.integrity_issues = await this.checkIntegrity(enArchivo);
       }
     } else if (report.repairable > 0) {
       report.notes.push(
@@ -345,10 +430,16 @@ export class Maintenance {
     // 4d. What the brain still says as current although its own words put a
     // date on it, and what has outgrown a single read. Read-only, both: what
     // to do with a line is a judgement, and maintenance does not make it.
-    const revision = await this.reviewEntries();
+    const revision = await this.reviewEntries({ hygiene: dryRun });
     report.expired_entries = revision.expired;
     report.expired_sample = revision.sample;
     report.split_candidates = revision.splits;
+    if (revision.hygiene) {
+      // The hygiene report (2.11): read-only suggestions, dry run only.
+      report.split_partitions = revision.hygiene.split_partitions;
+      report.merge_candidates = revision.hygiene.merge_candidates;
+      report.summary_missing = revision.hygiene.summary_missing;
+    }
     if (revision.stale) {
       report.stale_entries = revision.stale.count;
       report.stale_sample = revision.stale.sample;
@@ -378,7 +469,7 @@ export class Maintenance {
     // are settled and do not count.
     const sinDisparador: string[] = [];
     for (const id of await listJSONFiles(this.brain.paths.cortex)) {
-      const n = await readJSON<Neuron>(this.brain.paths.neuron(id));
+      const n = await this.readNeuron(id);
       if (!n || !n.debts || n.debts.length === 0) continue;
       const vivas = n.debts.filter(d => !n.entry_status?.[entryId(d)]);
       if (vivas.length === 0) continue;
@@ -420,7 +511,34 @@ export class Maintenance {
       });
     }
 
+    // 8. What no step could read (2.11): one bad file used to abort the
+    // whole run before the integrity check could even name it.
+    for (const id of this.heatEngine.lastUnreadable) this.ilegibles.add(id);
+    for (const id of this.ilegibles) {
+      try { await readJSON<Neuron>(this.brain.paths.neuron(id)); continue; } catch { /* still unreadable */ }
+      report.unreadable_neurons.push({ id, path: this.brain.paths.neuron(id), error: 'does not parse as JSON', recovery: await this.cortex.recoveryHint(id) });
+    }
+    report.unreadable_neurons.sort((a, b) => (a.id < b.id ? -1 : 1));
+    if (report.unreadable_neurons.length > 0) {
+      report.notes.push(
+        `${report.unreadable_neurons.length} neuron file(s) could not be read and were skipped by every step (unreadable_neurons, ` +
+        'each with where a good copy may be). Nothing in them was changed.');
+    }
+
     return report;
+  }
+
+  /** Neuron files a step met and could not parse, this run. */
+  private ilegibles = new Set<string>();
+
+  /** A tolerant read for the passes over the cortex: a corrupt file is noted and skipped. */
+  private async readNeuron(id: string): Promise<Neuron | null> {
+    try {
+      return await readJSON<Neuron>(this.brain.paths.neuron(id));
+    } catch {
+      this.ilegibles.add(id);
+      return null;
+    }
   }
 
   /**
@@ -451,6 +569,10 @@ export class Maintenance {
     topics_logged: string[];
     /** Ids in options.topicsTouched that name no neuron — dropped, not logged. */
     topics_unknown: string[];
+    /** 2.11: quarantine copies older than CRBRO_QUARANTINE_DAYS removed by this consolidate. */
+    quarantine_pruned: number;
+    /** 2.11: neuron files the heat pass could not parse (skipped; crbro_maintenance says where a good copy is). */
+    unreadable_neurons?: string[];
   }> {
     // Persist search index
     await this.searchEngine.persist();
@@ -518,8 +640,15 @@ export class Maintenance {
     // reported last_session: null forever.
     await this.prefrontal.setLastSession(log.session_id);
 
-    // Recalculate heat
+    // Recalculate heat. Since 2.11 it re-reads only the neurons whose file
+    // changed since the last pass, and never rewrites a neuron for it.
     await this.heatEngine.recalculate();
+
+    // Quarantine retention (2.11). Never fatal: a consolidate must log.
+    let quarantinePruned = 0;
+    try {
+      quarantinePruned = (await pruneQuarantine(this.brain.paths.quarantine, { days: quarantineDays() })).pruned;
+    } catch { /* retention is housekeeping */ }
 
     // Update manifest
     await this.brain.updateManifest({
@@ -542,6 +671,8 @@ export class Maintenance {
       redacted: log.redacted,
       topics_logged: topicosLog,
       topics_unknown: desconocidos,
+      quarantine_pruned: quarantinePruned,
+      ...(this.heatEngine.lastUnreadable.length ? { unreadable_neurons: [...this.heatEngine.lastUnreadable] } : {}),
     };
   }
 
@@ -559,7 +690,7 @@ export class Maintenance {
   private async countBoilerplate(): Promise<number> {
     let n = 0;
     for (const id of await this.cortex.allIds()) {
-      const neuron = await readJSON<Neuron>(this.brain.paths.neuron(id));
+      const neuron = await this.readNeuron(id);
       if (!neuron) continue;
       n += (neuron.facts || []).filter(f => this.isBoilerplate(f.text, f.source)).length;
     }
@@ -569,66 +700,83 @@ export class Maintenance {
   private async purgeBoilerplate(): Promise<number> {
     let removed = 0;
     for (const id of await this.cortex.allIds()) {
-      await updateJSON<Neuron>(this.brain.paths.neuron(id), current => {
-        if (!current) return null;
-        const antes = (current.facts || []).length;
-        current.facts = (current.facts || []).filter(f => !this.isBoilerplate(f.text, f.source));
-        const quitados = antes - current.facts.length;
-        if (quitados === 0) return null;
-        removed += quitados;
-        return current;
-      });
+      try {
+        await updateJSON<Neuron>(this.brain.paths.neuron(id), async current => {
+          if (!current) return null;
+          const fuera = (current.facts || []).filter(f => this.isBoilerplate(f.text, f.source));
+          if (fuera.length === 0) return null;
+          // What leaves goes to quarantine first (2.11), like every other
+          // removal: purge used to be the one deletion with no way back.
+          const q: QuarantineEntries = {
+            quarantine_format: 2, kind: 'entries', neuron_id: current.id, name: current.name, type: current.type,
+            domain: current.domain, taken_at: now(), facts: fuera, decisions: [], patterns: [], preferences: [], errors: [], debts: [],
+          };
+          await writeQuarantine(this.brain.paths.quarantine, current.id, q, 'entries');
+          current.facts = (current.facts || []).filter(f => !this.isBoilerplate(f.text, f.source));
+          removed += fuera.length;
+          return current;
+        });
+      } catch (err) {
+        if (err instanceof CorruptJSONError) { this.ilegibles.add(id); continue; }
+        throw err;
+      }
     }
     if (removed > 0) await this.searchEngine.rebuild();
     return removed;
   }
 
-  /** Cold: heat below 0.05 and untouched for more than 90 days. */
-  private isCold(neuron: Neuron): boolean {
+  /**
+   * Cold: heat below 0.05 and untouched for more than 90 days. Heat comes
+   * from the derived heat state when there is one (2.11), else the neuron's
+   * own stored value, as before.
+   */
+  private isCold(neuron: Neuron, heat: number): boolean {
     const lastAccess = new Date(neuron.last_accessed).getTime();
     const diffDays = (Date.now() - lastAccess) / (1000 * 60 * 60 * 24);
-    return neuron.heat < 0.05 && diffDays > 90;
+    return heat < 0.05 && diffDays > 90;
   }
 
-  private async archiveColdNeurons(skip: Set<string> = new Set()): Promise<number> {
-    const ids = await this.cortex.allIds();
+  /**
+   * What archive:true would move: cold, and neither a protocol (boot injects
+   * it every session, so "untouched" says nothing) nor shared (the next sync
+   * would bring it back from the team log). Sorted by id.
+   */
+  private async coldNeuronIds(skip: Set<string> = new Set(), shared: ReadonlySet<string> = new Set()): Promise<string[]> {
+    const calor = await this.cortex.heatMap();
+    const out: string[] = [];
+    for (const id of await this.cortex.allIds()) {
+      if (skip.has(id) || shared.has(id) || id.startsWith('protocol_')) continue;
+      const neuron = await this.readNeuron(id);
+      if (!neuron || neuron.type === 'protocol') continue;
+      if (this.isCold(neuron, calor.get(id) ?? neuron.heat)) out.push(id);
+    }
+    return out.sort();
+  }
+
+  /**
+   * Move cold neurons to archives/. Only the neuron file moves: its synapse
+   * files and the neighbours' connection lists stay exactly as they are
+   * (2.11), and integrity and repair count archives/ as existing, so nothing
+   * of the neuron's links is lost and unarchive finds them where they were.
+   */
+  private async archiveColdNeurons(skip: Set<string> = new Set(), shared: ReadonlySet<string> = new Set()): Promise<number> {
     let archived = 0;
-
-    for (const id of ids) {
-      if (skip.has(id)) continue;
-      const neuron = await readJSON<Neuron>(this.brain.paths.neuron(id));
-      if (!neuron) continue;
-
-      if (this.isCold(neuron)) {
-        await moveFile(
-          this.brain.paths.neuron(id),
-          `${this.brain.paths.archives}/${id}.json`
-        );
-        archived++;
-      }
+    for (const id of await this.coldNeuronIds(skip, shared)) {
+      await moveFile(
+        this.brain.paths.neuron(id),
+        `${this.brain.paths.archives}/${id}.json`
+      );
+      await this.searchEngine.removeNeuron(id).catch(() => {});
+      archived++;
     }
-
     return archived;
-  }
-
-  private async countColdNeurons(skip: Set<string> = new Set()): Promise<number> {
-    const ids = await this.cortex.allIds();
-    let count = 0;
-
-    for (const id of ids) {
-      if (skip.has(id)) continue;
-      const neuron = await readJSON<Neuron>(this.brain.paths.neuron(id));
-      if (!neuron) continue;
-      if (this.isCold(neuron)) count++;
-    }
-
-    return count;
   }
 
   /**
    * Move neurons from archives/ back into cortex/ and index them. A neuron
    * that exists in cortex/ again is not overwritten: the archive copy stays
-   * and the id is reported in `already`.
+   * and the id is reported in `already`. Its synapses never left, so it comes
+   * back connected.
    */
   private async unarchive(which: string[] | 'all'): Promise<{ restored: string[]; unknown: string[]; already: string[] }> {
     const out = { restored: [] as string[], unknown: [] as string[], already: [] as string[] };
@@ -663,26 +811,25 @@ export class Maintenance {
   /**
    * What is inconsistent on disk. Every line here names something repair()
    * knows how to fix, except a corrupted neuron file, which nobody should
-   * fix blindly.
+   * fix blindly. A neuron in archives/ exists: links to it are not broken.
    */
-  private async checkIntegrity(): Promise<string[]> {
+  private async checkIntegrity(archived: ReadonlySet<string> = new Set()): Promise<string[]> {
     const issues: string[] = [];
     const ids = await this.cortex.allIds();
-    const existe = new Set(ids);
+    const existe = new Set([...ids, ...archived]);
 
     for (const id of ids) {
       let neuron: Neuron | null;
       try {
         neuron = await readJSON<Neuron>(this.brain.paths.neuron(id));
       } catch {
+        this.ilegibles.add(id);
         neuron = null;
       }
       if (!neuron) {
         issues.push(`Corrupted neuron file: ${id}`);
         continue;
-      }
-
-      // Check for broken connections
+      }      // Check for broken connections
       for (const connId of neuron.connections || []) {
         if (!existe.has(connId)) {
           issues.push(`Broken connection: ${id} → ${connId} (target missing)`);
@@ -798,7 +945,11 @@ export class Maintenance {
    * that gather between 8% and 45% of them — frequent enough to be a
    * subtopic, not so frequent that they are just the neuron's own name.
    */
-  private async reviewEntries(): Promise<{ expired: number; sample: ExpiredEntry[]; splits: SplitCandidate[]; stale?: { count: number; sample: StaleEntry[] } }> {
+  private async reviewEntries(opts?: { hygiene?: boolean; staleAll?: boolean }): Promise<{
+    expired: number; sample: ExpiredEntry[]; splits: SplitCandidate[];
+    stale?: { count: number; sample: StaleEntry[]; all?: StaleEntry[] };
+    hygiene?: { split_partitions: SplitPartition[]; merge_candidates: MergeCandidates; summary_missing: NonNullable<MaintenanceReport['summary_missing']> };
+  }> {
     const hoy = today();
     const vencidas: ExpiredEntry[] = [];
     // Shelf life: the same pass judges every live fact, decision and pattern.
@@ -808,16 +959,15 @@ export class Maintenance {
     const rancias: Array<StaleEntry & { overdue: number }> = [];
     const gordas: SplitCandidate[] = [];
     const enNeuronas = new Map<string, number>();
-    const grandes: Array<{ n: Neuron; vivas: number; palabras: Array<Set<string>>; propias: Set<string> }> = [];
+    const grandes: Array<{ n: Neuron; vivas: number; palabras: Array<Set<string>>; propias: Set<string>; eids: string[] }> = [];
     let total = 0;
+    // Hygiene report (2.11), gathered in the same pass.
+    const sueltas1: MergeCandidates['single_entry'] = [];
+    const sinResumen: Array<{ neuron_id: string; name: string; entries: number }> = [];
+    const todosIds = await this.cortex.allIds();
 
-    for (const id of await this.cortex.allIds()) {
-      let n: Neuron | null;
-      try {
-        n = await readJSON<Neuron>(this.brain.paths.neuron(id));
-      } catch {
-        continue;
-      }
+    for (const id of todosIds) {
+      const n = await this.readNeuron(id);
       if (!n || n.type === 'protocol') continue;
 
       const retirada = (t: string) => !!n!.entry_status?.[entryId(t)];
@@ -888,7 +1038,19 @@ export class Maintenance {
       for (const w of new Set(palabras.flatMap(set => [...set]))) enNeuronas.set(w, (enNeuronas.get(w) || 0) + 1);
 
       if (vivas.length >= SPLIT_MIN_ENTRIES && !(n.tags || []).includes('digest')) {
-        grandes.push({ n, vivas: vivas.length, palabras, propias });
+        grandes.push({ n, vivas: vivas.length, palabras, propias, eids: vivas.map(e => e.eid) });
+      }
+      if (opts?.hygiene) {
+        const todas = (n.facts || []).length + (n.decisions || []).length + (n.patterns || []).length
+          + (n.preferences || []).length + (n.errors || []).length + (n.debts || []).length;
+        if (todas === 1 && vivas.length === 1 && !n.map?.text && !(n.tags || []).includes('digest')) {
+          const t = vivas[0].text;
+          sueltas1.push({ neuron_id: n.id, name: n.name, domain: n.domain || 'general', created: (n.created || '').slice(0, 10),
+            preview: t.length > 100 ? `${t.slice(0, 100).trimEnd()}…` : t });
+        }
+        if (!(n.summary || '').trim() && vivas.length >= SUMMARY_MISSING_MIN) {
+          sinResumen.push({ neuron_id: n.id, name: n.name, entries: vivas.length });
+        }
       }
     }
 
@@ -929,11 +1091,138 @@ export class Maintenance {
 
     vencidas.sort((a, b) => (a.due < b.due ? -1 : a.due > b.due ? 1 : a.entry_id < b.entry_id ? -1 : 1));
     gordas.sort((a, b) => b.entries - a.entries);
-    rancias.sort((a, b) => b.overdue - a.overdue || (a.entry_id < b.entry_id ? -1 : 1));
+    rancias.sort((a, b) => b.overdue - a.overdue || (a.entry_id < b.entry_id ? -1 : 1) || (a.neuron_id < b.neuron_id ? -1 : 1));
+    const sinOverdue = (r: StaleEntry & { overdue: number }): StaleEntry => { const { overdue: _o, ...rest } = r; return rest; };
+
+    let hygiene: { split_partitions: SplitPartition[]; merge_candidates: MergeCandidates; summary_missing: NonNullable<MaintenanceReport['summary_missing']> } | undefined;
+    if (opts?.hygiene) {
+      // A suggested partition for each split candidate: every live entry goes
+      // to the first group whose word it holds; the rest stays. Ids only, so
+      // crbro_revise move_to can act on it as it is. Nothing is moved here.
+      const porId = new Map(grandes.map(g => [g.n.id, g]));
+      const split_partitions: SplitPartition[] = [];
+      for (const c of gordas.slice(0, SPLIT_MAX_CANDIDATES)) {
+        const g = porId.get(c.neuron_id);
+        if (!g || c.groups.length === 0) continue;
+        const parts = c.groups.map(gr => ({ term: gr.term, suggested_name: `${c.name} - ${gr.term}`, entries: 0, entry_ids: [] as string[] }));
+        let rest = 0;
+        g.palabras.forEach((set, i) => {
+          const p = parts.find(pt => set.has(pt.term));
+          if (!p) { rest++; return; }
+          p.entries++;
+          if (p.entry_ids.length < PARTITION_IDS) p.entry_ids.push(g.eids[i]);
+        });
+        split_partitions.push({ neuron_id: c.neuron_id, name: c.name, entries: c.entries, parts, rest });
+      }
+      // Ids made with their prefix twice by 2.10 from an id-shaped topic.
+      const existentes = new Set(todosIds);
+      const doubled_prefix = todosIds
+        .map(id => ({ id, m: id.match(/^(project|tech|lang|person|domain|process|protocol)_\1_(.+)$/) }))
+        .filter(x => x.m)
+        .map(x => ({ neuron_id: x.id, meant: `${x.m![1]}_${x.m![2]}`, meant_exists: existentes.has(`${x.m![1]}_${x.m![2]}`) }));
+      sueltas1.sort((a, b) => (a.created < b.created ? -1 : a.created > b.created ? 1 : a.neuron_id < b.neuron_id ? -1 : 1));
+      sinResumen.sort((a, b) => b.entries - a.entries || (a.neuron_id < b.neuron_id ? -1 : 1));
+      hygiene = {
+        split_partitions,
+        merge_candidates: { single_entry: sueltas1.slice(0, 30), single_entry_total: sueltas1.length, doubled_prefix },
+        summary_missing: { total: sinResumen.length, neurons: sinResumen.slice(0, 20) },
+      };
+    }
+
     return {
       expired: vencidas.length, sample: vencidas.slice(0, EXPIRED_SAMPLE), splits: gordas.slice(0, SPLIT_MAX_CANDIDATES),
-      ...(vida ? { stale: { count: rancias.length, sample: rancias.slice(0, STALE_SAMPLE).map(({ overdue: _o, ...r }) => r) } } : {}),
+      ...(vida ? { stale: {
+        count: rancias.length,
+        sample: rancias.slice(0, STALE_SAMPLE).map(sinOverdue),
+        ...(opts?.staleAll ? { all: rancias.map(sinOverdue) } : {}),
+      } } : {}),
+      ...(hygiene ? { hygiene } : {}),
     };
+  }
+
+  /**
+   * Every stale entry, a page at a time, most overdue first — the list
+   * stale_sample only ever showed ten of (2.11). Read-only. `neuronId`
+   * narrows it to one neuron.
+   */
+  async listStale(options?: { offset?: number; limit?: number; neuronId?: string }): Promise<StalePage & { enabled: boolean }> {
+    const r = await this.reviewEntries({ staleAll: true });
+    const offset = Math.max(0, Math.floor(options?.offset ?? 0));
+    const limit = Math.min(Math.max(Math.floor(options?.limit ?? 50), 1), 200);
+    if (!r.stale) return { enabled: false, total: 0, offset, returned: 0, has_more: false, entries: [] };
+    const todas = (r.stale.all || []).filter(e => !options?.neuronId || e.neuron_id === options.neuronId);
+    const pagina = todas.slice(offset, offset + limit);
+    return { enabled: true, total: todas.length, offset, returned: pagina.length, has_more: offset + pagina.length < todas.length, entries: pagina };
+  }
+
+  /**
+   * Act on many stale entries at once: `verify` restarts their shelf-life
+   * clock (they were checked and still hold); `superseded` / `retracted`
+   * retires them. Entries are { neuron_id, entry_id } as listStale gives
+   * them; facts and decisions/patterns are told apart here, one locked write
+   * per neuron. Verification and retirement travel to shared spaces exactly
+   * as crbro_revise sends them.
+   */
+  async reviewStale(
+    items: Array<{ neuron_id: string; entry_id: string }>,
+    action: 'verify' | 'superseded' | 'retracted',
+    note?: string,
+  ): Promise<StaleReviewResult> {
+    const out: StaleReviewResult = { action, done: [], unmatched: [] };
+    const porNeurona = new Map<string, string[]>();
+    for (const it of items || []) {
+      const nid = String(it?.neuron_id || '').trim();
+      const eid = String(it?.entry_id || '').trim();
+      if (!nid || !eid) continue;
+      const l = porNeurona.get(nid) || [];
+      if (!l.includes(eid)) l.push(eid);
+      porNeurona.set(nid, l);
+    }
+    for (const [nid, eids] of porNeurona) {
+      const n = await this.cortex.peek(nid);
+      if (!n) {
+        for (const e of eids) out.unmatched.push({ neuron_id: nid, entry_id: e, why: 'no such neuron (or unreadable)' });
+        continue;
+      }
+      const factIds = new Set((n.facts || []).map(f => (f.id || factId(f.text))));
+      const entradas = new Map<string, string>();
+      for (const d of n.decisions || []) { entradas.set(entryId(d.text || ''), d.text || ''); if (d.id) entradas.set(d.id, d.text || ''); }
+      for (const p of n.patterns || []) entradas.set(entryId(p), p);
+      const facts = eids.filter(e => factIds.has(e));
+      const entries = eids.filter(e => !factIds.has(e) && entradas.has(e));
+      for (const e of eids) {
+        if (!factIds.has(e) && !entradas.has(e)) out.unmatched.push({ neuron_id: nid, entry_id: e, why: 'not a fact, decision or pattern of this neuron' });
+      }
+      if (action === 'verify') {
+        // Unspecified evidence, as crbro_revise status=verified without a reference.
+        const r = await this.cortex.verify(nid, { facts, entries });
+        const hechos = new Set(r.verified);
+        for (const e of [...facts, ...entries]) {
+          const id = entries.includes(e) ? entryId(entradas.get(e)!) : e;
+          if (hechos.has(id) || hechos.has(e)) out.done.push({ neuron_id: nid, entry_id: e });
+          else out.unmatched.push({ neuron_id: nid, entry_id: e, why: 'retired, or not verifiable' });
+        }
+        continue;
+      }
+      if (facts.length) {
+        const r = await this.cortex.revise(nid, facts, { status: action, note });
+        const sin = new Set(r.unmatched);
+        for (const e of facts) {
+          if (sin.has(e)) out.unmatched.push({ neuron_id: nid, entry_id: e, why: 'already retired' });
+          else out.done.push({ neuron_id: nid, entry_id: e });
+        }
+      }
+      if (entries.length) {
+        const textos = entries.map(e => entradas.get(e)!);
+        const r = await this.cortex.retireEntries(nid, textos, { status: action, note });
+        const sin = new Set(r.unmatched);
+        entries.forEach((e, i) => {
+          if (sin.has(textos[i])) out.unmatched.push({ neuron_id: nid, entry_id: e, why: 'already retired' });
+          else out.done.push({ neuron_id: nid, entry_id: e });
+        });
+      }
+    }
+    return out;
   }
 
   /**
@@ -1001,10 +1290,12 @@ export class Maintenance {
    * with a missing end, stale entry_dates / entry_status keys, manifest
    * counters. One line per fix. Corrupted files are left for a human.
    */
-  private async repair(): Promise<string[]> {
+  private async repair(archived: ReadonlySet<string> = new Set()): Promise<string[]> {
     const done: string[] = [];
     const ids = await this.cortex.allIds();
-    const existe = new Set(ids);
+    // archives/ counts as existing (2.11): repair used to delete for good the
+    // synapses and connections of every archived neuron.
+    const existe = new Set([...ids, ...archived]);
 
     // Synapses first: an orphan synapse also shows up as a dangling
     // connection on its surviving end, and disconnect() cleans both.
@@ -1018,16 +1309,23 @@ export class Maintenance {
       if (!synapse || !Array.isArray(synapse.nodes) || synapse.nodes.length !== 2) continue;
       const faltan = synapse.nodes.filter(n => !existe.has(n));
       if (faltan.length === 0) continue;
+      // A copy first, like every other removal (2.11).
+      await writeQuarantine(this.brain.paths.quarantine, synapse.id || sid, synapse, 'whole');
       await deleteJSON(this.brain.paths.synapse(sid));
       for (const node of synapse.nodes) {
-        if (!existe.has(node)) continue;
-        await updateJSON<Neuron>(this.brain.paths.neuron(node), current => {
-          if (!current) return null;
-          const otro = synapse!.nodes[0] === node ? synapse!.nodes[1] : synapse!.nodes[0];
-          if (!(current.connections || []).includes(otro)) return null;
-          current.connections = current.connections.filter(c => c !== otro);
-          return current;
-        });
+        if (!existe.has(node) || archived.has(node)) continue;
+        try {
+          await updateJSON<Neuron>(this.brain.paths.neuron(node), current => {
+            if (!current) return null;
+            const otro = synapse!.nodes[0] === node ? synapse!.nodes[1] : synapse!.nodes[0];
+            if (!(current.connections || []).includes(otro)) return null;
+            current.connections = current.connections.filter(c => c !== otro);
+            return current;
+          });
+        } catch (err) {
+          if (!(err instanceof CorruptJSONError)) throw err;
+          this.ilegibles.add(node);
+        }
       }
       done.push(`Deleted orphan synapse ${sid} (missing: ${faltan.join(', ')})`);
     }

@@ -4,6 +4,7 @@
 import { readJSON, updateJSON, listJSONFiles, now } from '../utils/fs.js';
 import { pendingId } from '../utils/hash.js';
 import { redact } from './secrets.js';
+import { readHeatState } from './heat.js';
 import type { Brain } from './brain.js';
 import type { ActiveContext, HotTopics, GlobalMap, Cluster, Bridge, Neuron, PendingTask } from '../types/index.js';
 
@@ -228,10 +229,17 @@ export class Prefrontal {
   async getGlobalMap(): Promise<GlobalMap> {
     const ids = await listJSONFiles(this.brain.paths.cortex);
     const neurons: Neuron[] = [];
+    // Heat lives in the derived heat state since 2.11; a neuron file keeps
+    // the value it had when heat stopped being written into it.
+    const calor = (await readHeatState(this.brain))?.neurons || {};
 
     for (const id of ids) {
-      const neuron = await readJSON<Neuron>(this.brain.paths.neuron(id));
-      if (neuron) neurons.push(neuron);
+      // 2.11 (C1): an unreadable neuron is skipped, not the end of maintenance or the map.
+      let neuron: Neuron | null = null;
+      try { neuron = await readJSON<Neuron>(this.brain.paths.neuron(id)); } catch { /* corrupt: skipped */ }
+      if (!neuron) continue;
+      const h = calor[neuron.id]?.heat;
+      neurons.push(typeof h === 'number' ? { ...neuron, heat: h } : neuron);
     }
 
     // Build clusters by domain

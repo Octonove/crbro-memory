@@ -2,7 +2,9 @@
 // Calculates relevance score based on frequency, recency, and connectivity
 
 import type { Neuron, HotTopic, HotTopics } from '../types/index.js';
-import { readJSON, writeJSON, updateJSON, listJSONFiles, now } from '../utils/fs.js';
+import { promises as fs } from 'node:fs';
+import path from 'node:path';
+import { readJSON, writeJSON, listJSONFiles, now } from '../utils/fs.js';
 import type { Brain } from './brain.js';
 
 // Weight constants
@@ -61,10 +63,61 @@ export function calculateHeat(
   return Math.round(heat * 1000) / 1000;
 }
 
-// ─── Heat Manager ────────────────────────────────────────────────
+/// ─── Heat Manager ────────────────────────────────────────────────
+//
+// Heat is derived data: access count, last access and connections, scaled
+// against the brain's maxima. Until 2.11 it was recomputed by reading and
+// parsing every neuron on every consolidate (~9 MB on the reference brain) and
+// written back INTO each neuron whose number moved — rewriting up to 1 MB of
+// primary data for one derived number, a whole-brain pass whenever the maximum
+// moved.
+//
+// Now it lives in one derived, rebuildable file, prefrontal/heat_state.json:
+// per neuron the inputs, the file's mtime and size, and the heat. A pass stats
+// every neuron and re-reads only the ones whose file changed since the last
+// pass. Neuron files are no longer rewritten for heat; the `heat` they carry is
+// left exactly as it is, so a previous version reading the brain keeps
+// working. Delete the state file and the next pass rebuilds it.
+
+export interface HeatStateEntry {
+  heat: number;
+  access_count: number;
+  last_accessed: string;
+  connections: number;
+  name: string;
+  domain: string;
+  /** Size and mtime of the neuron file the inputs were read from. */
+  size: number;
+  mtime: number;
+}
+
+export interface HeatState {
+  version: 1;
+  computed_at: string;
+  neurons: Record<string, HeatStateEntry>;
+}
+
+export function heatStatePath(brain: Brain): string {
+  return path.join(brain.paths.prefrontal, 'heat_state.json');
+}
+
+/** The derived heat state, or null when never computed or unreadable (it is rebuilt then). */
+export async function readHeatState(brain: Brain): Promise<HeatState | null> {
+  try {
+    const s = await readJSON<HeatState>(heatStatePath(brain));
+    return s && s.version === 1 && s.neurons && typeof s.neurons === 'object' ? s : null;
+  } catch {
+    return null;
+  }
+}
 
 export class HeatEngine {
   constructor(private brain: Brain) {}
+
+  /** Neuron files the last pass could not parse: skipped, never fatal. */
+  lastUnreadable: string[] = [];
+  /** How many neuron files the last pass actually read (the rest came from the state). */
+  lastRead = 0;
 
   /**
    * Recalculate heat scores for all neurons.
@@ -72,66 +125,72 @@ export class HeatEngine {
    */
   async recalculate(): Promise<HotTopics> {
     const ids = await listJSONFiles(this.brain.paths.cortex);
+    const previo = (await readHeatState(this.brain))?.neurons || {};
+    const entradas: Record<string, HeatStateEntry> = {};
+    const ilegibles: string[] = [];
+    let leidas = 0;
 
-    // First pass — find maximums for normalization
+    // First pass — inputs: from the state when the file has not changed,
+    // from the file otherwise.
     let maxAccess = 1;
     let maxConnections = 1;
-    const neurons: Neuron[] = [];
-
     for (const id of ids) {
-      const neuron = await readJSON<Neuron>(this.brain.paths.neuron(id));
-      if (!neuron) continue;
-      neurons.push(neuron);
-      if (neuron.access_count > maxAccess) maxAccess = neuron.access_count;
-      if (neuron.connections.length > maxConnections) maxConnections = neuron.connections.length;
+      const file = this.brain.paths.neuron(id);
+      let st;
+      try { st = await fs.stat(file); } catch { continue; }
+      const antes = previo[id];
+      let e: HeatStateEntry;
+      if (antes && antes.mtime === st.mtimeMs && antes.size === st.size) {
+        e = { ...antes };
+      } else {
+        let neuron: Neuron | null;
+        try {
+          neuron = await readJSON<Neuron>(file);
+        } catch {
+          ilegibles.push(id);   // corrupted: skipped, the integrity check names it
+          continue;
+        }
+        if (!neuron) continue;
+        leidas++;
+        e = {
+          heat: 0,
+          access_count: neuron.access_count || 0,
+          last_accessed: neuron.last_accessed || neuron.created || '',
+          connections: (neuron.connections || []).length,
+          name: neuron.name || id,
+          domain: neuron.domain || 'general',
+          size: st.size,
+          mtime: st.mtimeMs,
+        };
+      }
+      entradas[id] = e;
+      if (e.access_count > maxAccess) maxAccess = e.access_count;
+      if (e.connections > maxConnections) maxConnections = e.connections;
     }
 
-    // Second pass — calculate and update heat
+    // Second pass — calculate heat
     const hotTopics: HotTopic[] = [];
-
-    for (const neuron of neurons) {
-      const heat = calculateHeat(
-        neuron.access_count,
-        neuron.last_accessed,
-        neuron.connections.length,
-        maxAccess,
-        maxConnections
-      );
-
-      // Only touch the file when the number actually moved. Rewriting all
-      // neurons on every pass was pure churn — between two consecutive runs
-      // not one of them changes — and each rewrite is a window in which a
-      // concurrent write from another client gets clobbered.
-      if (Math.abs((neuron.heat ?? 0) - heat) > 1e-9) {
-        // Under lock and re-reading: heat runs over every neuron, so without
-        // this it would happily overwrite whatever another client just saved.
-        await updateJSON<Neuron>(this.brain.paths.neuron(neuron.id), current => {
-          if (!current) return null;
-          current.heat = heat;
-          return current;
-        });
-      }
-      neuron.heat = heat;
-
-      hotTopics.push({
-        id: neuron.id,
-        name: neuron.name,
-        heat,
-        last_access: neuron.last_accessed,
-        domain: neuron.domain,
-      });
+    for (const [id, e] of Object.entries(entradas)) {
+      e.heat = calculateHeat(e.access_count, e.last_accessed, e.connections, maxAccess, maxConnections);
+      hotTopics.push({ id, name: e.name, heat: e.heat, last_access: e.last_accessed, domain: e.domain });
     }
 
     // Sort by heat descending
-    hotTopics.sort((a, b) => b.heat - a.heat);
+    hotTopics.sort((a, b) => b.heat - a.heat || (a.id < b.id ? -1 : 1));
+
+    const cuando = now();
+    const estado: HeatState = { version: 1, computed_at: cuando, neurons: entradas };
+    await writeJSON(heatStatePath(this.brain), estado, { pretty: false });
 
     // Save hot topics (top 20)
     const result: HotTopics = {
       topics: hotTopics.slice(0, 20),
-      last_recalculated: now(),
+      last_recalculated: cuando,
     };
 
     await writeJSON(this.brain.paths.hotTopics(), result);
+    this.lastUnreadable = ilegibles;
+    this.lastRead = leidas;
     return result;
   }
 }
