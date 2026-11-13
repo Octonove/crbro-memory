@@ -40,6 +40,8 @@ import {
 } from 'fs';
 import { homedir } from 'os';
 import path from 'path';
+import { claudeDir as claudeConfigDir, writeGuarded, jsonText, FILE_CHANGED } from './installio.js';
+import { refreshHooks, hooksNotice, type HookCopy } from './hookrefresh.js';
 
 export const MOD_NAME = 'crbro-pending';
 /** The local copy this mod grew out of: a folder in the list holding it is replaced. */
@@ -70,8 +72,9 @@ export interface ModOptions {
   envDirs?: string;
 }
 
-export function modPaths(home: string) {
-  const claudeDir = path.join(home, '.claude');
+/** Claude Code's folder is CLAUDE_CONFIG_DIR when set, as Claude Code itself reads it; ~/.claude otherwise. */
+export function modPaths(home: string, env: NodeJS.ProcessEnv = process.env) {
+  const claudeDir = claudeConfigDir(home, env);
   return {
     claudeDir,
     settingsPath: path.join(claudeDir, 'settings.json'),
@@ -216,7 +219,7 @@ function readSettings(settingsPath: string): SettingsRead {
 }
 
 /** Thrown by writeAtomic when settings.json changed after it was read: the caller merges again. */
-const SETTINGS_CHANGED = 'ESETTINGSCHANGED';
+const SETTINGS_CHANGED = FILE_CHANGED;
 /** Errors a later start may well not meet (a file held open, an antivirus scan): never written down as a failure. */
 const TRANSIENT = new Set(['EBUSY', 'EPERM', 'EACCES', 'ENOTEMPTY', 'EEXIST', SETTINGS_CHANGED]);
 
@@ -233,40 +236,39 @@ const TRANSIENT = new Set(['EBUSY', 'EPERM', 'EACCES', 'ENOTEMPTY', 'EEXIST', SE
 function writeAtomic(
   settingsPath: string, settings: Settings, indent: string | number = 2, eol = '\n', expectHash?: string,
 ): void {
-  let target = settingsPath;
-  try {
-    if (lstatSync(settingsPath).isSymbolicLink()) target = realpathSync(settingsPath);
-  } catch {
-    // Not there yet: written as a plain file.
-  }
-  let mode: number | undefined;
-  try {
-    mode = statSync(target).mode & 0o777;
-  } catch {
-    mode = undefined;
-  }
-  const tmp = `${target}.${process.pid}.tmp`;
-  try {
-    let text = JSON.stringify(settings, null, indent) + '\n';
-    if (eol !== '\n') text = text.replace(/\n/g, eol);
-    writeFileSync(tmp, text, mode === undefined ? 'utf8' : { encoding: 'utf8', mode });
-    if (expectHash !== undefined && settingsFingerprint(target) !== expectHash) {
-      const changed = new Error(`${settingsPath} changed while it was being written.`) as NodeJS.ErrnoException;
-      changed.code = SETTINGS_CHANGED;
-      throw changed;
-    }
-    renameSync(tmp, target);
-  } catch (e) {
-    rmSync(tmp, { force: true });
-    throw e;
-  }
+  // installio.writeGuarded: the same steps (symlink target, mode, line
+  // endings, hash checked again right before the rename), plus a timestamped
+  // copy of the file as it was, kept beside it (settings.json.crbro-bak-<stamp>).
+  writeGuarded(settingsPath, jsonText(settings, indent, eol), { expectHash });
 }
 
 function splitList(value: string | undefined, sep: string): string[] {
   return (value ?? '').split(sep).map(s => s.trim()).filter(Boolean);
 }
 
-const STAGING = /^crbro-pending\.\d+\.(tmp|old)$/;
+const STAGING = /^crbro-pending\.(\d+)\.(tmp|old)$/;
+
+/**
+ * A staging or set-aside folder another run left behind, safe to remove: its
+ * owner's pid is gone (or it is this process's own). A live pid is another
+ * install under way — install-mod by hand beside a boot — and its folder is
+ * left alone, or that install would fail half way on its rename.
+ */
+export function staleStaging(name: string, isAlive: (pid: number) => boolean = pidAlive): boolean {
+  const m = STAGING.exec(name);
+  if (!m) return false;
+  const pid = Number(m[1]);
+  return pid === process.pid || !isAlive(pid);
+}
+
+function pidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
 
 function copyFailed(installedDir: string, e: unknown): NodeJS.ErrnoException {
   const err = new Error(
@@ -288,7 +290,7 @@ function copyMod(packageDir: string, installedDir: string): string[] {
   mkdirSync(parent, { recursive: true });
   // A staging or set-aside folder left by a run that failed half way: its pid is gone.
   for (const name of readdirSync(parent)) {
-    if (STAGING.test(name)) rmSync(path.join(parent, name), { recursive: true, force: true, maxRetries: 3 });
+    if (staleStaging(name)) rmSync(path.join(parent, name), { recursive: true, force: true, maxRetries: 3 });
   }
   const staging = `${installedDir}.${process.pid}.tmp`;
   const aside = `${installedDir}.${process.pid}.old`;
@@ -324,7 +326,7 @@ async function copyModAsync(packageDir: string, installedDir: string): Promise<s
   const parent = path.dirname(installedDir);
   await fsp.mkdir(parent, { recursive: true });
   for (const name of await fsp.readdir(parent)) {
-    if (STAGING.test(name)) await fsp.rm(path.join(parent, name), { recursive: true, force: true, maxRetries: 3 });
+    if (staleStaging(name)) await fsp.rm(path.join(parent, name), { recursive: true, force: true, maxRetries: 3 });
   }
   const staging = `${installedDir}.${process.pid}.tmp`;
   const aside = `${installedDir}.${process.pid}.old`;
@@ -1383,6 +1385,15 @@ export async function autoInstallMod(opts: AutoModOptions): Promise<AutoModResul
 }
 
 let onBoot: Promise<AutoModResult> | null = null;
+/** The refresh of installed hook copies (hookrefresh.ts), started beside the mod's install, once per process. */
+let hooksOnBoot: Promise<HookCopy[]> | null = null;
+let hooksResult: HookCopy[] | null = null;
+let hooksNoticeTaken = false;
+
+/** CRBRO_HOOK_REFRESH=0 (off, false, no) keeps installed hook copies as they are. */
+export function hookRefreshSwitchedOff(env: NodeJS.ProcessEnv = process.env): boolean {
+  return MOD_OFF_VALUES.has(String(env.CRBRO_HOOK_REFRESH ?? '').trim().toLowerCase());
+}
 
 /**
  * What crbro_boot calls first: starts the automatic install the first time in
@@ -1390,26 +1401,44 @@ let onBoot: Promise<AutoModResult> | null = null;
  * ready. That function waits for the install until `budgetMs` after the start
  * and takes the notice waiting to be said, or null. Neither throws. A boot
  * that fails never calls it, so it never takes a notice it cannot hand over.
+ *
+ * It also starts, once per process, the refresh of the hook copies CRBRO
+ * installed (hookrefresh.ts): unmodified copies of an older release are
+ * replaced by this one's. That part does not depend on CRBRO_MOD (it never
+ * adds anything, only keeps current what is there); CRBRO_HOOK_REFRESH=0
+ * turns it off. Its notice is taken with takeHooksNotice().
  */
 export function startModOnBoot(opts: Partial<AutoModOptions> & { budgetMs?: number } = {}): () => Promise<string | null> {
   try {
     const home = opts.home ?? homedir();
     const env = opts.env ?? process.env;
-    if (modSwitchedOff(env) || !existsSync(modPaths(home).claudeDir)) return async () => null;
+    if (!hooksOnBoot && !hookRefreshSwitchedOff(env)) {
+      hooksOnBoot = new Promise<HookCopy[]>(resolve => setImmediate(() => {
+        try { resolve(refreshHooks({ home, env })); } catch { resolve([]); }
+      })).then(copies => { hooksResult = copies; return copies; });
+    }
+    const hooks = hooksOnBoot ?? Promise.resolve([]);
+    let timer: NodeJS.Timeout | undefined;
+    const budget = new Promise<void>(resolve => {
+      timer = setTimeout(resolve, opts.budgetMs ?? BOOT_BUDGET_MS);
+      timer.unref?.();
+    });
+    if (modSwitchedOff(env) || !existsSync(modPaths(home, env).claudeDir)) {
+      return async () => {
+        try { await Promise.race([hooks, budget]); } catch { /* never fails the boot */ }
+        if (timer) clearTimeout(timer);
+        return null;
+      };
+    }
     if (!onBoot) {
       const packageDir = opts.packageDir ?? path.join(__dirname, '..', '..', 'mods', MOD_NAME);
       onBoot = autoInstallMod({ ...opts, home, env, packageDir })
         .catch(e => ({ action: 'failed' as const, reason: (e as Error).message }));
     }
     const running = onBoot;
-    let timer: NodeJS.Timeout | undefined;
-    const budget = new Promise<void>(resolve => {
-      timer = setTimeout(resolve, opts.budgetMs ?? BOOT_BUDGET_MS);
-      timer.unref?.();
-    });
     return async () => {
       try {
-        await Promise.race([running, budget]);
+        await Promise.race([Promise.all([running, hooks]), budget]);
         if (timer) clearTimeout(timer);
         return takeModNotice(home, opts.now);
       } catch {
@@ -1421,6 +1450,17 @@ export function startModOnBoot(opts: Partial<AutoModOptions> & { budgetMs?: numb
   }
 }
 
+/**
+ * The boot's notice about installed hooks, once per process, if the refresh
+ * has finished: copies left alone because somebody edited them, or a refresh
+ * that failed. Each edited copy is told once (remembered in its manifest).
+ */
+export function takeHooksNotice(): string | null {
+  if (hooksNoticeTaken || !hooksResult) return null;
+  hooksNoticeTaken = true;
+  try { return hooksNotice(hooksResult); } catch { return null; }
+}
+
 /** startModOnBoot and its notice in one call. */
 export async function modNoticeOnBoot(opts: Partial<AutoModOptions> & { budgetMs?: number } = {}): Promise<string | null> {
   return startModOnBoot(opts)();
@@ -1429,5 +1469,8 @@ export async function modNoticeOnBoot(opts: Partial<AutoModOptions> & { budgetMs
 /** Tests only: the next boot in this process behaves as the first boot of a new process. */
 export function resetModOnBoot(): void {
   onBoot = null;
+  hooksOnBoot = null;
+  hooksResult = null;
+  hooksNoticeTaken = false;
   handedOver.clear();
 }

@@ -32,7 +32,7 @@ import { semanticStatus } from './search/semantic.js';
 import { fitToBudget, DEFAULT_BUDGET_CHARS, type BudgetOptions } from './utils/budget.js';
 import { redact } from './engine/secrets.js';
 import { autoBackupIfDue, resolveBackupDir } from './engine/backup.js';
-import { startModOnBoot } from './engine/modinstall.js';
+import { startModOnBoot, takeHooksNotice } from './engine/modinstall.js';
 import { writeTriggerIndex, loadAllNeurons } from './engine/triggers.js';
 import { neuronId, inferNeuronType, techKeywordIn } from './utils/ids.js';
 import { SHELF_LIVES, stalenessEnabled, shelfWindows, stalenessContextOf, factStaleness, entryStaleness } from './engine/shelf.js';
@@ -450,6 +450,9 @@ export function createServer(shared?: Engines): McpServer {
         // changed on the user's machine and how to undo it.
         const aviso = await modNotice();
         if (aviso) response.mod_notice = aviso;
+        // Installed hook copies CRBRO could not refresh because someone edited them (hookrefresh.ts), said once.
+        const hooksAviso = takeHooksNotice();
+        if (hooksAviso) response.hooks_notice = hooksAviso;
 
         response.memory_discipline =
           'Before crbro_learn, crbro_recall: what you are about to save may already exist — then pass ' +
@@ -480,7 +483,7 @@ export function createServer(shared?: Engines): McpServer {
         // start correctly are kept whole; what grows without bound is shortened
         // and says so, with the call that reads it in full.
         return jsonResult(fitToBudget(response, {
-          keep: ['protocol_enforcement', 'memory_discipline', 'retired_tools', 'pending_guidance', 'semantic_hint', 'mod_notice'],
+          keep: ['protocol_enforcement', 'memory_discipline', 'retired_tools', 'pending_guidance', 'semantic_hint', 'mod_notice', 'hooks_notice'],
           howToGetMore: 'Session summaries were shortened. Read one in full with crbro_inspect view=sessions.',
         }));
       } catch (err) {
