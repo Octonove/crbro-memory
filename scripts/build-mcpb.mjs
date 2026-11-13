@@ -47,7 +47,7 @@ run('npm', ['run', 'build']);
 paso(2, `Montando en ${path.relative(RAIZ, STAGING)}`);
 rmSync(STAGING, { recursive: true, force: true });
 mkdirSync(STAGING, { recursive: true });
-cpSync(path.join(RAIZ, 'dist'), path.join(STAGING, 'dist'), { recursive: true });
+cpSync(path.join(RAIZ, 'dist'), path.join(STAGING, 'dist'), { recursive: true, filter: src => !/\.(map|d\.ts)$/.test(src) });
 for (const f of ['README.md', 'LICENSE', 'package-lock.json']) {
   cpSync(path.join(RAIZ, f), path.join(STAGING, f));
 }
@@ -134,7 +134,7 @@ const manifest = {
   },
   compatibility: {
     platforms: ['darwin', 'win32', 'linux'],
-    runtimes: { node: '>=18.0.0' },
+    runtimes: { node: '>=20.0.0' },
   },
 };
 writeFileSync(path.join(STAGING, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n');

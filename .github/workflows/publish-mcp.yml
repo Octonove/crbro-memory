@@ -1,33 +1,78 @@
-name: Publish to MCP Registry
+name: Publish to MCP Registry (manual)
 
-# Publica el servidor en el MCP Registry oficial cuando se empuja un tag v*.
-# Autenticación por GitHub OIDC: sin secretos, sin tokens que caduquen.
-# Prerrequisito: la versión correspondiente del paquete DEBE estar ya
-# publicada en npm (el registry valida el campo mcpName del package.json
-# publicado). Ver RELEASING.md.
+# Since 2.11 the MCP Registry is published by release.yml, in the same flow as
+# npm and the GitHub release, when a v* tag is pushed. This workflow no longer
+# runs on tags (so the registry is never published twice). It stays for one
+# job: re-publishing a version to the registry by hand, for example after the
+# registry was down during a release. Run it from the Actions tab and type the
+# tag. Authentication is GitHub OIDC: no secrets, no tokens that expire.
 
 on:
-  push:
-    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to publish, for example v2.11.0"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  # Pinned, same as release.yml. To upgrade, change both files.
+  MCP_PUBLISHER_VERSION: v1.8.9
+  MCP_PUBLISHER_SHA256: 4d527ca8f1ced0394c962dc925c2a4a4addef441cbefd62501c875e9481823a8
 
 jobs:
   publish:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
-      id-token: write # necesario para la autenticación OIDC
+      id-token: write # GitHub OIDC login to the MCP Registry
       contents: read
+      actions: read # to ask whether CI passed for the tagged commit
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag }}
 
-      - name: Install mcp-publisher
+      - name: Tag, package.json and server.json agree
         run: |
-          curl -L "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz" | tar xz mcp-publisher
+          tag="${TAG#v}"
+          pkg=$(node -p "require('./package.json').version")
+          srv=$(node -p "require('./server.json').version")
+          srvpkg=$(node -p "require('./server.json').packages[0].version")
+          echo "tag=$tag package.json=$pkg server.json=$srv server.json.packages=$srvpkg"
+          if [ "$tag" != "$pkg" ] || [ "$tag" != "$srv" ] || [ "$tag" != "$srvpkg" ]; then
+            echo "::error::The tag does not match package.json and server.json."
+            exit 1
+          fi
+        env:
+          TAG: ${{ inputs.tag }}
 
-      - name: Sync server.json version with tag
+      - name: CI passed for this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          VERSION=${GITHUB_REF#refs/tags/v}
-          jq --arg v "$VERSION" '.version = $v | .packages[].version = $v' server.json > server.tmp && mv server.tmp server.json
-          echo "Publishing version $VERSION"
+          sha=$(git rev-parse HEAD)
+          ok=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml --commit "$sha" --status success --json databaseId --jq 'length')
+          echo "successful CI runs for $sha: $ok"
+          if [ "$ok" -lt 1 ]; then
+            echo "::error::No successful CI run for $sha."
+            exit 1
+          fi
+
+      - name: The version is on npm
+        run: |
+          v=$(node -p "require('./package.json').version")
+          npm view "crbro-memory@$v" version || { echo "::error::crbro-memory@$v is not on npm; the registry validates mcpName against the published package."; exit 1; }
+
+      - name: Install mcp-publisher (pinned, checksum verified)
+        run: |
+          file="mcp-publisher_linux_amd64.tar.gz"
+          curl -fsSL -o "$file" "https://github.com/modelcontextprotocol/registry/releases/download/${MCP_PUBLISHER_VERSION}/${file}"
+          echo "${MCP_PUBLISHER_SHA256}  ${file}" | sha256sum -c -
+          tar xzf "$file" mcp-publisher
 
       - name: Authenticate to MCP Registry (GitHub OIDC)
         run: ./mcp-publisher login github-oidc

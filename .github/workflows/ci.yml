@@ -5,27 +5,91 @@ on:
     branches: [main, master]
   pull_request:
 
+# Least privilege: CI only reads the repository. Jobs that need more say so.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build-and-test:
-    # Los dos fallos mas caros del producto han sido especificos de Windows
-    # (rename con EPERM sobre fichero abierto, rutas con espacios), y es donde
-    # esta la mayoria de los usuarios de escritorio.
+    # The most expensive failures of the product have been platform-specific:
+    # rename with EPERM on an open file and paths with spaces (Windows), and
+    # the keychain, which uses another mechanism on macOS. Node 20 is the
+    # oldest version `engines` promises; 22 and 24 are the current ones.
+    name: test (${{ matrix.os }}, node ${{ matrix.node }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        node: [20, 22, 24]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm test
+      # The real server over stdio, against a throwaway brain: initialize,
+      # tools/list, boot, learn, recall. What breaks a release is a server
+      # that does not start outside the repository.
+      - run: npm run smoke
+
+  checks:
+    # Things that do not depend on the platform run once.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
           node-version: 22
+          cache: npm
       - run: npm ci
       - run: npm run build
-      - run: npm test
-      # Los benchmarks del README: deterministas, sin red ni modelo (solo el motor de palabras y el filtro de credenciales).
+      - run: npm run typecheck
+      # Deterministic gates, no network and no model: the lexical retrieval
+      # benchmark and the credential filter. The semantic layer and the
+      # daemon benchmarks are measured by hand and dated in the README.
       - run: npm run bench
       - run: node scripts/check-publication.mjs
+
+  package:
+    # The .mcpb bundle (one-click install for Claude Desktop) is built and
+    # started from a clean unpack, so a broken bundle shows red here and not
+    # on release day.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run mcpb
+      - run: npm run mcpb:verify
+
+  docker:
+    # The Dockerfile is used by registries that build servers in a sandbox
+    # (Glama) and by anyone who prefers Docker to npx.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - run: docker build -t crbro-memory:ci .
+      - name: The image answers initialize over stdio
+        run: |
+          request='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"ci","version":"0"}}}'
+          reply=$( (echo "$request"; sleep 8) | docker run -i --rm -e CRBRO_PATH=/tmp/brain crbro-memory:ci | head -n 1 )
+          echo "$reply"
+          echo "$reply" | grep -q '"serverInfo"'
 
   audit:
     # A registry's build log caught 9 advisories this pipeline never looked
@@ -33,10 +97,12 @@ jobs:
     # here without stopping build-and-test; fixing it is usually one
     # `npm audit fix`. Moderate and below pass: they are noted, not blocked.
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
           node-version: 22
+          cache: npm
       - run: npm ci
       - run: npm audit --audit-level=high

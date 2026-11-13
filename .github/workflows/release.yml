@@ -1,0 +1,210 @@
+name: Release
+
+# Runs when a version tag (v*) is pushed. One flow, in this order:
+#
+#   verify          tag == package.json version == server.json version, the tag
+#                   is on master, CI was green for that commit, then build,
+#                   tests, benchmarks, publication check, stdio smoke test, the
+#                   .mcpb bundle and the npm tarball. Nothing is published here.
+#   npm             publishes THAT tarball with provenance. Skipped when the
+#                   exact version is already on npm (the maintainer may still
+#                   publish by hand from a laptop).
+#   registry        MCP Registry, once the version is visible on npm.
+#   github-release  GitHub release with the .mcpb and the CHANGELOG section.
+#
+# What the maintainer configures once (npm trusted publisher): docs/releasing.md.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  # mcp-publisher is pinned: version and sha256 of the linux/amd64 tarball
+  # (the "digest" GitHub shows for that release asset). To upgrade, change both.
+  MCP_PUBLISHER_VERSION: v1.8.9
+  MCP_PUBLISHER_SHA256: 4d527ca8f1ced0394c962dc925c2a4a4addef441cbefd62501c875e9481823a8
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: read # to ask whether CI passed for this commit
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      on_npm: ${{ steps.meta.outputs.on_npm }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Tag, package.json and server.json agree
+        id: meta
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          pkg=$(node -p "require('./package.json').version")
+          srv=$(node -p "require('./server.json').version")
+          srvpkg=$(node -p "require('./server.json').packages[0].version")
+          echo "tag=$tag package.json=$pkg server.json=$srv server.json.packages=$srvpkg"
+          if [ "$tag" != "$pkg" ] || [ "$tag" != "$srv" ] || [ "$tag" != "$srvpkg" ]; then
+            echo "::error::The tag v$tag does not match package.json ($pkg) and server.json ($srv / $srvpkg)."
+            exit 1
+          fi
+          echo "version=$tag" >> "$GITHUB_OUTPUT"
+          if npm view "crbro-memory@$tag" version >/dev/null 2>&1; then
+            echo "crbro-memory@$tag is already on npm: the npm publish step will be skipped."
+            echo "on_npm=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "on_npm=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: The tagged commit is on master
+        run: |
+          git fetch origin master
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/master; then
+            echo "::error::$GITHUB_SHA is not on master. Tag a commit that has been pushed to master."
+            exit 1
+          fi
+
+      - name: CI passed for this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ok=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml --commit "$GITHUB_SHA" --status success --json databaseId --jq 'length')
+          echo "successful CI runs for $GITHUB_SHA: $ok"
+          if [ "$ok" -lt 1 ]; then
+            echo "::error::No successful CI run for $GITHUB_SHA. Wait for CI to go green on master, then re-run this workflow."
+            exit 1
+          fi
+
+      - run: npm ci
+      - run: npm run build
+      - run: npm test
+      - run: npm run bench
+      - run: node scripts/check-publication.mjs
+      - run: npm run smoke
+
+      - name: Build and verify the .mcpb bundle
+        run: |
+          npm run mcpb
+          npm run mcpb:verify
+
+      - name: Release notes from CHANGELOG.md
+        run: node scripts/changelog-section.mjs "${{ steps.meta.outputs.version }}" > release-notes.md
+
+      - name: Pack the npm tarball that will be published
+        run: npm pack --ignore-scripts
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-files
+          if-no-files-found: error
+          path: |
+            crbro-memory-*.tgz
+            build/crbro-memory-*.mcpb
+            release-notes.md
+
+  npm:
+    needs: verify
+    if: needs.verify.outputs.on_npm != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write # npm trusted publishing (OIDC) and provenance
+    env:
+      HAS_NPM_TOKEN: ${{ secrets.NPM_TOKEN != '' }}
+    steps:
+      - uses: actions/setup-node@v7
+        with:
+          # Trusted publishing needs npm 11.5.1 or newer, which ships with Node 24.
+          node-version: 24
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-files
+
+      - name: Publish with provenance (trusted publishing, OIDC)
+        if: env.HAS_NPM_TOKEN != 'true'
+        run: npm publish "./crbro-memory-${{ needs.verify.outputs.version }}.tgz" --provenance --access public
+
+      - name: Publish with provenance (NPM_TOKEN fallback)
+        if: env.HAS_NPM_TOKEN == 'true'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          echo "//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}" > "$RUNNER_TEMP/npmrc"
+          NPM_CONFIG_USERCONFIG="$RUNNER_TEMP/npmrc" npm publish "./crbro-memory-${{ needs.verify.outputs.version }}.tgz" --provenance --access public
+
+  registry:
+    needs: [verify, npm]
+    # Runs when npm published now or the version was already there.
+    if: ${{ !cancelled() && needs.verify.result == 'success' && (needs.npm.result == 'success' || needs.npm.result == 'skipped') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write # GitHub OIDC login to the MCP Registry
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: The version is visible on npm
+        run: |
+          v="${{ needs.verify.outputs.version }}"
+          for i in $(seq 1 30); do
+            if npm view "crbro-memory@$v" version >/dev/null 2>&1; then echo "crbro-memory@$v is on npm"; exit 0; fi
+            echo "waiting for npm ($i/30)"; sleep 10
+          done
+          echo "::error::crbro-memory@$v is not on npm after 5 minutes; the registry validates mcpName against the published package."
+          exit 1
+
+      - name: Install mcp-publisher (pinned, checksum verified)
+        run: |
+          file="mcp-publisher_linux_amd64.tar.gz"
+          curl -fsSL -o "$file" "https://github.com/modelcontextprotocol/registry/releases/download/${MCP_PUBLISHER_VERSION}/${file}"
+          echo "${MCP_PUBLISHER_SHA256}  ${file}" | sha256sum -c -
+          tar xzf "$file" mcp-publisher
+
+      - name: Authenticate to MCP Registry (GitHub OIDC)
+        run: ./mcp-publisher login github-oidc
+
+      - name: Publish server to MCP Registry
+        run: ./mcp-publisher publish
+
+  github-release:
+    needs: [verify, npm]
+    if: ${{ !cancelled() && needs.verify.result == 'success' && (needs.npm.result == 'success' || needs.npm.result == 'skipped') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write # create the release and attach the bundle
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-files
+
+      - name: Create the GitHub release (or complete the existing one)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          v="${{ needs.verify.outputs.version }}"
+          bundle="build/crbro-memory-${v}.mcpb"
+          if gh release view "v${v}" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release v${v} already exists: attaching the bundle only."
+            gh release upload "v${v}" "$bundle" --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "v${v}" "$bundle" --title "v${v}" --notes-file release-notes.md --verify-tag --repo "$GITHUB_REPOSITORY"
+          fi
