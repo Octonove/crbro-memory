@@ -579,13 +579,42 @@ export class SearchEngine {
     }
     const indexAt = await fileMtime(this.brain.paths.chunksIndex());
     if ((await this.loadOrRebuild()) === 'loaded') {
-      // A loaded index is as old as its file. isStale() forgives one second, and
-      // a process killed inside the 5 s persist debounce leaves exactly that:
-      // a neuron on disk, newer than the index by less than the slack, that no
-      // rebuild will ever pick up. Catch up from the file's own timestamp.
+      // A loaded index is as old as its file. Entries without a recorded file
+      // date (an index from 2.10) are judged against it with a second of
+      // slack; the rest by their exact date.
       this.syncedAt = indexAt;
       await this.refresh();
     }
+    this.reconcileVectors();
+  }
+
+  /**
+   * Make the vectors match the index (2.11), in the background. Vectors were
+   * only ever computed for chunks inserted in this process, so a vectors file
+   * dropped at load (torn by a crash, another model) was never refilled and
+   * the layer stayed empty or partial until a full rebuild; and vectors of
+   * chunks that left the index were never pruned, taking candidate seats.
+   */
+  private reconcileVectors(): void {
+    if (!this.semantic || !this.db) return;
+    const docs = Object.values(((this.db as any)?.data?.docs?.docs) || {}) as any[];
+    const quiero = new Map<string, string>();
+    for (const d of docs) if (d && d.id && d.kind !== 'header' && d.kind !== 'session') quiero.set(String(d.id), String(d.text || ''));
+    const tengo = new Set(this.semantic.idList());
+    const huerfanos = [...tengo].filter(id => !quiero.has(id));
+    if (huerfanos.length > 0) this.semantic.remove(huerfanos);
+    let faltan = 0;
+    for (const [id, text] of quiero) if (!tengo.has(id)) { this.pendingEmbed.set(id, text); faltan++; }
+    if (faltan === 0 && huerfanos.length === 0) return;
+    const previa = this.embedding ?? Promise.resolve();
+    this.embedding = previa.then(() => this.flushEmbeddings()).then(() => this.markDirty()).catch(() => undefined);
+  }
+
+  /** Vectors held vs chunks that should have one (status, tests). */
+  semanticCoverage(): { vectors: number; chunks: number } | null {
+    if (!this.semantic || !this.db) return null;
+    const docs = Object.values(((this.db as any)?.data?.docs?.docs) || {}) as any[];
+    return { vectors: this.semantic.count(), chunks: docs.filter(d => d && d.kind !== 'header' && d.kind !== 'session').length };
   }
 
   private async loadOrRebuild(): Promise<'loaded' | 'rebuilt'> {
@@ -1328,12 +1357,6 @@ export class SearchEngine {
     return c && c.model === semanticModel() ? c.strong : SEMANTIC_STRONG_DEFAULT;
   }
 
-  /** Below this a vector match is no evidence at all on this brain: the median noise top. */
-  private semanticEvidence(): number {
-    const c = this.calibration;
-    return c && c.model === semanticModel() ? Math.max(semanticFloor(), c.noise_p95) : SEMANTIC_STRONG_DEFAULT;
-  }
-
   /**
    * Measure this brain's semantic noise floor, in the background, when there
    * is none or the vector count moved by more than a quarter since (2.11).
@@ -1441,7 +1464,8 @@ export class SearchEngine {
       return equipo;
     };
     const strongCut = this.semanticStrong();
-    const evidenceCut = this.semanticEvidence();
+    // A vector match is evidence only above this brain's noise: the strong line.
+    const evidenceCut = strongCut;
 
     for (const chunks of candidatos) {
       const neuronId = chunks[0].neuron;

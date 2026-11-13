@@ -30,7 +30,8 @@
 
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
-import { promises as fs, existsSync } from 'node:fs';
+import { promises as fs, existsSync, createReadStream } from 'node:fs';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import os from 'node:os';
 
@@ -43,6 +44,52 @@ import os from 'node:os';
  */
 export const SEMANTIC_MODEL_DEFAULT = 'Xenova/multilingual-e5-small';
 export const SEMANTIC_DTYPE_DEFAULT = 'q8';
+/**
+ * The runtime `semantic install` puts in the semantic home, pinned to an
+ * exact version (2.11; it was the floating range `@3`, so every install could
+ * pull a different release of a package that runs install scripts).
+ */
+export const SEMANTIC_RUNTIME = '@huggingface/transformers@3.8.1';
+/**
+ * The default model, pinned by content (2.11). The Hub revision is a moving
+ * `main`; these are the SHA-256 of the files the benchmarks were measured
+ * with (downloaded 2026-09-03). A model whose files differ is refused, never
+ * used: the layer reports why and recall stays keyword-only. Only checked for
+ * the default model and dtype; CRBRO_SEMANTIC_MODEL users pick their own.
+ */
+export const SEMANTIC_MODEL_FILES: Readonly<Record<string, { sha256: string; bytes: number }>> = {
+  'config.json': { sha256: 'cb99455288675345e1a4f411438d5d0adbba5fbd3a67ea4fb03c015433b996c1', bytes: 658 },
+  'tokenizer.json': { sha256: '0b44a9d7b51c3c62626640cda0e2c2f70fdacdc25bbbd68038369d14ebdf4c39', bytes: 17_082_730 },
+  'tokenizer_config.json': { sha256: 'a1d6bc8734a6f635dc158508bef000f8e2e5a759c7d92f984b2c86e5ff53425b', bytes: 443 },
+  'onnx/model_quantized.onnx': { sha256: 'f80102d3f2a1229f387d3c81909990d8945513e347b0eab049f7de3c6f98c193', bytes: 118_308_185 },
+};
+
+async function sha256Of(file: string): Promise<string> {
+  const h = createHash('sha256');
+  await new Promise<void>((resolve, reject) => {
+    createReadStream(file).on('data', d => h.update(d)).on('end', () => resolve()).on('error', reject);
+  });
+  return h.digest('hex');
+}
+
+/**
+ * Check the cached files of the default model against SEMANTIC_MODEL_FILES.
+ * Returns null when they match (or the model is not the default one), else
+ * what is wrong.
+ */
+export async function verifyModelFiles(home: string = semanticHome()): Promise<string | null> {
+  if (semanticModel() !== SEMANTIC_MODEL_DEFAULT || semanticDtype() !== SEMANTIC_DTYPE_DEFAULT) return null;
+  const dir = path.join(home, 'models', ...SEMANTIC_MODEL_DEFAULT.split('/'));
+  for (const [rel, want] of Object.entries(SEMANTIC_MODEL_FILES)) {
+    const file = path.join(dir, ...rel.split('/'));
+    let st;
+    try { st = await fs.stat(file); } catch { return `model file missing: ${rel} (run \`npx crbro-memory semantic install\`)`; }
+    if (st.size !== want.bytes || (await sha256Of(file)) !== want.sha256) {
+      return `model file ${rel} does not match the pinned hash; refusing to use it (delete ${dir} and run \`npx crbro-memory semantic install\`)`;
+    }
+  }
+  return null;
+}
 export function semanticModel(): string { return process.env.CRBRO_SEMANTIC_MODEL || SEMANTIC_MODEL_DEFAULT; }
 export function semanticDtype(): string { return process.env.CRBRO_SEMANTIC_DTYPE || SEMANTIC_DTYPE_DEFAULT; }
 /**
@@ -115,6 +162,8 @@ interface Meta {
   dtype: string;
   dim: number;
   ids: string[];
+  /** Byte length of vectors.f32 this meta was written with (2.11). */
+  bytes?: number;
 }
 
 export interface SemanticHit {
@@ -137,7 +186,12 @@ export class SemanticIndex {
   /** Upserts run one at a time: two overlapping ones would both extend the same array. */
   private queue: Promise<unknown> = Promise.resolve();
 
-  constructor(private dir: string) {}
+  /**
+   * allowDownload: only `semantic install` may fetch the model from the Hub
+   * (2.11). A server never downloads during a query: a missing model makes
+   * the layer report why and recall stays keyword-only.
+   */
+  constructor(private dir: string, private options: { allowDownload?: boolean } = {}) {}
 
   private metaPath(): string { return path.join(this.dir, 'vectors.meta.json'); }
   private dataPath(): string { return path.join(this.dir, 'vectors.f32'); }
@@ -161,10 +215,13 @@ export class SemanticIndex {
   async load(): Promise<void> {
     try {
       const meta = JSON.parse(await fs.readFile(this.metaPath(), 'utf8')) as Meta;
-      if (meta.model !== semanticModel() || !(meta.dim > 0)) return;
+      // Vectors of another model or another quantisation are not comparable.
+      if (meta.model !== semanticModel() || (meta.dtype && meta.dtype !== semanticDtype()) || !(meta.dim > 0)) return;
       const buf = await fs.readFile(this.dataPath());
       const expected = meta.ids.length * meta.dim * 4;
-      if (buf.byteLength !== expected) return;
+      // A torn pair (a crash between the two renames) does not match: start
+      // empty and let the index refill what is missing (2.11).
+      if (buf.byteLength !== expected || (meta.bytes !== undefined && meta.bytes !== buf.byteLength)) return;
       this.vectors = new Float32Array(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength));
       this.ids = meta.ids;
       this.dim = meta.dim;
@@ -177,7 +234,7 @@ export class SemanticIndex {
   async persist(): Promise<void> {
     if (!this.dirty) return;
     await fs.mkdir(this.dir, { recursive: true });
-    const meta: Meta = { model: semanticModel(), dtype: semanticDtype(), dim: this.dim, ids: this.ids };
+    const meta: Meta = { model: semanticModel(), dtype: semanticDtype(), dim: this.dim, ids: this.ids, bytes: this.vectors.byteLength };
     const tmpMeta = this.metaPath() + '.tmp';
     const tmpData = this.dataPath() + '.tmp';
     await fs.writeFile(tmpData, Buffer.from(this.vectors.buffer, this.vectors.byteOffset, this.vectors.byteLength));
@@ -202,8 +259,16 @@ export class SemanticIndex {
         const tf = mod.pipeline ? mod : mod.default;
         tf.env.cacheDir = path.join(semanticHome(), 'models');
         tf.env.allowLocalModels = true;
-        tf.env.allowRemoteModels = true;
+        tf.env.allowRemoteModels = this.options.allowDownload === true;
+        if (!this.options.allowDownload) {
+          const wrong = await verifyModelFiles();
+          if (wrong) { this.broken = wrong; throw new Error(wrong); }
+        }
         this.extractor = await tf.pipeline('feature-extraction', semanticModel(), { dtype: semanticDtype() });
+        if (this.options.allowDownload) {
+          const wrong = await verifyModelFiles();
+          if (wrong) { this.extractor = null; this.broken = wrong; throw new Error(wrong); }
+        }
         return this.extractor;
       })().catch(err => {
         this.broken = this.broken || `semantic model failed to load: ${err instanceof Error ? err.message : String(err)}`;
@@ -264,6 +329,9 @@ export class SemanticIndex {
     this.dirty = true;
     return nuevos.length;
   }
+
+  /** Every id holding a vector (to compare with the index: B14). */
+  idList(): readonly string[] { return this.ids; }
 
   /** Drop vectors for ids that left the index. */
   remove(ids: Iterable<string>): number {

@@ -1057,6 +1057,7 @@ export function createServer(shared?: Engines): McpServer {
         undated_skipped: z.number().optional().describe('With since: matching entries left out for having no date'),
         hint: z.string(),
         no_answer: z.boolean().optional().describe('Set when nothing cleared the minimum evidence bar: at most one weak row, the nearest'),
+        semantic: z.string().optional().describe('warming: the semantic model was still loading, this answer is keyword-only'),
         truncated: z.object({}).loose().optional(),
       },
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
@@ -1078,7 +1079,7 @@ export function createServer(shared?: Engines): McpServer {
         const project = scope === 'all' ? null : await projectFor(args.project);
         if (scope === 'project' && !project?.neurons.length) throw new Error('Project scope requires an explicit neuron binding in crbro_boot.');
         const scopedNeurons = args.neurons ?? (scope === 'project' ? project!.neurons : undefined);
-        const { results, matched_neurons, sessions, sessions_total, undated_skipped, no_answer } = await searchEngine.searchManyWithStats(
+        const { results, matched_neurons, sessions, sessions_total, undated_skipped, no_answer, semantic } = await searchEngine.searchManyWithStats(
           [args.query, ...(args.queries || [])],
           { domain: args.domain, limit: args.limit ?? 5, since, kinds,
             neuronIds: scopedNeurons, includeGlobal: scope === 'project' && !args.neurons,
@@ -1174,6 +1175,7 @@ export function createServer(shared?: Engines): McpServer {
           ...(avisoRancio ? { stale_warning: avisoRancio } : {}),
           // Search parcel (2.11): nothing cleared the evidence bar; at most one weak row, the nearest.
           ...(no_answer ? { no_answer: true } : {}),
+          ...(semantic === 'warming' ? { semantic: 'warming' } : {}),
           query: args.query,
           search_scope: { mode: scope, ...(project ? { project_id: project.id } : {}), ...(scopedNeurons ? { neurons: scopedNeurons } : {}) },
           // total_results is what came back as current (capped by limit);
