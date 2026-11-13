@@ -148,12 +148,10 @@ Every command is run as `npx crbro-memory <command>` (there is no separate `crbr
 
 | Command | What it does |
 |---|---|
-| `view` | A local viewer: read your neurons in a browser |
-| `export` | Write the brain as Markdown (Obsidian-compatible) or JSON |
-| `import` | Bring memory in from `CLAUDE.md`, Claude Code memory files or a CRBRO export. A dry run by default |
-| `serve --http` | Serve over Streamable HTTP with a bearer token, on loopback by default (no OAuth) |
-
-<!-- TODO-INTEGRATOR: parcel G's final flags for view / export / import / serve --http (ports, --token, --apply, formats) go in this table. -->
+| `view [--port N] [--no-open]` | A local page in your browser (127.0.0.1 only, one-time token in the link): neurons, every entry with its date, status, verification and freshness, search, open items to resolve or discard, stale entries to verify or retire |
+| `export [--out DIR] [--format md\|json] [--include-retired]` | Write the brain as an Obsidian-compatible Markdown vault or one JSON file. Read-only, safe while a client runs, credentials redacted |
+| `import PATH [--apply] [--topic NAME] [--type fact\|preference\|pattern]` | Bring memory in from `CLAUDE.md` / `AGENTS.md`, a Claude Code memory folder or a CRBRO export. A dry run unless `--apply`; importing twice adds nothing |
+| `serve --http [--port 8787] [--host 127.0.0.1] [--allow-remote] [--new-token] [--allow-secrets]` | MCP over Streamable HTTP at `/mcp` with a bearer token (`CRBRO_HTTP_TOKEN` or the keychain). Loopback unless `--allow-remote`; no TLS, no OAuth; `crbro_secret` is left out unless `--allow-secrets`. Some antivirus web shields (Avast's, for one) rewrite MCP traffic on loopback: exclude the port if requests fail |
 
 **Credentials, backups, daemon**
 
