@@ -138,14 +138,16 @@ describe('the server never emits a result a client would refuse', () => {
     const hit = body(await call('crbro_recall', { query: 'primero', limit: 3 }));
     const top = hit.results.find((x: any) => x.neuron_id === 'project_gordo');
     expect(top.entry_id).toMatch(/^[0-9a-f]+$/);
-    // The hit is 3,200 characters, so recall hands back its opening, declared,
-    // and the id fetches the whole thing.
-    expect(top.content_truncated).toBe(true);
-    expect(top.content_chars).toBeGreaterThan(1_200);
+    // The entry is 3,200 characters: since 2.11 it is indexed in parts and
+    // recall hands back the part that matched, marked with its place, and
+    // the id fetches the whole thing.
+    expect(top.matched_part).toBeDefined();
+    expect(top.matched_part.entry_chars).toBeGreaterThan(1_200);
+    expect(top.matching_content.length).toBeLessThanOrEqual(1_200);
     const r = body(await call('crbro_inspect', { view: 'neuron', neuron: 'project_gordo', entries: [top.entry_id] }));
     expect(r.returned).toBe(1);
-    expect(r.entries[0].text.length).toBe(top.content_chars);
-    expect(r.entries[0].text.startsWith(top.matching_content.replace(/…$/, ''))).toBe(true);
+    expect(r.entries[0].text.length).toBe(top.matched_part.entry_chars);
+    expect(r.entries[0].text.slice(top.matched_part.offset).startsWith(top.matching_content)).toBe(true);
   });
 
   it('boot stays inside the budget with the protocol block intact', async () => {

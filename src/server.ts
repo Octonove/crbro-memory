@@ -1056,6 +1056,7 @@ export function createServer(shared?: Engines): McpServer {
         filters: z.object({ since: z.string().optional(), kind: z.array(z.string()).optional() }).optional(),
         undated_skipped: z.number().optional().describe('With since: matching entries left out for having no date'),
         hint: z.string(),
+        no_answer: z.boolean().optional().describe('Set when nothing cleared the minimum evidence bar: at most one weak row, the nearest'),
         truncated: z.object({}).loose().optional(),
       },
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
@@ -1077,7 +1078,7 @@ export function createServer(shared?: Engines): McpServer {
         const project = scope === 'all' ? null : await projectFor(args.project);
         if (scope === 'project' && !project?.neurons.length) throw new Error('Project scope requires an explicit neuron binding in crbro_boot.');
         const scopedNeurons = args.neurons ?? (scope === 'project' ? project!.neurons : undefined);
-        const { results, matched_neurons, sessions, sessions_total, undated_skipped } = await searchEngine.searchManyWithStats(
+        const { results, matched_neurons, sessions, sessions_total, undated_skipped, no_answer } = await searchEngine.searchManyWithStats(
           [args.query, ...(args.queries || [])],
           { domain: args.domain, limit: args.limit ?? 5, since, kinds,
             neuronIds: scopedNeurons, includeGlobal: scope === 'project' && !args.neurons,
@@ -1171,6 +1172,8 @@ export function createServer(shared?: Engines): McpServer {
           : '';
         const payload = {
           ...(avisoRancio ? { stale_warning: avisoRancio } : {}),
+          // Search parcel (2.11): nothing cleared the evidence bar; at most one weak row, the nearest.
+          ...(no_answer ? { no_answer: true } : {}),
           query: args.query,
           search_scope: { mode: scope, ...(project ? { project_id: project.id } : {}), ...(scopedNeurons ? { neurons: scopedNeurons } : {}) },
           // total_results is what came back as current (capped by limit);
@@ -1192,7 +1195,8 @@ export function createServer(shared?: Engines): McpServer {
           // question, in a list of their own so narrative never outranks a fact.
           // sessions_total: how many days had a hit; three shown never reads as three.
           ...(sessions.length ? { sessions_matched: sessions.map(s => ({ ...s, date: dia(s.date) })), sessions_total } : {}),
-          hint: (rancios.length && !actuales.length ? 'Nothing current matched; the rows that did are in possibly_stale. '
+          hint: (no_answer ? 'no_answer: nothing stored clearly matches; the one row is only the nearest, weak — treat the question as not stored unless that row plainly answers it, or ask again with 2-4 phrasings in queries. ' : '') +
+            (rancios.length && !actuales.length ? 'Nothing current matched; the rows that did are in possibly_stale. '
             : mejorMovido ? 'The best match (rank 1) moved to possibly_stale; results holds lower-ranked rows that may be about something else. ' : '') +
             (rancios.length ? `${STALE_HINT} ` : '') +
             (servidos === 0

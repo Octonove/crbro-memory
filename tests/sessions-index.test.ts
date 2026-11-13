@@ -89,8 +89,10 @@ describe('sessions_matched', () => {
       key_facts_added: 0, decisions_made: 0, new_neurons_created: 0, synapses_updated: 0,
     };
     await fs.writeFile(path.join(root, 'hippocampus', 'session_2020-02-02.json'), JSON.stringify(viejo));
+    // 2.11: a search first catches up with files written by anyone else, so
+    // the log is found before any rebuild; the rebuild must keep it.
     const before = body(await call('crbro_recall', { query: 'clavicémbalo' }));
-    expect(before.sessions_matched ?? []).toHaveLength(0);
+    expect(before.sessions_matched?.[0]?.session_id).toBe('session_2020-02-02');
     await call('crbro_maintenance', { dry_run: false });     // rebuilds the index
     const after = body(await call('crbro_recall', { query: 'clavicémbalo' }));
     expect(after.sessions_matched).toHaveLength(1);

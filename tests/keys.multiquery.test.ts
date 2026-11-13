@@ -89,7 +89,9 @@ describe('several phrasings at once', () => {
   it('a neuron ranked first by every phrasing scores 1.0', async () => {
     await cortex.learn('Infraestructura', 'fact', HETZNER);
     const hits = await engine.searchMany(['Hetzner', 'VPS Hetzner', 'Falkenstein']);
-    expect(hits[0].relevance_score).toBe(1);
+    // 1 is the best a phrasing can score; recency may lift a line saved today by up to 4 %.
+    expect(hits[0].relevance_score).toBeGreaterThanOrEqual(1);
+    expect(hits[0].relevance_score).toBeLessThanOrEqual(1.04);
     expect(hits[0].confidence).toBe('strong');
   });
 });

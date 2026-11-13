@@ -21,7 +21,7 @@ import { writeFileSync, renameSync } from 'node:fs';
 import { readJSON, writeJSON, listJSONFiles, fileExists, deleteJSON, fileMtime } from '../utils/fs.js';
 import { chunkId, factId } from '../utils/hash.js';
 import { queryTerms, variants, createIndexTokenizer } from './tokenize.js';
-import { SemanticIndex, semanticEnabled, type SemanticHit } from './semantic.js';
+import { SemanticIndex, semanticEnabled, semanticModel, type SemanticHit } from './semantic.js';
 import { entryId } from '../sync/ops.js';
 import { stalenessContextOf, factStaleness, entryStaleness, type StalenessContext, type StaleInfo } from '../engine/shelf.js';
 import type { Brain } from '../engine/brain.js';
@@ -39,10 +39,58 @@ import type { Neuron, SearchResult, Fact } from '../types/index.js';
  */
 export const INDEX_VERSION = 8;   // 4: keys field (1.15) · 5: entry_status (2.0) · 6: eid per chunk (2.1) · 7: session logs indexed (2.2) · 8: own tokenizer, 4 indexed fields, long entries in parts (2.11)
 
-/** Weight given to a neuron for each *additional* chunk that matches. */
+/**
+ * Lift for each *additional* entry of a neuron that matched by keyword, in
+ * units of one fully matched term (the keyword engine), or of FUSED_UNIT
+ * with the semantic layer on (2.11): the same 0.05 the keyword engine always
+ * had, but no longer added raw to a fused score where it was worth fifteen
+ * ranks.
+ */
 const BREADTH_BONUS = 0.05;
-/** Cap on the breadth bonus — breadth is a tiebreaker, never the main signal. */
+/** Cap on the breadth lift — breadth is a tiebreaker, never the main signal. */
 const BREADTH_CAP = 0.25;
+/** One breadth unit on the fused (reciprocal-rank) scale: the cap is then 0.025, about a rank and a half at the top. */
+const FUSED_UNIT = 0.1;
+/**
+ * The bound project's neurons are lifted by this factor (2.11) — a boost
+ * inside the ranking, not a separate tier above it.
+ */
+const PROJECT_BOOST = 1.25;
+/** Fallback strong line for a vector-only match while a brain has no calibration (the 2.10 constant). */
+const SEMANTIC_STRONG_DEFAULT = 0.86;
+/** Strong needs the calibrated noise top (p95) plus this. */
+const CALIBRATION_MARGIN = 0.01;
+const CALIBRATION_SAMPLES = 40;
+/** Below this many vectors a noise floor is not worth measuring. */
+const CALIBRATION_MIN_VECTORS = 50;
+/** Queries with no word of any brain: their best cosine is pure noise too. */
+const NONSENSE = ['xqzv wkrp jjhg', 'zzkq vrrt plmx', 'qwoijd fhhq', 'bnxl ttqz wpw'];
+/** Vector candidates looked at, of which at most SEMANTIC_CANDIDATES are used. */
+const SEMANTIC_POOL = 160;
+/** At most this many vector candidates from one neuron (2.11: diversity). */
+const SEMANTIC_PER_NEURON = 4;
+/** How long a query waits for the semantic model before answering keyword-only (2.11). CRBRO_SEMANTIC_WAIT_MS overrides. */
+const SEMANTIC_WAIT_DEFAULT_MS = 1500;
+/** The no-answer level is on unless CRBRO_NO_ANSWER=0 (2.11). */
+function noAnswerEnabled(): boolean {
+  const v = (process.env.CRBRO_NO_ANSWER || '').toLowerCase();
+  return !(v === '0' || v === 'off' || v === 'false');
+}
+function semanticWaitMs(): number {
+  const v = Number(process.env.CRBRO_SEMANTIC_WAIT_MS);
+  return Number.isFinite(v) && v >= 0 && v <= 120_000 ? v : SEMANTIC_WAIT_DEFAULT_MS;
+}
+/**
+ * Long entries (2.11) are indexed as overlapping parts: an entry longer than
+ * PART_MAX characters becomes parts of about PART_TARGET with PART_OVERLAP of
+ * overlap, cut at a sentence or a space. BM25 no longer drowns the one line
+ * that matched in the length of the rest, the vector model (which sees about
+ * 512 tokens) sees every part, and recall returns the part that matched
+ * instead of the opening of a 5,000-character entry.
+ */
+const PART_MAX = 1000;
+const PART_TARGET = 800;
+const PART_OVERLAP = 150;
 /** Exponent on term coverage. >1 punishes chunks that only match one term. */
 const COVERAGE_EXPONENT = 1.5;
 /** Debounce before writing the index to disk after a learn. */
@@ -144,13 +192,15 @@ const ALSO_PREVIEW = 300;
 function alsoLine(
   text: string, kind: string, added: string, eid?: string,
   from: { origin?: string; by?: string; staleness?: { stale: boolean; age_days: number } } = {},
+  entryChars?: number,
 ) {
   return {
     ...(eid ? { entry_id: eid } : {}),
     kind,
     added,
     preview: text.length > ALSO_PREVIEW ? `${text.slice(0, ALSO_PREVIEW).trimEnd()}…` : text,
-    chars: text.length,
+    // The whole entry's length, also when the line is one part of a long entry.
+    chars: entryChars || text.length,
     // Same rule as the winning entry: said only when the line is not the user's own.
     ...(from.origin ? { origin: from.origin } : {}),
     ...(from.by ? { by: from.by } : {}),
@@ -242,6 +292,14 @@ export interface SearchStats {
   sessions_total?: number;
   /** With `since`: matching entries left out because they carry no date at all. */
   undated_skipped?: number;
+  /**
+   * True when no row cleared the minimum evidence bar (2.11): at most one
+   * weak row comes back, the nearest thing, and the caller should treat the
+   * question as not stored.
+   */
+  no_answer?: boolean;
+  /** How the semantic layer took part: used, or still loading (keyword-only answer). Absent when it is off. */
+  semantic?: 'used' | 'warming';
 }
 
 /**
@@ -336,6 +394,100 @@ interface ChunkHit {
   matched: number;
   /** Cosine from the semantic layer, when it ranked this chunk. */
   semantic?: number;
+  /** For a part of a long entry (2.11): its index (0-based), how many parts, where it starts, the whole entry's length. */
+  part?: number;
+  parts?: number;
+  offset?: number;
+  entry_chars?: number;
+}
+
+/** The fields of a stored document a hit carries, without score. */
+function chunkFields(doc: any): Omit<ChunkHit, 'score' | 'matched'> {
+  return {
+    neuron: doc.neuron, name: doc.name, domain: doc.domain, text: doc.text,
+    kind: doc.kind, eid: doc.eid || '', added: doc.added, heat: doc.heat || 0,
+    ...(typeof doc.parts === 'number' ? { part: doc.part, parts: doc.parts, offset: doc.offset, entry_chars: doc.entry_chars } : {}),
+  };
+}
+
+/**
+ * Ranks for reciprocal-rank fusion counted per neuron (2.11): the first
+ * chunk of each neuron takes the next free rank, every later chunk of the
+ * same neuron sits one place behind its neuron's last one. Input in score order.
+ */
+function rankPerNeuron(list: Array<{ id: string; neuron: string }>): Map<string, number> {
+  const out = new Map<string, number>();
+  const ultimo = new Map<string, number>();
+  let siguiente = 1;
+  for (const { id, neuron } of list) {
+    const prev = ultimo.get(neuron);
+    const r = prev === undefined ? siguiente++ : prev + 1;
+    ultimo.set(neuron, r);
+    out.set(id, r);
+  }
+  return out;
+}
+
+/** One chunk per entry, the best-scoring part of a long one; order kept. Header chunks pass through. */
+function unaPorEntrada(chunks: ChunkHit[]): ChunkHit[] {
+  const vistas = new Set<string>();
+  const out: ChunkHit[] = [];
+  for (const c of chunks) {
+    if (c.parts && c.eid) {
+      const k = `${c.kind}:${c.eid}`;
+      if (vistas.has(k)) continue;
+      vistas.add(k);
+    }
+    out.push(c);
+  }
+  return out;
+}
+
+/** Cut a long entry into overlapping parts at sentence or word boundaries. Each part is an exact slice. */
+export function splitParts(text: string): Array<{ offset: number; text: string }> {
+  if (text.length <= PART_MAX) return [{ offset: 0, text }];
+  const out: Array<{ offset: number; text: string }> = [];
+  let start = 0;
+  while (start < text.length) {
+    let end = Math.min(text.length, start + PART_TARGET);
+    if (text.length - end < PART_TARGET / 4) end = text.length;   // no tiny last part
+    if (end < text.length) {
+      const ventana = text.slice(start + Math.floor(PART_TARGET * 0.6), end);
+      const frase = Math.max(ventana.lastIndexOf('. '), ventana.lastIndexOf('\n'), ventana.lastIndexOf('; '));
+      const espacio = ventana.lastIndexOf(' ');
+      const corte = frase >= 0 ? frase + 1 : espacio;
+      if (corte > 0) end = start + Math.floor(PART_TARGET * 0.6) + corte;
+    }
+    out.push({ offset: start, text: text.slice(start, end) });
+    if (end >= text.length) break;
+    // Next part starts PART_OVERLAP back, at a word boundary.
+    let next = Math.max(start + 1, end - PART_OVERLAP);
+    const sp = text.indexOf(' ', next);
+    if (sp > 0 && sp < end) next = sp + 1;
+    start = next;
+  }
+  return out;
+}
+
+/** The full text of an entry by its id, as it is indexed (a decision with its rationale). Null when gone or retired. */
+function entryTextById(neuron: Neuron, kind: string, eid: string): string | null {
+  switch (kind) {
+    case 'fact': {
+      const f = (neuron.facts || []).find(x => !!x && !isRetired(x) && (x.id || factId(x.text)) === eid);
+      return f ? f.text : null;
+    }
+    case 'decision': {
+      const d = (neuron.decisions || []).find(x => !!x && (x.id || entryId(x.text)) === eid);
+      return d ? (d.rationale ? `${d.text} — ${d.rationale}` : d.text) : null;
+    }
+    case 'map':
+      return neuron.map?.text || null;
+    case 'pattern': return (neuron.patterns || []).find(t => entryId(t) === eid) ?? null;
+    case 'preference': return (neuron.preferences || []).find(t => entryId(t) === eid) ?? null;
+    case 'error': return (neuron.errors || []).find(t => entryId(t) === eid) ?? null;
+    case 'debt': return (neuron.debts || []).find(t => entryId(t) === eid) ?? null;
+    default: return null;
+  }
 }
 
 export class SearchEngine {
@@ -773,6 +925,14 @@ export class SearchEngine {
    * the sum of its normalised hits weighted by how much of the query it
    * covers. This is what stops one very common term from deciding the ranking
    * and what makes a chunk matching five of six terms beat a scrap matching one.
+   *
+   * relevance_score (2.11) means one thing in every mode: the ranking score on
+   * a 0–1 scale where 1 is the best this query can score — keyword engine:
+   * every term matched at its best hit (rarity-weighted share of the query);
+   * with the semantic layer: first in both the keyword and the vector
+   * ranking; with several phrasings: 1 when every phrasing scores 1. Recency
+   * and breadth can lift it a few percent above 1. It orders the list; it is
+   * not a truth value, and `confidence` is the label to read.
    */
   async search(
     query: string,
@@ -796,7 +956,7 @@ export class SearchEngine {
     const sinFecha = new Set<string>();
     const allowed = options?.neuronIds ? new Set(options.neuronIds) : null;
     const owned = new Set(options?.globalExcludedNeurons || []);
-    const admite = (doc: { id?: string; kind?: string; added?: string; neuron?: string }): boolean => {
+    const admite = (doc: { id?: string; kind?: string; added?: string; neuron?: string; eid?: string }): boolean => {
       if (allowed && !allowed.has(doc.neuron || '')) {
         const global = options?.includeGlobal && (doc.kind === 'preference' ||
           (!!doc.neuron && /^(tech_|process_)/.test(doc.neuron) && !owned.has(doc.neuron) &&
@@ -807,7 +967,8 @@ export class SearchEngine {
       if (desde) {
         if (doc.kind === 'header') return false;   // dated by the neuron's birth, which says nothing about its content
         const dia = String(doc.added || '').slice(0, 10);
-        if (!dia) { if (doc.id) sinFecha.add(String(doc.id)); return false; }
+        // Counted per entry, not per part of a long one.
+        if (!dia) { if (doc.id) sinFecha.add(String(doc.eid ? `${doc.neuron}#${doc.eid}` : doc.id)); return false; }
         if (dia < desde) return false;
       }
       return true;
@@ -834,15 +995,25 @@ export class SearchEngine {
       const max = Math.max(0, ...pesoTermino.values());
       for (const [t, v] of pesoTermino) pesoTermino.set(t, max > 0 ? v / max : 1);
     }
+    // The most a chunk can collect: every term at its best hit. A term found
+    // nowhere counts as the rarest (weight 1): a question whose words are
+    // mostly absent cannot score near 1 on the one word that is there.
+    const ideal = porTermino.reduce((s, { term }) => s + (pesoTermino.get(term) ?? 1), 0) + (terms.length - porTermino.length) || 1;
 
     for (const { term, hits } of porTermino) {
-      const best = hits[0].score || 1;
+      // The term's ceiling is its best CONTENT hit (2.11). It used to be the
+      // first hit of any kind: a neuron NAME carrying the word (boosted x2) or
+      // a 700-character day-log paragraph set the 1.0, and every entry that
+      // answers was worth half of that — so how much a term weighed depended
+      // on which header happened to contain it. Day logs have their own
+      // ceiling; a header can reach 1, never more.
+      const best = hits.find(h => !['header', 'session'].includes((h.document as any).kind))?.score || hits[0].score || 1;
+      const bestSession = hits.find(h => (h.document as any).kind === 'session')?.score || 1;
       const w = pesoTermino.get(term) ?? 1;
 
       for (const hit of hits) {
         const doc = hit.document as any;
         const key = doc.id as string;
-        const normalised = best > 0 ? (hit.score / best) * w : 0;
 
         // Session logs are searched, but never as neurons: they keep a list
         // of their own, so a long narrative cannot outrank the fact that
@@ -851,40 +1022,31 @@ export class SearchEngine {
           if (allowed) continue; // A daily narrative has no reliable project boundary.
           if (clases) continue;                                   // a day log is not an entry kind
           if (desde && String(doc.added || '').slice(0, 10) < desde) continue;
+          const normalisedSession = (hit.score / bestSession) * w;
           const prev = perSession.get(key);
-          if (prev) { prev.score += normalised; prev.matched += 1; }
-          else perSession.set(key, { session: String(doc.name || ''), date: String(doc.added || ''), text: String(doc.text || ''), eid: String(doc.eid || ''), score: normalised, matched: 1 });
+          if (prev) { prev.score += normalisedSession; prev.matched += 1; }
+          else perSession.set(key, { session: String(doc.name || ''), date: String(doc.added || ''), text: String(doc.text || ''), eid: String(doc.eid || ''), score: normalisedSession, matched: 1 });
           continue;
         }
 
         if (!admite(doc)) continue;
+        const normalised = best > 0 ? Math.min(1, hit.score / best) * w : 0;
 
         const existing = perChunk.get(key);
         if (existing) {
           existing.score += normalised;
           existing.matched += 1;
         } else {
-          perChunk.set(key, {
-            neuron: doc.neuron,
-            name: doc.name,
-            domain: doc.domain,
-            text: doc.text,
-            kind: doc.kind,
-            eid: doc.eid || '',
-            added: doc.added,
-            heat: doc.heat || 0,
-            score: normalised,
-            matched: 1,
-          });
+          perChunk.set(key, { ...chunkFields(doc), score: normalised, matched: 1 });
         }
       }
     }
 
     // Coverage weighting: a chunk matching five of six terms beats a scrap
-    // matching one.
+    // matching one. Then onto the 0–1 scale.
     for (const chunk of perChunk.values()) {
       const coverage = chunk.matched / terms.length;
-      chunk.score = chunk.score * Math.pow(coverage, COVERAGE_EXPONENT);
+      chunk.score = chunk.score * Math.pow(coverage, COVERAGE_EXPONENT) / ideal;
     }
 
     // Recency: a few percent on the lexical score, so near-ties fall to the
@@ -899,9 +1061,12 @@ export class SearchEngine {
 
     // Semantic fusion — only when the opt-in layer is installed, enabled and
     // holds vectors. Off, this is a no-op and the scores above stand.
+    let semantic: SearchStats['semantic'];
     if (this.semantic && this.semantic.ready() && this.semantic.count() > 0) {
-      await this.fuseSemantic(query, perChunk, options?.domain, admite);
+      semantic = await this.fuseSemantic(query, perChunk, options?.domain, admite);
     }
+    const unidad = semantic === 'used' ? FUSED_UNIT : 1 / ideal;
+    if (options?.stats && semantic) options.stats.semantic = semantic;
     if (options?.stats && desde) options.stats.undated_skipped = sinFecha.size;
 
     if (options?.stats) {
@@ -923,15 +1088,24 @@ export class SearchEngine {
     // How many neurons had any hit, before the limit: without it a caller
     // shown five results cannot tell "five matched" from "five of forty".
     if (options?.stats) options.stats.matched_neurons = byNeuron.size;
-    return this.materializeResults([...byNeuron.values()], limit, terms.length, options?.preferNeurons);
+    return this.materializeResults([...byNeuron.values()], limit, terms.length, options?.preferNeurons, options?.stats, unidad);
   }
 
   /**
-   * Several phrasings of one question, searched together and fused by
-   * reciprocal rank. The caller is a language model: it knows the synonyms a
-   * keyword index does not, and asking three ways costs it nothing. Rank 1
-   * in every list scores 1.0; a neuron seen by one list out of three scores
-   * about a third. One phrasing behaves exactly like search().
+   * Several phrasings of one question, searched together and fused (2.11).
+   * The caller is a language model: it knows the synonyms a keyword index
+   * does not, and asking three ways costs it nothing.
+   *
+   * Fusion is by score, not by rank: 0.7 x the neuron's best score in any
+   * phrasing + 0.3 x its mean over all phrasings. Reciprocal rank (until
+   * 2.10) gave a neuron sitting second to sixth in every list 0.9+ whatever
+   * its lines covered, because every list is filled to twenty rows. The row
+   * shown is ONE phrasing's row — a strong one if any phrasing found the
+   * neuron strongly, else the best-scoring — and its confidence,
+   * matched_terms, query_terms and semantic_score are all that row's own:
+   * the label never contradicts the numbers beside it (until 2.10 "strong"
+   * was an OR over phrasings next to another row's 2-of-7). One phrasing
+   * behaves exactly like search().
    */
   async searchMany(
     queries: string[],
@@ -948,70 +1122,88 @@ export class SearchEngine {
     if (options.stats) {
       // Session hits: a day that several phrasings point at ranks first, then
       // by accumulated coverage (matched over query terms, so 2/2 beats 3/8).
-      // The row kept is the best-covered one, strong if any phrasing found it
-      // so — and the same phrasings in any order give the same list.
+      // The row kept is a strong one when any phrasing found the day strongly,
+      // else the best-covered — and its label is its own.
       const cobertura = (m: SessionMatch) => (m.query_terms > 0 ? m.matched_terms / m.query_terms : 0);
-      const fusion = new Map<string, { row: SessionMatch; cobertura: number; frases: number; strong: boolean }>();
+      const mejorFila = (a: SessionMatch, b: SessionMatch) =>
+        (a.confidence === 'strong') !== (b.confidence === 'strong') ? (a.confidence === 'strong' ? a : b)
+          : (cobertura(b) > cobertura(a) || (cobertura(b) === cobertura(a) && b.matched_terms > a.matched_terms)) ? b : a;
+      const fusion = new Map<string, { row: SessionMatch; cobertura: number; frases: number }>();
       for (const s of porConsulta) {
         for (const m of s.sessions || []) {
           const f = fusion.get(m.session_id);
-          if (!f) { fusion.set(m.session_id, { row: m, cobertura: cobertura(m), frases: 1, strong: m.confidence === 'strong' }); continue; }
+          if (!f) { fusion.set(m.session_id, { row: m, cobertura: cobertura(m), frases: 1 }); continue; }
           f.cobertura += cobertura(m);
           f.frases += 1;
-          f.strong = f.strong || m.confidence === 'strong';
-          if (cobertura(m) > cobertura(f.row) || (cobertura(m) === cobertura(f.row) && m.matched_terms > f.row.matched_terms)) f.row = m;
+          f.row = mejorFila(f.row, m);
         }
       }
       options.stats.sessions = [...fusion.values()]
         .sort((a, b) => b.frases - a.frases || b.cobertura - a.cobertura || (a.row.session_id < b.row.session_id ? 1 : -1))
         .slice(0, SESSION_MATCHES)
-        .map(f => ({ ...f.row, confidence: f.strong ? 'strong' as const : f.row.confidence }));
+        .map(f => f.row);
       // Each phrasing counted its own days: the union is at least the largest count.
       options.stats.sessions_total = Math.max(fusion.size, ...porConsulta.map(s => s.sessions_total || 0));
       if (options.since) options.stats.undated_skipped = Math.max(0, ...porConsulta.map(s => s.undated_skipped || 0));
+      const sem = porConsulta.map(s => s.semantic).find(Boolean);
+      if (sem) options.stats.semantic = sem;
     }
+
     type Also = NonNullable<SearchResult['also_matched']>[number];
-    const fused = new Map<string, { score: number; best: SearchResult; bestRank: number; strong: boolean; also: Map<string, Also> }>();
-    const alsoOf = (r: SearchResult): Also => alsoLine(r.matching_content, r.matched_kind || '', r.matched_added || '', r.entry_id, r);
+    // One key per entry everywhere (2.11): the entry id, or the text when
+    // there is none. The old map keyed the same line by its full text in one
+    // place and by its id in another, so one entry could fill two of the
+    // three also_matched slots.
+    const claveFila = (r: SearchResult) => r.entry_id || `text:${r.matching_content}`;
+    const claveAlso = (a: Also) => a.entry_id || `text:${a.preview}`;
+    const fused = new Map<string, { rows: SearchResult[]; max: number; sum: number }>();
     for (const lista of listas) {
-      lista.forEach((r, i) => {
-        const gain = 1 / (RRF_K + i + 1);
-        let f = fused.get(r.neuron_id);
-        if (!f) {
-          f = { score: gain, best: r, bestRank: i, strong: r.confidence === 'strong', also: new Map() };
-          fused.set(r.neuron_id, f);
-        } else {
-          f.score += gain;
-          f.strong = f.strong || r.confidence === 'strong';
-          if (i < f.bestRank) {
-            // The other list's answer becomes an also_matched line of the winner.
-            if (f.best.matching_content !== r.matching_content) f.also.set(f.best.matching_content, alsoOf(f.best));
-            f.best = r;
-            f.bestRank = i;
-          } else if (r.matching_content !== f.best.matching_content) {
-            f.also.set(r.matching_content, alsoOf(r));
+      for (const r of lista) {
+        const f = fused.get(r.neuron_id);
+        if (!f) fused.set(r.neuron_id, { rows: [r], max: r.relevance_score, sum: r.relevance_score });
+        else { f.rows.push(r); f.max = Math.max(f.max, r.relevance_score); f.sum += r.relevance_score; }
+      }
+    }
+    const n = listas.length;
+    const preferred = new Set(options.preferNeurons || []);
+    const fusedScore = (f: { max: number; sum: number }) => 0.7 * f.max + 0.3 * (f.sum / n);
+    const orden = (id: string, f: { max: number; sum: number }) => fusedScore(f) * (preferred.has(id) ? PROJECT_BOOST : 1);
+    if (options.stats) {
+      options.stats.matched_neurons = fused.size;
+      options.stats.no_answer = porConsulta.every(s => s.no_answer === true);
+    }
+    const rows = [...fused.entries()]
+      .sort((a, b) => orden(b[0], b[1]) - orden(a[0], a[1]) || (a[0] < b[0] ? -1 : 1))
+      .slice(0, options.stats?.no_answer ? 1 : limit)
+      .map(([, f]) => {
+        const shown = f.rows.reduce((a, b) =>
+          (a.confidence === 'strong') !== (b.confidence === 'strong') ? (a.confidence === 'strong' ? a : b)
+            : b.relevance_score > a.relevance_score ? b : a);
+        const r: SearchResult = { ...shown, relevance_score: Math.round(fusedScore(f) * 1000) / 1000 };
+        // The other phrasings' lines, then the also lines, one per entry,
+        // never the shown entry itself.
+        const vistas = new Set([claveFila(r)]);
+        const also: Also[] = [];
+        const otras = f.rows.filter(x => x !== shown).sort((a, b) => b.relevance_score - a.relevance_score);
+        for (const x of otras) {
+          const k = claveFila(x);
+          if (vistas.has(k)) continue;
+          vistas.add(k);
+          also.push(alsoLine(x.matching_content, x.matched_kind || '', x.matched_added || '', x.entry_id, x));
+        }
+        for (const x of [shown, ...otras]) {
+          for (const a of x.also_matched || []) {
+            const k = claveAlso(a);
+            if (vistas.has(k)) continue;
+            vistas.add(k);
+            also.push(a);
           }
         }
-        for (const a of r.also_matched || []) f.also.set(a.entry_id || a.preview, a);
-      });
-    }
-    const escala = (RRF_K + 1) / listas.length;
-    const preferred = new Set(options.preferNeurons || []);
-    if (options.stats) options.stats.matched_neurons = fused.size;
-    return [...fused.values()]
-      .sort((a, b) => Number(preferred.has(b.best.neuron_id)) - Number(preferred.has(a.best.neuron_id)) || b.score - a.score)
-      .slice(0, limit)
-      .map(f => {
-        const r: SearchResult = { ...f.best, relevance_score: Math.round(f.score * escala * 1000) / 1000 };
-        r.confidence = f.strong ? 'strong' : 'weak';
-        const propio = alsoLine(r.matching_content, r.matched_kind || '', r.matched_added || '', r.entry_id);
-        const also = [...f.also.values()]
-          .filter(a => (a.entry_id && propio.entry_id) ? a.entry_id !== propio.entry_id : a.preview !== propio.preview)
-          .slice(0, 3);
-        if (also.length) r.also_matched = also;
+        if (also.length && !options.stats?.no_answer) r.also_matched = also.slice(0, 3);
         else delete r.also_matched;
         return r;
       });
+    return rows;
   }
 
   /**
@@ -1022,7 +1214,7 @@ export class SearchEngine {
   async searchManyWithStats(
     queries: string[],
     options: { domain?: string; limit?: number } & SearchFilter = {}
-  ): Promise<{ results: SearchResult[]; matched_neurons: number; sessions: SessionMatch[]; sessions_total: number; undated_skipped?: number }> {
+  ): Promise<{ results: SearchResult[]; matched_neurons: number; sessions: SessionMatch[]; sessions_total: number; undated_skipped?: number; no_answer?: boolean; semantic?: SearchStats['semantic'] }> {
     const stats: SearchStats = {};
     const results = await this.searchMany(queries, { ...options, stats });
     const sessions = stats.sessions ?? [];
@@ -1030,6 +1222,8 @@ export class SearchEngine {
       results, matched_neurons: stats.matched_neurons ?? results.length, sessions,
       sessions_total: stats.sessions_total ?? sessions.length,
       ...(stats.undated_skipped !== undefined ? { undated_skipped: stats.undated_skipped } : {}),
+      ...(stats.no_answer ? { no_answer: true } : {}),
+      ...(stats.semantic ? { semantic: stats.semantic } : {}),
     };
   }
 
@@ -1039,42 +1233,69 @@ export class SearchEngine {
    * ranked first by both scores 1.0; one seen by a single list scores about
    * half. Vector-only candidates below the cosine floor are dropped, and the
    * header chunks (name + tags) are never surfaced by vector alone.
+   *
+   * Diversity (2.11): ranks are counted per NEURON. A neuron's best chunk
+   * takes the next free rank and its other chunks queue behind it, so a
+   * neuron with hundreds of lines on the topic cannot push every other
+   * neuron down the list by its size; and at most SEMANTIC_PER_NEURON vector
+   * candidates come from one neuron, so it cannot take all the seats either.
+   *
+   * Returns how the layer took part: 'used', or 'warming' when the model was
+   * not loaded within the bounded wait and this answer is keyword-only.
    */
   private async fuseSemantic(
     query: string,
     perChunk: Map<string, ChunkHit>,
     domain?: string,
-    admite: (doc: { id?: string; kind?: string; added?: string }) => boolean = () => true
-  ): Promise<void> {
+    admite: (doc: { id?: string; kind?: string; added?: string; neuron?: string }) => boolean = () => true
+  ): Promise<SearchStats['semantic']> {
     let sem: SemanticHit[];
     try {
-      sem = await this.semantic!.query(query, SEMANTIC_CANDIDATES);
+      const pedido = this.semantic!.query(query, SEMANTIC_POOL);
+      // Bounded wait (2.11): the first recall after a cold start used to wait
+      // for the whole model load (~13 s), or a download, with no limit. Past
+      // the wait this answer is keyword-only and says so; the load goes on.
+      const espera = semanticWaitMs();
+      let reloj: NodeJS.Timeout | null = null;
+      const tarde = new Promise<null>(resolve => { reloj = setTimeout(() => resolve(null), espera); });
+      const r = await Promise.race([pedido, tarde]);
+      if (reloj) clearTimeout(reloj);
+      if (r === null) { pedido.catch(() => undefined); return 'warming'; }
+      sem = r;
     } catch {
-      return;   // the semantic layer never breaks recall
+      return undefined;   // the semantic layer never breaks recall
     }
     const floor = semanticFloor();
+    // A vector whose chunk left the index (an orphan) never takes a seat.
     sem = sem.filter(h => h.score >= floor);
-    if (sem.length === 0) return;
+    if (sem.length === 0) return 'used';
+    this.maybeCalibrate();
 
+    const elegidos: SemanticHit[] = [];
+    const porNeurona = new Map<string, number>();
     for (const h of sem) {
-      if (perChunk.has(h.id)) continue;
-      let doc: any;
-      try { doc = await getByID(this.db as AnyOrama, h.id); } catch { doc = undefined; }
-      if (!doc || doc.kind === 'header' || doc.kind === 'session') continue;
-      if (domain && doc.domain !== domain) continue;
-      if (!admite(doc)) continue;
-      perChunk.set(h.id, {
-        neuron: doc.neuron, name: doc.name, domain: doc.domain, text: doc.text,
-        kind: doc.kind, eid: doc.eid || '', added: doc.added, heat: doc.heat || 0, score: 0, matched: 0,
-      });
+      if (elegidos.length >= SEMANTIC_CANDIDATES) break;
+      let doc: any = perChunk.get(h.id);
+      if (!doc) {
+        try { doc = await getByID(this.db as AnyOrama, h.id); } catch { doc = undefined; }
+        if (!doc) continue;
+        if (doc.kind === 'header' || doc.kind === 'session') continue;
+        if (domain && doc.domain !== domain) continue;
+        if (!admite(doc)) continue;
+      }
+      const k = porNeurona.get(doc.neuron) || 0;
+      if (k >= SEMANTIC_PER_NEURON) continue;
+      porNeurona.set(doc.neuron, k + 1);
+      elegidos.push(h);
+      if (!perChunk.has(h.id)) perChunk.set(h.id, { ...chunkFields(doc), score: 0, matched: 0 });
     }
 
     const lex = [...perChunk.entries()]
       .filter(([, c]) => c.matched > 0)
       .sort((a, b) => b[1].score - a[1].score);
-    const lexRank = new Map(lex.map(([id], i) => [id, i + 1]));
-    const semRank = new Map(sem.map((h, i) => [h.id, i + 1]));
-    const semScore = new Map(sem.map(h => [h.id, h.score]));
+    const lexRank = rankPerNeuron(lex.map(([id, c]) => ({ id, neuron: c.neuron })));
+    const semRank = rankPerNeuron(elegidos.map(h => ({ id: h.id, neuron: perChunk.get(h.id)!.neuron })));
+    const semScore = new Map(elegidos.map(h => [h.id, h.score]));
     const top = 2 / (RRF_K + 1);
     for (const [id, chunk] of perChunk) {
       const l = lexRank.get(id);
@@ -1082,6 +1303,7 @@ export class SearchEngine {
       chunk.score = ((l ? 1 / (RRF_K + l) : 0) + (s ? 1 / (RRF_K + s) : 0)) / top;
       if (s !== undefined) chunk.semantic = semScore.get(id);
     }
+    return 'used';
   }
 
   /** Embed the chunks inserted since the last pass. Never throws. */
@@ -1096,6 +1318,75 @@ export class SearchEngine {
       // Model missing or failing: recall stays lexical, indexing is unharmed.
     }
   }
+
+  /**
+   * The cosine at or above which a vector-only match is strong on this
+   * brain: the calibrated one when measured, else the old fixed line.
+   */
+  private semanticStrong(): number {
+    const c = this.calibration;
+    return c && c.model === semanticModel() ? c.strong : SEMANTIC_STRONG_DEFAULT;
+  }
+
+  /** Below this a vector match is no evidence at all on this brain: the median noise top. */
+  private semanticEvidence(): number {
+    const c = this.calibration;
+    return c && c.model === semanticModel() ? Math.max(semanticFloor(), c.noise_p95) : SEMANTIC_STRONG_DEFAULT;
+  }
+
+  /**
+   * Measure this brain's semantic noise floor, in the background, when there
+   * is none or the vector count moved by more than a quarter since (2.11).
+   * Random questions are built from words of random chunks that do not go
+   * together; the best cosine each reaches is what "nothing here" scores on
+   * this brain. Strong then needs noise_p95 + CALIBRATION_MARGIN.
+   */
+  private maybeCalibrate(): void {
+    if (!this.semantic || this.calibrating || !this.db) return;
+    const n = this.semantic.count();
+    const c = this.calibration;
+    if (n < CALIBRATION_MIN_VECTORS) return;
+    if (c && c.model === semanticModel() && Math.abs(n - c.vectors) <= c.vectors * 0.25) return;
+    this.calibrating = this.calibrate().then(() => undefined, () => undefined).finally(() => { this.calibrating = null; });
+  }
+
+  /** Exposed for tests and the benchmark: measure now and keep the result. */
+  async calibrate(samples = CALIBRATION_SAMPLES): Promise<SemanticCalibration | null> {
+    if (!this.semantic || !this.db) return null;
+    const docs = Object.values(((this.db as any)?.data?.docs?.docs) || {}) as any[];
+    const palabras: string[] = [];
+    for (const d of docs) {
+      if (!d || d.kind === 'header' || d.kind === 'session') continue;
+      for (const w of String(d.text || '').split(/\s+/)) if (w.length >= 5 && /^[\p{L}]+$/u.test(w)) palabras.push(w);
+      if (palabras.length > 20000) break;
+    }
+    if (palabras.length < 50) return null;
+    // Deterministic per brain size: the same brain calibrates the same way.
+    let s = (docs.length * 2654435761) >>> 0 || 1;
+    const rnd = () => { s = (Math.imul(s ^ (s >>> 15), 1 | s) + 0x6D2B79F5) >>> 0; return s / 4294967296; };
+    const tops: number[] = [];
+    for (let i = 0; i < samples; i++) {
+      const q = Array.from({ length: 3 }, () => palabras[Math.floor(rnd() * palabras.length)]).join(' ');
+      const hits = await this.semantic.query(q, 1);
+      if (hits[0]) tops.push(hits[0].score);
+    }
+    // Nonsense with no word of the brain at all, too: what "xqzv wkrp" reaches.
+    for (const q of NONSENSE) { const hits = await this.semantic.query(q, 1); if (hits[0]) tops.push(hits[0].score); }
+    if (tops.length < 5) return null;
+    tops.sort((a, b) => a - b);
+    const q = (p: number) => tops[Math.min(tops.length - 1, Math.floor(p * tops.length))];
+    const cal: SemanticCalibration = {
+      model: semanticModel(), vectors: this.semantic.count(), samples: tops.length,
+      noise_p50: Math.round(q(0.5) * 1000) / 1000, noise_p95: Math.round(q(0.95) * 1000) / 1000,
+      strong: Math.round((q(0.95) + CALIBRATION_MARGIN) * 1000) / 1000, at: new Date().toISOString(),
+    };
+    this.calibration = cal;
+    this.markDirty();
+    return cal;
+  }
+
+  /** The calibration in use, if any (status and tests). */
+  semanticCalibration(): SemanticCalibration | null { return this.calibration; }
 
   /**
    * Turn per-neuron chunk lists into results, validating each chunk against
@@ -1114,15 +1405,21 @@ export class SearchEngine {
     porNeurona: ChunkHit[][],
     limit: number,
     queryTermCount: number,
-    preferNeurons?: readonly string[]
+    preferNeurons?: readonly string[],
+    stats?: SearchStats,
+    breadthUnit = 1,
   ): Promise<SearchResult[]> {
     // Only the plausible head pays the neuron reads: nothing below it could
-    // reach the answer even if everything above dropped out.
+    // reach the answer even if everything above dropped out. The project's
+    // neurons get a bounded lift (2.11), not the head of the line: until
+    // 2.10 any project neuron, matching one word, ranked above the best
+    // global match.
     const preferred = new Set(preferNeurons || []);
-    porNeurona.sort((a, b) => Number(preferred.has(b[0].neuron)) - Number(preferred.has(a[0].neuron)) || b[0].score - a[0].score);
+    const lift = (neuron: string) => (preferred.has(neuron) ? PROJECT_BOOST : 1);
+    porNeurona.sort((a, b) => b[0].score * lift(b[0].neuron) - a[0].score * lift(a[0].neuron));
     const candidatos = porNeurona.slice(0, Math.max(limit * 3, limit + 8));
 
-    const resultados: Array<{ r: SearchResult; extra: ChunkHit[]; neuron: Neuron | null }> = [];
+    const resultados: Array<{ r: SearchResult; extra: ChunkHit[]; neuron: Neuron | null; orden: number; evidence: boolean }> = [];
 
     // Shelf life (staleness): judged here, where the neuron file is already
     // read for every candidate, so it costs one lookup per row and nothing in
@@ -1143,6 +1440,8 @@ export class SearchEngine {
       equipo = { espacios };
       return equipo;
     };
+    const strongCut = this.semanticStrong();
+    const evidenceCut = this.semanticEvidence();
 
     for (const chunks of candidatos) {
       const neuronId = chunks[0].neuron;
@@ -1164,7 +1463,9 @@ export class SearchEngine {
       const vivos: ChunkHit[] = [];
       let huboRancio = false;
       for (const chunk of chunks) {
-        if (!legible || neuron === null || this.chunkVive(chunk, neuron)) vivos.push(chunk);
+        // A part of a long entry is checked against the whole entry it came from.
+        const entero = neuron && chunk.parts ? this.wholeOf(chunk, neuron) : chunk;
+        if (!legible || neuron === null || (entero && this.chunkVive(entero, neuron))) vivos.push(chunk);
         else huboRancio = true;
       }
 
@@ -1178,45 +1479,60 @@ export class SearchEngine {
       // the neuron, but it never speaks for it while a live content chunk
       // matched too. Measured on the blind benchmark, letting it win cost 3 of
       // the 13 misses — this rule alone moves recall@1 from 56% to 60%.
-      const contenido = vivos.filter(c => c.kind !== 'header');
+      // One line per entry: the best part of a long entry speaks for it.
+      const contenido = unaPorEntrada(vivos.filter(c => c.kind !== 'header'));
       const elegido = contenido[0] || vivos[0];
 
-      // Breadth says "this neuron is about the question". A digest (2.5: the
-      // lines a bulk import left, folded together) is about nothing: twenty of
-      // its lines matching "verify" is a property of the pile, and on the
-      // reference brain it put the pile above the project that answered.
+      // Breadth says "this neuron is about the question" — counted from
+      // LEXICAL evidence only (2.11), one per entry, in the unit of the
+      // score's own scale. Until 2.10 it was +0.05 per chunk up to +0.25 on
+      // any scale and counted vector-only neighbours too: with the semantic
+      // layer on, where two ranks sit ~1.6 % apart, a neuron with hundreds of
+      // lines on the topic won by size. A digest (2.5: the lines a bulk
+      // import left, folded together) is about nothing.
       const esDigest = !!neuron && (neuron.tags || []).includes('digest');
-      const breadth = esDigest ? 0 : Math.min((chunks.length - 1) * BREADTH_BONUS, BREADTH_CAP);
+      const lexicas = contenido.filter(c => c.matched > 0).length;
+      const breadth = esDigest ? 0 : Math.min(Math.max(0, lexicas - 1) * BREADTH_BONUS, BREADTH_CAP) * breadthUnit;
 
       // A keyword engine answers almost any question with something. The
       // label says how much of the question the answer actually covers, so
       // the reader can tell a hit from a coincidence.
+      const coverage = queryTermCount > 0 ? elegido.matched / queryTermCount : 0;
       const lexicalStrong = queryTermCount <= 1
         ? elegido.matched >= 1
-        : elegido.matched >= 2 && elegido.matched / queryTermCount >= 0.5;
-      const strong = lexicalStrong || (elegido.semantic ?? 0) >= SEMANTIC_STRONG;
+        : elegido.matched >= 2 && coverage >= 0.5;
+      const strong = lexicalStrong || (elegido.semantic ?? 0) >= strongCut;
+      // The minimum evidence bar (2.11): below it the row is a coincidence —
+      // one word of a long question, or a vector inside this brain's noise.
+      const evidence = lexicalStrong || coverage >= 0.5 || (elegido.matched >= 2 && coverage >= 1 / 3)
+        || (elegido.semantic ?? 0) >= evidenceCut;
 
+      const relevancia = vivos[0].score + breadth;
+      const conPadre = neuron && elegido.parts ? (this.wholeOf(elegido, neuron) || elegido) : elegido;
       resultados.push({
         r: {
           neuron_id: elegido.neuron,
           name: elegido.name,
           domain: elegido.domain,
-          relevance_score: Math.round((vivos[0].score + breadth) * 1000) / 1000,
+          relevance_score: Math.round(relevancia * 1000) / 1000,
           matching_content: elegido.text,
           matched_kind: elegido.kind,
           matched_added: elegido.added || '',
           ...(elegido.eid ? { entry_id: elegido.eid } : {}),
+          ...(elegido.parts ? { matched_part: { part: (elegido.part ?? 0) + 1, parts: elegido.parts, offset: elegido.offset ?? 0, entry_chars: elegido.entry_chars ?? 0 } } : {}),
           heat: elegido.heat,
           matched_terms: elegido.matched,
           query_terms: queryTermCount,
           confidence: strong ? 'strong' : 'weak',
           ...(elegido.semantic !== undefined ? { semantic_score: elegido.semantic } : {}),
           ...(neuron?.map?.text ? { has_map: true } : {}),
-          ...(neuron ? await this.originOf(elegido, neuron, contextoEquipo) : {}),
-          ...(vida && neuron ? (() => { const s = staleView(this.stalenessOf(elegido, neuron, vida)); return s ? { staleness: s } : {}; })() : {}),
+          ...(neuron ? await this.originOf(conPadre, neuron, contextoEquipo) : {}),
+          ...(vida && neuron ? (() => { const s = staleView(this.stalenessOf(conPadre, neuron, vida)); return s ? { staleness: s } : {}; })() : {}),
         },
         extra: contenido.filter(c => c !== elegido).slice(0, 2),
         neuron,
+        orden: relevancia * lift(elegido.neuron),
+        evidence,
       });
     }
 
@@ -1224,26 +1540,48 @@ export class SearchEngine {
     // neighbour also scored was measured on 633 queries over the reference
     // brain and changed recall@3 by 0.15 points at most. Pre-registration and
     // numbers in benchmarks/synapse-activation/; mechanism in commit 69917ce.
-    resultados.sort((a, b) => Number(preferred.has(b.r.neuron_id)) - Number(preferred.has(a.r.neuron_id)) || b.r.relevance_score - a.r.relevance_score);
-    const top = resultados.slice(0, limit);
+    resultados.sort((a, b) => b.orden - a.orden);
+
+    // No answer (2.11): when no row clears the evidence bar, say so instead
+    // of filling the list with coincidences (an unanswerable question used to
+    // come back as five weak rows and ~12,000 characters). The closest row
+    // stays, alone and weak, so the caller can see what the nearest thing was.
+    const sinRespuesta = noAnswerEnabled() && resultados.length > 0 && !resultados.some(x => x.evidence);
+    if (stats) stats.no_answer = sinRespuesta;
+    const top = resultados.slice(0, sinRespuesta ? 1 : limit);
 
     // The neuron's next best lines, for the head of the list only: the line
     // you need is not always the one that scored highest. Measured, it lifts
     // fact-level recall@3 from 73% to 79%, and it costs tokens only where
     // they can still change the answer.
-    for (const { r, extra, neuron } of top.slice(0, ALSO_MATCHED_RESULTS)) {
+    for (const { r, extra, neuron } of sinRespuesta ? [] : top.slice(0, ALSO_MATCHED_RESULTS)) {
       if (extra.length > 0) {
         // Previews, not bodies: the also lines were 46% of a recall's cost as
         // full text. The id reads any of them whole. Each line carries its own
         // origin: a teammate's line next to an own winner is still a teammate's.
-        r.also_matched = await Promise.all(extra.map(async c =>
-          alsoLine(c.text, c.kind, c.added || '', c.eid, {
-            ...(neuron ? await this.originOf(c, neuron, contextoEquipo) : {}),
-            ...(vida && neuron ? { staleness: this.stalenessOf(c, neuron, vida) ?? undefined } : {}),
-          })));
+        r.also_matched = await Promise.all(extra.map(async c => {
+          const padre = neuron && c.parts ? (this.wholeOf(c, neuron) || c) : c;
+          return alsoLine(c.text, c.kind, c.added || '', c.eid, {
+            ...(neuron ? await this.originOf(padre, neuron, contextoEquipo) : {}),
+            ...(vida && neuron ? { staleness: this.stalenessOf(padre, neuron, vida) ?? undefined } : {}),
+          }, c.entry_chars);
+        }));
       }
     }
     return top.map(x => x.r);
+  }
+
+  /**
+   * The whole entry a part of a long one came from, as a chunk with the full
+   * text — what chunkVive, originOf and stalenessOf compare against. Null
+   * when the entry is gone or no longer contains the part where it was.
+   */
+  private wholeOf(chunk: ChunkHit, neuron: Neuron): ChunkHit | null {
+    const texto = entryTextById(neuron, chunk.kind, chunk.eid);
+    if (texto === null) return null;
+    const off = chunk.offset ?? 0;
+    if (texto.slice(off, off + chunk.text.length) !== chunk.text) return null;
+    return { ...chunk, text: texto, parts: undefined };
   }
 
   /**
@@ -1425,7 +1763,7 @@ export class SearchEngine {
     for (const fact of neuron.facts || []) {
       if (!fact || !fact.text) continue;
       if (isRetired(fact)) continue;
-      await this.put({
+      await this.putEntry({
         ...base,
         id: chunkId(neuron.id, fact.text),
         text: fact.text,
@@ -1442,7 +1780,7 @@ export class SearchEngine {
       const text = decision.rationale
         ? `${decision.text} — ${decision.rationale}`
         : decision.text;
-      await this.put({
+      await this.putEntry({
         ...base,
         id: chunkId(neuron.id, text),
         text,
@@ -1461,7 +1799,7 @@ export class SearchEngine {
     for (const pattern of neuron.patterns || []) {
       if (!pattern) continue;
       if (entryRetired(neuron, pattern)) continue;
-      await this.put({
+      await this.putEntry({
         ...base,
         id: chunkId(neuron.id, pattern),
         text: pattern,
@@ -1473,7 +1811,7 @@ export class SearchEngine {
 
     for (const pref of neuron.preferences || []) {
       if (!pref) continue;
-      await this.put({
+      await this.putEntry({
         ...base,
         id: chunkId(neuron.id, pref),
         text: pref,
@@ -1486,7 +1824,7 @@ export class SearchEngine {
     for (const err of neuron.errors || []) {
       if (!err) continue;
       if (entryRetired(neuron, err)) continue;
-      await this.put({
+      await this.putEntry({
         ...base,
         id: chunkId(neuron.id, `error:${err}`),
         text: err,
@@ -1499,7 +1837,7 @@ export class SearchEngine {
     for (const debt of neuron.debts || []) {
       if (!debt) continue;
       if (entryRetired(neuron, debt)) continue;
-      await this.put({
+      await this.putEntry({
         ...base,
         id: chunkId(neuron.id, `debt:${debt}`),
         text: debt,
@@ -1510,7 +1848,7 @@ export class SearchEngine {
     }
 
     if (neuron.map && neuron.map.text) {
-      await this.put({
+      await this.putEntry({
         ...base,
         id: chunkId(neuron.id, `map:${neuron.map.text}`),
         text: neuron.map.text,
@@ -1621,6 +1959,20 @@ export class SearchEngine {
         added: log.date || '',
         heat: 0,
       });
+    }
+  }
+
+  /**
+   * Insert one entry: whole when short, as overlapping parts when longer than
+   * PART_MAX (2.11). Every part keeps the entry's kind, eid, date and keys;
+   * its id derives from the whole entry's id, so editing the entry replaces
+   * all of its parts.
+   */
+  private async putEntry(doc: Record<string, unknown> & { id: string; text: string; neuron: string }): Promise<void> {
+    const partes = splitParts(doc.text);
+    if (partes.length === 1) { await this.put(doc); return; }
+    for (const [i, p] of partes.entries()) {
+      await this.put({ ...doc, id: chunkId(doc.neuron, `${doc.id}#part${i}`), text: p.text, part: i, parts: partes.length, offset: p.offset, entry_chars: doc.text.length });
     }
   }
 

@@ -373,6 +373,12 @@ export interface SearchResult {
   /** Cosine similarity from the opt-in semantic layer, when it saw this chunk. */
   semantic_score?: number;
   /**
+   * Set when matching_content is one part of a long entry (2.11): which part
+   * (1-based) of how many, where it starts in the entry and the entry's full
+   * length. entry_id reads the whole entry.
+   */
+  matched_part?: { part: number; parts: number; offset: number; entry_chars: number };
+  /**
    * The next best live chunks of the same neuron, for the top results only —
    * one neuron can answer with more than one line, and the line you need is
    * not always the one that scored highest.
