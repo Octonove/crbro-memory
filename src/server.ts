@@ -2269,6 +2269,9 @@ export function createServer(shared?: Engines): McpServer {
               teammates_seen: [...new Set(i.merged.flatMap(m => m.authors))],
               divergence: i.merged.flatMap(m => m.divergence),
               pushed: i.pushed,
+              // 2.11: remote folders matching a neuron you never shared here, and notes refused as malformed.
+              ...(i.left_alone?.length ? { left_alone: i.left_alone } : {}),
+              ...(i.ops_dropped ? { ops_dropped: i.ops_dropped } : {}),
               message: i.message,
             })),
           });
