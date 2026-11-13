@@ -11,11 +11,12 @@
 // Off, it costs one boolean test per call site: nothing is formatted, nothing
 // is written.
 
-import { appendFileSync, mkdirSync } from 'node:fs';
+import { appendFileSync, mkdirSync, renameSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 
 export const TRACE_ON = (process.env.CRBRO_STARTUP_TRACE || '').trim() === '1';
+const LOG_MAX_BYTES = 512 * 1024;
 
 let file: string | null = null;
 let role = 'process';
@@ -30,6 +31,8 @@ export function traceStart(brainRoot: string | null, who: string): void {
       const dir = path.join(brainRoot, '.daemon');
       mkdirSync(dir, { recursive: true });
       file = path.join(dir, 'startup-trace.log');
+      // Left on for weeks, it keeps one previous file and starts again.
+      try { if (statSync(file).size > LOG_MAX_BYTES) renameSync(file, `${file}.1`); } catch { /* no log yet */ }
     } catch { file = null; }
   }
   trace('process start', `pid ${process.pid} · started ${new Date(performance.timeOrigin).toISOString()}`);
