@@ -41,8 +41,11 @@ async function espacio(ops: Op[] = [fact('Nota del equipo')]): Promise<void> {
     v: 1, name: 'equipo', created_by: 'ana', created: fecha, branch: 'main',
   });
   await log(ops);
+  // La neurona está compartida en el espacio (2.11: sync ya no adopta una
+  // neurona local que no se compartió; eso se prueba en sync.validate.test).
+  await markShared(brain, nid, 'equipo');
   // Solo se sustituye el transporte: lectura, fusión, persistencia e índice son reales.
-  vi.spyOn(transport, 'syncSpace').mockReturnValue({
+  vi.spyOn(transport, 'syncSpaceAsync').mockResolvedValue({
     pulled: { ok: true, stdout: '', stderr: '' },
     pushed: { ok: false, stdout: '', stderr: 'rechazado', reason: 'auth' },
   });
@@ -308,7 +311,7 @@ describe('entrega persistente sin esperar a Git', () => {
     await espacio();
     await markShared(brain, nid, 'equipo');
     attachSync(brain, cortex);
-    vi.mocked(transport.syncSpace).mockReturnValue({
+    vi.mocked(transport.syncSpaceAsync).mockResolvedValue({
       pulled: { ok: true, stdout: '', stderr: '' }, pushed: { ok: true, stdout: '', stderr: '' },
     });
     const lock = locking.withLock;

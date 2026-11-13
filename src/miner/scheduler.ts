@@ -1,11 +1,84 @@
 // ─── CRBRO Miner: Cross-Platform Scheduler ───────────────────
 // Sets up automatic mining as a scheduled task on any OS.
 
-import { writeFile } from 'fs/promises';
+import { writeFile, unlink, mkdir } from 'fs/promises';
 import { join } from 'path';
-import { homedir, platform, tmpdir } from 'os';
-import { execSync } from 'child_process';
+import { homedir, platform } from 'os';
+import { spawnSync } from 'child_process';
 import { existsSync } from 'fs';
+
+// ─── Running commands: never through a shell ─────────────────────
+//
+// Until 2.10 the crontab went through `echo "${crontab}" | crontab -` in a
+// shell: every $(…), `…` and "…" in the user's own cron lines was expanded or
+// broke the quoting, and the rewritten crontab replaced theirs (I1). Every
+// command here is an argument array, and text goes through stdin.
+
+export interface SchedRun { status: number | null; stdout: string; stderr: string; error?: Error }
+type Runner = (cmd: string, args: string[], input?: string) => SchedRun;
+
+const realRunner: Runner = (cmd, args, input) => {
+  const r = spawnSync(cmd, args, { encoding: 'utf-8', input, windowsHide: true, timeout: 30_000 });
+  return { status: r.status, stdout: r.stdout || '', stderr: r.stderr || '', error: r.error };
+};
+let run: Runner = realRunner;
+let platformOverride: NodeJS.Platform | null = null;
+const currentPlatform = (): NodeJS.Platform => platformOverride ?? platform();
+
+/** Tests only: replace the command runner and, optionally, the platform. */
+export function _setSchedulerRunnerForTests(r: Runner | null, os: NodeJS.Platform | null = null): void {
+  run = r ?? realRunner;
+  platformOverride = r ? os : null;
+}
+
+function must(r: SchedRun, what: string): SchedRun {
+  if (r.error || r.status !== 0) {
+    throw new Error(`${what} failed: ${(r.stderr || r.error?.message || `exit ${r.status}`).trim()}`);
+  }
+  return r;
+}
+
+/** Where the miner logs and where a copy of the previous crontab goes. */
+function brainRoot(): string {
+  return process.env['CRBRO_PATH'] || join(homedir(), '.crbro');
+}
+
+/** The current crontab, or '' when the user has none. Any other failure throws. */
+function readCrontab(): string {
+  const r = run('crontab', ['-l']);
+  if (r.status === 0) return r.stdout;
+  if (/no crontab/i.test(r.stderr)) return '';
+  throw new Error(`Could not read the crontab: ${(r.stderr || r.error?.message || '').trim() || `exit ${r.status}`}`);
+}
+
+/** Keep the previous crontab next to the brain, then install the new one through stdin. */
+async function writeCrontab(previous: string, next: string): Promise<void> {
+  if (previous.trim()) {
+    await mkdir(brainRoot(), { recursive: true });
+    const stamp = new Date().toISOString().replace(/[-:.]/g, '').slice(0, 15);
+    await writeFile(join(brainRoot(), `crontab.before-crbro-${stamp}.txt`), previous, 'utf-8');
+  }
+  must(run('crontab', ['-'], next), 'crontab');
+}
+
+/** The cron file without our line, the user's lines byte for byte. */
+export function cronWithout(current: string): string[] {
+  return current.split('\n').filter(l => !l.includes('crbro-memory mine'));
+}
+
+/**
+ * The /TR value for schtasks: the quoted absolute path of npx.cmd and its
+ * arguments, as one argument. Passed as an array element, not through a
+ * shell, so the quotes reach schtasks intact (I11).
+ */
+export function windowsTaskCommand(npxPath: string): string {
+  return `"${npxPath}" -y crbro-memory mine`;
+}
+
+export function windowsCreateArgs(npxPath: string): string[] {
+  return ['/Create', '/TN', TASK_NAME, '/TR', windowsTaskCommand(npxPath),
+    '/SC', 'HOURLY', '/MO', String(FREQUENCY_HOURS), '/F', '/RL', 'LIMITED'];
+}
 
 export interface SchedulerResult {
   success: boolean;
@@ -23,7 +96,7 @@ const FREQUENCY_HOURS = 2;
  * Detect the platform and set up the appropriate scheduler.
  */
 export async function setupScheduler(): Promise<SchedulerResult> {
-  const os = platform();
+  const os = currentPlatform();
 
   switch (os) {
     case 'win32':
@@ -31,7 +104,7 @@ export async function setupScheduler(): Promise<SchedulerResult> {
     case 'darwin':
       return setupMacOS();
     case 'linux':
-      return setupLinux();
+      return await setupLinux();
     default:
       return {
         success: false,
@@ -53,7 +126,7 @@ export async function getSchedulerStatus(): Promise<{
   next_run: string | null;
   details: string;
 }> {
-  const os = platform();
+  const os = currentPlatform();
 
   switch (os) {
     case 'win32':
@@ -77,23 +150,27 @@ export async function getSchedulerStatus(): Promise<{
  * Remove the scheduled task.
  */
 export async function removeScheduler(): Promise<{ success: boolean; message: string }> {
-  const os = platform();
+  const os = currentPlatform();
 
   try {
     switch (os) {
       case 'win32':
-        execSync(`schtasks /Delete /TN "${TASK_NAME}" /F`, { stdio: 'pipe' });
+        must(run('schtasks', ['/Delete', '/TN', TASK_NAME, '/F']), 'schtasks /Delete');
         return { success: true, message: `Removed Windows Task Scheduler entry: ${TASK_NAME}` };
       case 'darwin': {
         const plistPath = join(homedir(), 'Library', 'LaunchAgents', `com.crbro.miner.plist`);
-        execSync(`launchctl unload "${plistPath}"`, { stdio: 'pipe' });
-        execSync(`rm "${plistPath}"`, { stdio: 'pipe' });
+        must(run('launchctl', ['unload', plistPath]), 'launchctl unload');
+        await unlink(plistPath);
         return { success: true, message: `Removed macOS LaunchAgent: ${plistPath}` };
       }
       case 'linux': {
-        const currentCron = execSync('crontab -l 2>/dev/null || echo ""', { encoding: 'utf-8' });
-        const filtered = currentCron.split('\n').filter(l => !l.includes('crbro-memory mine')).join('\n');
-        execSync(`echo "${filtered}" | crontab -`, { stdio: 'pipe' });
+        const currentCron = readCrontab();
+        const filtered = cronWithout(currentCron);
+        if (filtered.length === currentCron.split('\n').length) {
+          return { success: true, message: 'No crontab entry for the CRBRO miner. Nothing changed.' };
+        }
+        const next = filtered.join('\n').replace(/\n*$/, '\n');
+        await writeCrontab(currentCron, next.trim() ? next : '');
         return { success: true, message: 'Removed crontab entry for CRBRO miner' };
       }
       default:
@@ -109,21 +186,20 @@ export async function removeScheduler(): Promise<{ success: boolean; message: st
 function setupWindows(): SchedulerResult {
   try {
     // Remove existing task if present
-    try {
-      execSync(`schtasks /Delete /TN "${TASK_NAME}" /F`, { stdio: 'pipe' });
-    } catch { /* doesn't exist yet */ }
+    // Remove an existing task if present (a failure here only means there was none).
+    run('schtasks', ['/Delete', '/TN', TASK_NAME, '/F']);
 
-    // Find npx path
+    // npx.cmd, absolute: Task Scheduler cannot run the extensionless `npx`
+    // shell script that `where npx` lists first.
     const npxPath = findNpxPath();
 
-    // Create the task
-    execSync(
-      `schtasks /Create /TN "${TASK_NAME}" ` +
-      `/TR "\"${npxPath}\" -y crbro-memory mine" ` +
-      `/SC HOURLY /MO ${FREQUENCY_HOURS} ` +
-      `/F /RL LIMITED`,
-      { stdio: 'pipe' }
-    );
+    must(run('schtasks', windowsCreateArgs(npxPath)), 'schtasks /Create');
+
+    // Check what was registered rather than trusting the exit code alone.
+    const q = run('schtasks', ['/Query', '/TN', TASK_NAME, '/XML']);
+    if (q.status === 0 && !q.stdout.includes('crbro-memory mine')) {
+      throw new Error('the task was created but its command does not run the miner');
+    }
 
     return {
       success: true,
@@ -133,7 +209,7 @@ function setupWindows(): SchedulerResult {
       message: `✅ CRBRO Auto-Miner scheduled!\n\n` +
         `  Task Name:  ${TASK_NAME}\n` +
         `  Frequency:  Every ${FREQUENCY_HOURS} hours\n` +
-        `  Command:    npx crbro-memory mine\n\n` +
+        `  Command:    ${windowsTaskCommand(npxPath)}\n\n` +
         `  To check status:  npx crbro-memory miner-status\n` +
         `  To remove:        npx crbro-memory remove-miner`,
       uninstall_command: `schtasks /Delete /TN "${TASK_NAME}" /F`,
@@ -144,17 +220,14 @@ function setupWindows(): SchedulerResult {
       platform: 'windows',
       method: 'Task Scheduler (schtasks)',
       frequency: `${FREQUENCY_HOURS}h`,
-      message: `Failed to create scheduled task: ${err instanceof Error ? err.message : String(err)}.\n\nTry running as Administrator, or create the task manually:\n  schtasks /Create /TN "${TASK_NAME}" /TR "npx -y crbro-memory mine" /SC HOURLY /MO ${FREQUENCY_HOURS}`,
+      message: `Failed to create scheduled task: ${err instanceof Error ? err.message : String(err)}.\n\nTry running as Administrator, or create the task manually:\n  schtasks /Create /TN "${TASK_NAME}" /TR "\\"<path to npx.cmd>\\" -y crbro-memory mine" /SC HOURLY /MO ${FREQUENCY_HOURS}`,
     };
   }
 }
 
 function getWindowsStatus() {
   try {
-    const output = execSync(
-      `schtasks /Query /TN "${TASK_NAME}" /FO CSV /NH`,
-      { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] }
-    );
+    const output = must(run('schtasks', ['/Query', '/TN', TASK_NAME, '/FO', 'CSV', '/NH']), 'schtasks /Query').stdout;
     const parts = output.trim().split(',').map(s => s.replace(/"/g, ''));
     return {
       installed: true,
@@ -188,7 +261,7 @@ async function setupMacOS(): Promise<SchedulerResult> {
   <string>com.crbro.miner</string>
   <key>ProgramArguments</key>
   <array>
-    <string>${npxPath}</string>
+    <string>${xmlEscape(npxPath)}</string>
     <string>-y</string>
     <string>crbro-memory</string>
     <string>mine</string>
@@ -198,15 +271,15 @@ async function setupMacOS(): Promise<SchedulerResult> {
   <key>RunAtLoad</key>
   <true/>
   <key>StandardOutPath</key>
-  <string>${join(homedir(), '.crbro', 'miner.log')}</string>
+  <string>${xmlEscape(join(brainRoot(), 'miner.log'))}</string>
   <key>StandardErrorPath</key>
-  <string>${join(homedir(), '.crbro', 'miner_error.log')}</string>
+  <string>${xmlEscape(join(brainRoot(), 'miner_error.log'))}</string>
 </dict>
 </plist>`;
 
   try {
     await writeFile(plistPath, plistContent, 'utf-8');
-    execSync(`launchctl load "${plistPath}"`, { stdio: 'pipe' });
+    must(run('launchctl', ['load', plistPath]), 'launchctl load');
 
     return {
       success: true,
@@ -248,22 +321,33 @@ function getMacOSStatus() {
 
 // ─── Linux: Crontab ───────────────────────────────────────────
 
-function setupLinux(): SchedulerResult {
+/** cron runs the line through /bin/sh: paths are single-quoted for it. */
+function shQuote(s: string): string {
+  return `'${s.replace(/'/g, `'\\''`)}'`;
+}
+
+function xmlEscape(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+export function linuxCronLine(npxPath: string, logPath: string): string {
+  return `0 */${FREQUENCY_HOURS} * * * ${shQuote(npxPath)} -y crbro-memory mine >> ${shQuote(logPath)} 2>&1`;
+}
+
+async function setupLinux(): Promise<SchedulerResult> {
   try {
     const npxPath = findNpxPath();
-    const cronLine = `0 */${FREQUENCY_HOURS} * * * ${npxPath} -y crbro-memory mine >> ${join(homedir(), '.crbro', 'miner.log')} 2>&1`;
+    const cronLine = linuxCronLine(npxPath, join(brainRoot(), 'miner.log'));
 
-    // Get current crontab, filter out old CRBRO entries, add new one
-    let currentCron = '';
-    try {
-      currentCron = execSync('crontab -l 2>/dev/null', { encoding: 'utf-8' });
-    } catch { /* no existing crontab */ }
-
-    const filtered = currentCron.split('\n').filter(l => !l.includes('crbro-memory mine'));
+    // Current crontab, our old line out, the new one in. The user's own lines
+    // are kept byte for byte, blank lines and comments included.
+    const currentCron = readCrontab();
+    const filtered = cronWithout(currentCron);
+    while (filtered.length && !filtered[filtered.length - 1].trim()) filtered.pop();
     filtered.push(cronLine);
-    const newCron = filtered.filter(l => l.trim()).join('\n') + '\n';
+    const newCron = filtered.join('\n') + '\n';
 
-    execSync(`echo "${newCron}" | crontab -`, { stdio: 'pipe' });
+    await writeCrontab(currentCron, newCron);
 
     return {
       success: true,
@@ -273,7 +357,8 @@ function setupLinux(): SchedulerResult {
       message: `✅ CRBRO Auto-Miner scheduled!\n\n` +
         `  Cron:       ${cronLine}\n` +
         `  Frequency:  Every ${FREQUENCY_HOURS} hours\n` +
-        `  Log:        ~/.crbro/miner.log\n\n` +
+        `  Log:        ${join(brainRoot(), 'miner.log')}\n` +
+        `  The previous crontab was saved next to the brain as crontab.before-crbro-*.txt.\n\n` +
         `  To check:   npx crbro-memory miner-status\n` +
         `  To remove:  npx crbro-memory remove-miner`,
       uninstall_command: 'npx crbro-memory remove-miner',
@@ -291,7 +376,7 @@ function setupLinux(): SchedulerResult {
 
 function getLinuxStatus() {
   try {
-    const cron = execSync('crontab -l 2>/dev/null', { encoding: 'utf-8' });
+    const cron = readCrontab();
     const hasCrbro = cron.includes('crbro-memory mine');
     return {
       installed: hasCrbro,
@@ -315,14 +400,15 @@ function getLinuxStatus() {
 
 // ─── Utilities ────────────────────────────────────────────────
 
-function findNpxPath(): string {
-  try {
-    const os = platform();
-    if (os === 'win32') {
-      return execSync('where npx', { encoding: 'utf-8' }).trim().split('\n')[0].trim();
-    }
-    return execSync('which npx', { encoding: 'utf-8' }).trim();
-  } catch {
-    return 'npx'; // Fallback to PATH
+export function findNpxPath(): string {
+  const os = currentPlatform();
+  if (os === 'win32') {
+    // `where npx` lists the extensionless sh script first; Task Scheduler
+    // needs the .cmd shim.
+    const r = run('where', ['npx.cmd']);
+    const first = r.status === 0 ? r.stdout.split(/\r?\n/).map(l => l.trim()).find(l => /\.cmd$/i.test(l)) : undefined;
+    return first || 'npx.cmd';
   }
+  const r = run('which', ['npx']);
+  return r.status === 0 && r.stdout.trim() ? r.stdout.trim().split('\n')[0] : 'npx';
 }

@@ -12,7 +12,7 @@ export function retrievalFailures(m) {
 
 export function securityFailures(m) {
   const failures = [];
-  if (m.total !== 20 || m.innocents !== 19) failures.push('Conjunto de redacción distinto al congelado: requiere revisión de la baseline.');
+  if (m.total !== 24 || m.innocents !== 28) failures.push('Conjunto de redacción distinto al congelado: requiere revisión de la baseline.');
   if (m.caught !== m.total) failures.push('El filtro dejó pasar un secreto sintético.');
   if (m.falsePositives !== 0) failures.push('El filtro redactó un texto inocente.');
   return failures;

@@ -1034,6 +1034,12 @@ export class Cortex {
     // exists and what kind — the knowledge without the liability.
     const limpio = redact(content);
     content = limpio.text;
+    // The rationale and the aliases are stored, indexed and shared too (G8).
+    if (options?.rationale || options?.keys?.length) {
+      options = { ...options,
+        ...(options.rationale ? { rationale: redact(options.rationale).text } : {}),
+        ...(options.keys?.length ? { keys: options.keys.map(k => redact(k).text) } : {}) };
+    }
 
     let action: 'created' | 'updated' | 'skipped' | 'skipped_retired' = 'updated';
     let targetId: string;
@@ -1442,6 +1448,7 @@ export class Cortex {
     const neuron =
       await this.resolveForWrite(neuronRef);
     if (!neuron) return { neuron: null, revised: 0, unmatched: targets.slice() };
+    if (options?.note) options = { ...options, note: redact(options.note).text };   // G8: notes are stored and shared
 
     const status: FactStatus = options?.status || 'superseded';
     let revised = 0;
@@ -1699,6 +1706,7 @@ export class Cortex {
     const neuron =
       await this.resolveForWrite(neuronRef);
     if (!neuron) return { neuron: null, revised: 0, unmatched: targets.slice() };
+    if (options?.note) options = { ...options, note: redact(options.note).text };   // G8: notes are stored and shared
 
     const status: FactStatus = options?.status || 'superseded';
     const wanted = targets.map(t => normalizeText(t).toLowerCase());
@@ -2611,8 +2619,9 @@ export class Cortex {
       // Every field, not just facts. A credential is just as exposed sitting in
       // a decision or a preference, and those were invisible here — an audit
       // could report a neuron clean while a key sat in preferences[0].
-      const facts = contar((n.facts || []).map(f => f.text));
-      const decisions = contar((n.decisions || []).map(d => d.text));
+      // Rationales, aliases and revision notes count with their entry (G8).
+      const facts = contar((n.facts || []).map(f => [f.text, ...(f.keys || []), f.revision_note || ''].join('\n')));
+      const decisions = contar((n.decisions || []).map(d => `${d.text}\n${d.rationale || ''}`));
       const patterns = contar(n.patterns || []);
       const preferences = contar(n.preferences || []);
       const errors = contar(n.errors || []);

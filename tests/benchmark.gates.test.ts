@@ -15,7 +15,7 @@ it('el gate de recuperación rechaza cada regresión y las métricas ausentes', 
   }
 });
 it('el gate de secretos exige cobertura completa sin falsos positivos', () => {
-  expect(securityFailures({ caught: 20, total: 20, falsePositives: 0, innocents: 19 })).toEqual([]);
-  expect(securityFailures({ caught: 19, total: 20, falsePositives: 0, innocents: 19 }).length).toBeGreaterThan(0);
-  expect(securityFailures({ caught: 20, total: 20, falsePositives: 1, innocents: 19 }).length).toBeGreaterThan(0);
+  expect(securityFailures({ caught: 24, total: 24, falsePositives: 0, innocents: 28 })).toEqual([]);
+  expect(securityFailures({ caught: 23, total: 24, falsePositives: 0, innocents: 28 }).length).toBeGreaterThan(0);
+  expect(securityFailures({ caught: 24, total: 24, falsePositives: 1, innocents: 28 }).length).toBeGreaterThan(0);
 });

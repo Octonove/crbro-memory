@@ -87,7 +87,7 @@ const COMMANDS = {
   'uninstall-hooks': { usage: 'uninstall-hooks --compact', about: ['Remove the compaction hooks and put back what they replaced'], flags: ['--compact'] },
   'install-mod': { usage: 'install-mod [--lang en|es|auto] | install-mod --verify [--json]', about: ['Claude Code band + /pending with the open items'], flags: ['--verify', '--json'], values: ['--lang'] },
   'uninstall-mod': { usage: 'uninstall-mod', about: ['Remove the mod and its CLAUDE_CODE_PLUGIN_DIRS entry; never put back on its own'] },
-  secret: { usage: 'secret <set|get|list|remove|status> [NAME] [--description TEXT] [--yes]', about: ['Credentials, sealed in the OS keychain'], args: 2, flags: ['--yes'], values: ['--description'] },
+  secret: { usage: 'secret <set|get|list|remove|status|copies|restore> [NAME] [--description TEXT] [--yes] [--force]', about: ['Credentials, sealed in the OS keychain'], args: 2, flags: ['--yes', '--force'], values: ['--description'] },
   backup: { usage: 'backup [list | restore FILE [--into DIR]] [--dir DIR] [--keep N]', about: ['Back the brain up now, list the copies, or restore one into a NEW folder'], free: true },
   help: { usage: 'help [command]', about: ['This help, or one command\'s'], args: 1 },
 };
@@ -1449,8 +1449,20 @@ if (preDispatch()) {
         return;
       }
 
+      if (sub === 'copies') {
+        // Windows: sealed byte copies kept on every write, plus leftovers. Never opened here.
+        const copies = kc.listSealedCopies();
+        console.log('');
+        if (copies.length === 0) { console.log('  No sealed copies or leftovers next to the store.'); console.log(''); return; }
+        for (const c of copies) console.log(`  ${c.id.padEnd(52)} ${c.kind.padEnd(14)} ${c.modified}  ${c.bytes} B`);
+        console.log('');
+        console.log('  Put one back (validated with DPAPI first):  npx crbro-memory secret restore <id> --yes');
+        console.log('');
+        return;
+      }
+
       if (!name) {
-        console.error(`  ❌ Missing name. Usage: npx crbro-memory secret ${sub || '<set|get|list|remove|status>'} NAME`);
+        console.error(`  ❌ Missing name. Usage: npx crbro-memory secret ${sub || '<set|get|list|remove|status|copies|restore>'} NAME`);
         process.exit(1);
       }
 
@@ -1462,7 +1474,7 @@ if (preDispatch()) {
           console.error('  ❌ Empty value. Nothing was stored.');
           process.exit(1);
         }
-        kc.setSecret(name, value, flagValue('--description'));
+        kc.setSecret(name, value, flagValue('--description'), { force: args.includes('--force') });
         console.log(`  ✅ ${name} sealed in the OS keychain. CRBRO keeps no copy.`);
         console.log('     Record only the NAME in the brain, never the value.');
         return;
@@ -1492,7 +1504,19 @@ if (preDispatch()) {
         return;
       }
 
-      console.error('  Usage: npx crbro-memory secret <set|get|list|remove|status> [NAME]');
+      if (sub === 'restore') {
+        // `name` is the copy id from `secret copies`.
+        if (!args.includes('--yes')) {
+          console.error(`  ❌ This replaces the current store with ${name} (the current one is kept as a sealed copy).`);
+          console.error(`     Re-run to confirm:  npx crbro-memory secret restore ${name} --yes`);
+          process.exit(1);
+        }
+        const r = kc.restoreSealedCopy(name);
+        console.log(`  ✅ Restored ${r.restored}: ${r.entries} credential(s). The previous store, if any, is kept as a sealed copy.`);
+        return;
+      }
+
+      console.error('  Usage: npx crbro-memory secret <set|get|list|remove|status|copies|restore> [NAME]');
       process.exit(1);
     } catch (err) {
       console.error(`  ❌ ${err instanceof Error ? err.message : err}`);
@@ -1636,6 +1660,8 @@ function printHelp() {
     '    npx crbro-memory secret get NAME     Print one; pipe it to keep it off the screen',
     '    npx crbro-memory secret remove NAME --yes',
     '    npx crbro-memory secret status       Which keychain this machine offers',
+    '    npx crbro-memory secret copies       Windows: sealed copies of the store',
+    '    npx crbro-memory secret restore ID --yes   Put a sealed copy back (validated first)',
     '',
     '  Server:',
     '    npx crbro-memory                  Start the MCP server (stdio)',

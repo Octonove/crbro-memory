@@ -74,7 +74,8 @@ import {
   syncSpaceNow, syncAll, getIdentity, attachSync, sharedMap, unshareNeuron, leaveSpace,
 } from './sync/space.js';
 import {
-  detectBackend, setSecret, getSecret, listSecrets, removeSecret, KeychainUnavailable,
+  detectBackendAsync, setSecretAsync, getSecretAsync, listSecretsAsync, removeSecretAsync, KeychainUnavailable,
+  secretConfirmToken, sealedCopyCount,
 } from './engine/keychain.js';
 import { readJSON } from './utils/fs.js';
 import { contentHash, factId } from './utils/hash.js';
@@ -2089,32 +2090,35 @@ export function createServer(shared?: Engines): McpServer {
     'crbro_secret',
     {
       title: 'Keychain secret',
-      description: 'Read or write credentials in the operating system\'s keychain (macOS Keychain, Linux Secret Service, Windows DPAPI): CRBRO keeps no copy, invents no crypto, and no sync or team space can reach the store. When the user hands you a credential, set it here, then record only the NAME with crbro_learn. get returns the value for the task at hand — an environment variable of the same name wins; a missing secret returns found:false, not an error — never print it back unless the user asked. list returns names only; remove deletes one; status says which store this machine has (none is a normal answer; env vars still work). Names are SCREAMING_SNAKE_CASE; set updates in place and rejects empty values.',
+      description: 'Read or write credentials in the OS keychain (macOS Keychain, Linux Secret Service, Windows DPAPI); no sync or team space reaches it. When the user hands you a credential, set it, then crbro_learn only the NAME. get returns value and source: never print it unless asked; missing = found:false. Environment variables count only as CRBRO_SECRET_<NAME> or when listed in CRBRO_SECRET_ENV. Overwriting with a different value, and remove, are two-step: the first call changes nothing and returns confirm_token; show the user, get agreement, call again with confirm. A missing store file is an error, never empty; on Windows `crbro-memory secret restore` puts back a sealed copy.',
       inputSchema: {
         action: z.enum(['get', 'set', 'list', 'remove', 'status'])
-          .describe('get = read one, set = store or update one, list = names only, remove = delete one, status = which keychain this machine offers, or why none.'),
-        name: z.string().optional().describe('SCREAMING_SNAKE_CASE, e.g. WORDPRESS_APP_PASSWORD. Required for get, set and remove.'),
-        value: z.string().optional().describe('The credential itself, non-empty. Only for set.'),
-        description: z.string().optional().describe('What it is for, e.g. "WordPress example.com - REST API". Only for set.'),
+          .describe('get one, set (store or update) one, list names only, remove one, status = which keychain this machine offers.'),
+        name: z.string().optional().describe('SCREAMING_SNAKE_CASE, e.g. WORDPRESS_APP_PASSWORD. For get, set, remove.'),
+        value: z.string().optional().describe('The credential, non-empty. Only for set.'),
+        description: z.string().optional().describe('What it is for. Only for set.'),
+        confirm: z.string().optional().describe('confirm_token from the first call of an overwrite or remove.'),
       },
-      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     },
     async (args) => {
       try {
         let payload: Record<string, unknown>;
 
         if (args.action === 'status') {
-          const { backend, reason } = detectBackend();
+          const { backend, reason } = await detectBackendAsync();
+          const copias = backend === 'windows-dpapi' ? sealedCopyCount() : null;
           payload = {
             backend,
             available: backend !== null,
+            ...(copias !== null ? { sealed_copies: copias } : {}),
             message: backend
               ? `Credentials on this machine are stored in: ${backend}.`
-              : `No credential store available here. ${reason ?? ''} Credentials can still be passed as environment variables.`,
+              : `No credential store available here. ${reason ?? ''} Credentials can still be passed as CRBRO_SECRET_<NAME> environment variables.`,
           };
 
         } else if (args.action === 'list') {
-          const entries = listSecrets();
+          const entries = await listSecretsAsync();
           payload = {
             count: entries.length,
             secrets: entries,
@@ -2126,24 +2130,64 @@ export function createServer(shared?: Engines): McpServer {
 
         } else if (args.action === 'set') {
           if (!args.value) throw new Error('"value" is required for action "set".');
-          setSecret(args.name, args.value, args.description ?? '');
+          // Overwriting is the destructive half of set: the old value is gone
+          // for whoever relied on it. A new name, or the same value again, is not.
+          const existe = (await listSecretsAsync()).some(e => e.name === args.name);
+          const actual = existe ? await getSecretAsync(args.name) : null;
+          const sobrescribe = existe && actual?.source === 'keychain' && actual.value !== args.value;
+          if (sobrescribe) {
+            const token = await secretConfirmToken('set', args.name, args.value);
+            if (args.confirm !== token) {
+              return jsonResult({
+                stored: null,
+                needs_confirmation: true,
+                exists: true,
+                confirm_token: token,
+                message: args.confirm
+                  ? 'That confirmation is stale (the store or the value changed). Nothing was written. Show the user again and use this new token.'
+                  : `${args.name} already exists with a different value. Nothing was written. Overwriting replaces it — tell the user, and if they agree call again with confirm.`,
+              });
+            }
+          }
+          await setSecretAsync(args.name, args.value, args.description ?? '');
           payload = {
             stored: args.name,
+            overwritten: sobrescribe,
             message: `Stored in the OS keychain as ${args.name}. Now record the NAME in the brain with crbro_learn — never the value — so a later session knows where to look.`,
           };
 
         } else if (args.action === 'remove') {
-          const gone = removeSecret(args.name);
-          payload = {
-            removed: gone,
-            message: gone
-              ? `${args.name} deleted from the keychain.`
-              : `No secret named ${args.name} was found.`,
-          };
+          const existe = (await listSecretsAsync()).some(e => e.name === args.name);
+          if (!existe) {
+            payload = { removed: false, message: `No secret named ${args.name} was found.` };
+          } else {
+            const token = await secretConfirmToken('remove', args.name);
+            if (args.confirm !== token) {
+              payload = {
+                removed: false,
+                needs_confirmation: true,
+                confirm_token: token,
+                message: args.confirm
+                  ? 'That confirmation is stale (the store changed). Nothing was removed. Show the user again and use this new token.'
+                  : `This deletes ${args.name} from the keychain. Nothing was removed yet — tell the user, and if they agree call again with confirm.`,
+              };
+            } else {
+              const gone = await removeSecretAsync(args.name);
+              const copias = sealedCopyCount();
+              payload = {
+                removed: gone,
+                message: gone
+                  ? `${args.name} deleted from the keychain.` + (copias !== null
+                    ? ' A sealed copy of the store from before the removal is kept: `npx crbro-memory secret copies` and `secret restore` bring it back while it lasts.'
+                    : '')
+                  : `No secret named ${args.name} was found.`,
+              };
+            }
+          }
 
         } else {
-          const value = getSecret(args.name);
-          payload = value === null
+          const got = await getSecretAsync(args.name);
+          payload = got === null
             ? {
                 found: false,
                 message: `No secret named ${args.name}. Run action "list" to see what is stored, or ask the user for it and store it with action "set".`,
@@ -2151,7 +2195,8 @@ export function createServer(shared?: Engines): McpServer {
             : {
                 found: true,
                 name: args.name,
-                value,
+                value: got.value,
+                source: got.source,
                 note: 'Use it for the task at hand. Do not repeat it back to the user and do not write it into any file.',
               };
         }

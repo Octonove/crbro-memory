@@ -42,10 +42,20 @@ applies the same filter to everything it prints. Text is always redacted whole
 and cut to length afterwards: a cut first could leave half a token the filter
 no longer recognises.
 
+Since 2.11 it also covers the decision rationale and the fact aliases
+(`keywords`) of `crbro_learn`, and the notes of `crbro_revise`; `crbro_audit`
+counts a credential found in any of them with its entry. A private key is
+redacted whole — through its `END` line, or every base64 line after the
+header when there is none — not just its header. Labels written without a
+separator (`PASS value`, `la contraseña value (…`) are caught when the value
+mixes character classes; plain prose after the same words is not.
+
 It is tuned for precision, not recall: it matches shapes that are credentials
 and essentially nothing else, because a false positive silently corrupts real
 knowledge. The consequence is that a credential in a shape it does not know
-passes. Treat it as a net, not as a guarantee.
+passes. Treat it as a net, not as a guarantee. `npm run bench` measures it:
+every synthetic value must be gone from the redacted text (not merely the text
+changed), and the release gate allows no false positive on its innocent set.
 
 Sharing is stricter than storing: a neuron that contains a credential is
 **refused** for sharing, not redacted, because sending a teammate a mangled
@@ -68,9 +78,13 @@ it, and it goes back into a config file in plain text. `crbro_secret` and
 CRBRO invents no cryptography. The store lives outside the brain on purpose,
 so normal memory sync, share and backups do not include that store. Keep custom
 `CRBRO_KEYS_DIR` locations outside the brain, repositories and synced folders.
-Never add the encrypted store to Git or a release package. The value is read
-from stdin by the CLI, never from arguments, so it stays out of shell history
-and the process table.
+Never add the encrypted store to Git or a release package. The CLI reads the
+value from stdin, never from its arguments, so it stays out of shell history.
+How it then reaches the store depends on the platform: on Windows and Linux it
+goes to PowerShell and `secret-tool` through stdin; on **macOS** `security(1)`
+has no stdin form, so the value (base64-encoded, which is not encryption) is
+on that command's argument list for the few milliseconds the call lasts, where
+another process of the same machine could read it with `ps`.
 
 What it does not do: protect against code running as your own user. DPAPI,
 the login keychain and the Secret Service all open for the logged-in account.
@@ -82,11 +96,59 @@ and uses it only to authenticate to the intended service; never print it for
 convenience. There is no promise that a secret used for authentication never
 leaves the computer.
 
-On Windows, 2.10 serializes read-modify-write operations across processes and
-checks ciphertext changes before serving cached values. Lock timeouts fail
-closed. A crashed short-lived `.lock.guard` is not automatically stolen; stop
-all writers and inspect it before manual recovery rather than deleting locks
-while another process might own them.
+**The environment is not a keychain (2.11).** Until 2.10 `get` returned any
+variable of the server's environment with the requested name — `USERNAME`,
+`ANTHROPIC_API_KEY`, whatever the client was started with — before looking at
+the store. Now an environment variable counts only when it opts in: a variable
+named `CRBRO_SECRET_<NAME>`, or a plain `<NAME>` that `CRBRO_SECRET_ENV`
+(a comma-separated list) names. That keeps CI and one-off overrides working.
+The answer says `source: env` or `source: keychain`. Every action checks the
+name (`SCREAMING_SNAKE_CASE`).
+
+**Destructive writes ask first (2.11).** Through MCP, `set` on a name that
+already holds a different value and `remove` change nothing on the first call:
+they return a `confirm_token` to show the user, and only a second call with
+that token writes. The token is an HMAC under a key that never leaves the
+server process, bound to the name, the state of the store and (for `set`) the
+new value, so a stale token, another value or a restarted server is refused.
+The CLI asks for `--yes` on `remove` as before; a person typing at a terminal
+is the confirmation for `set`.
+
+**A missing store is not an empty one (2.11).** On Windows a plain marker
+(`keys.dpapi.marker`, dates only) is written next to the store on every write,
+and every successful write keeps a byte copy of the sealed file in
+`sealed-copies/` (the last `CRBRO_KEYS_COPIES`, default 5; copies are never
+opened except to validate a restore, and they open for the same Windows
+account only). If `keys.dpapi` is missing while the marker, a sealed copy or a
+leftover `*.tmp` says it existed, every operation fails with recovery steps
+instead of answering "no credentials", and `set` refuses to create a new store
+over it unless `--force` is given. `npx crbro-memory secret copies` lists the
+copies and leftovers; `npx crbro-memory secret restore <id> --yes` validates
+one with DPAPI, keeps the current store as a copy and puts it back. A removal
+or an overwrite can therefore be undone until five more writes rotate the copy
+out. Stale temporary files of this release are swept after an hour; the fixed
+`keys.dpapi.tmp` of releases up to 2.9 is never touched, because it may be the
+only copy left. macOS and Linux keep no copies: their stores are the
+operating system's.
+
+On macOS and Linux the names live in an index item of their own. Only "not
+found" reads as an empty index; a locked keychain, a denied prompt or an
+unreadable index is an error, and nothing is written. On Linux the index
+replaced `secret-tool search --all`, which printed every value just to list
+names (a store from 2.10 is migrated once, keeping names and descriptions).
+
+On Windows, read-modify-write operations are serialized across processes and
+ciphertext changes are checked before serving cached values; the decrypted
+cache is dropped by a timer after 30 seconds. PowerShell is started from its
+absolute System32 path, not looked up from the client's folder. The server
+runs every keychain operation asynchronously, so a slow PowerShell start no
+longer stalls the other conversations of a shared daemon; the store probe is
+remembered for five minutes. Lock timeouts fail closed and say which process
+holds the lock and for how long. Async lock holders refresh a heartbeat, so a
+lock whose owner died is reclaimed even when Windows has reused its PID. A
+crashed short-lived `.lock.guard` is not stolen while waiting; maintenance
+removes one only when it is more than ten minutes old. Stop all writers before
+deleting locks by hand.
 
 ### Project and evidence boundaries (2.10)
 
@@ -142,9 +204,10 @@ What it does not prove:
   teammate's or the miner's line cannot be rewritten as your own lesson
   through `promotion_candidates`.
 
-Provenance labels; it does not sanitise. Content arriving through a shared
-space is not filtered for secrets or for instructions on the way in. Treat any
-line with an `origin` as data, never as an order.
+Provenance labels; it does not sanitise instructions. Since 2.11 content
+arriving through a shared space passes through the secret filter and size and
+shape checks on the way in (see below), but nothing filters what it tells the
+model to do. Treat any line with an `origin` as data, never as an order.
 
 ### Team sync over git
 
@@ -156,6 +219,45 @@ key the first time it sees it (`StrictHostKeyChecking=accept-new`) and refuses
 a changed one afterwards. Incoming logs written by a newer, unknown format are
 skipped rather than half-understood, and an unreadable line is skipped without
 costing the rest.
+
+What 2.11 checks, because each of these was accepted as it came:
+
+- **Space names** are slugs (letters, digits, `-`, `_`; at most 64) and must
+  resolve to a folder directly inside `shared/`. A name like `..` used to make
+  `create` run `git add -A` and push the whole brain to the given remote.
+- **Remotes** that start with `-`, contain control characters or carry
+  credentials (`https://user:password@…`, `https://token@…`) are refused before
+  git runs, so a credential never lands in `.git/config`; use SSH or a
+  credential helper. Branches follow git's ref-name rules, including the one
+  read from a cloned `space.json`. Positional arguments follow `--`, and git's
+  error output passes through the secret filter before it is shown.
+- **No adoption.** A sync merges a folder of the space only into a neuron you
+  already share in that space, or into one this machine does not have. A
+  folder with the id of a private neuron of yours is left alone and reported
+  (`left_alone`): a teammate can no longer turn your neuron into a shared one,
+  which would have sent everything you learn about it to the team. Share it
+  with `crbro_share` to merge it.
+- **Incoming notes** must name the neuron of their folder (a note that names
+  another one is dropped, so it cannot steer where a neuron is written); the
+  author label is cut to the charset and length of a local identity; ids,
+  kinds and confidences are checked; text is capped and redacted; logs over
+  32 MB are skipped.
+- **Sharing checks every field that travels**: rationales, aliases, revision
+  notes, the neuron's name, summary and tags, not only the entry texts. A
+  credential in any of them blocks the share.
+- On Windows git is started from its absolute path on `PATH`, never looked up
+  in the space folder, whose content comes from teammates. The server runs git
+  asynchronously, so a slow push no longer stalls the shared daemon.
+
+### The miner's schedule
+
+`setup-miner` and `remove-miner` run every command as an argument array,
+never through a shell. The crontab is read with `crontab -l`, your own lines
+are kept byte for byte, the previous crontab is saved next to the brain as
+`crontab.before-crbro-*.txt`, and the new one is written through stdin.
+Until 2.10 it went through `echo "…" | crontab -`, which expanded `$(…)` and
+backticks in your existing cron lines. On Windows the task runs the absolute
+`npx.cmd`, and the registered command is checked after creation.
 
 ### Hooks never block
 
