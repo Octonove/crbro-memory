@@ -121,6 +121,25 @@ describe('tools/list', () => {
     for (const t of tools) expect(t.description.length, t.name).toBeLessThan(1000);
   });
 
+  it('keeps the whole tools/list under 30,000 characters', async () => {
+    // Paid on every request by clients that load all tools. 2.10.0 sent
+    // 44,434 characters (descriptions 11,475, input schemas 22,428 of which
+    // 15,193 were parameter descriptions, output schemas 7,070); 2.11 cuts
+    // parameter descriptions to what changes the caller's behaviour and keeps
+    // output schemas to the keys a caller acts on.
+    const listed = await client.listTools();
+    expect(JSON.stringify(listed).length).toBeLessThan(30_000);
+  });
+
+  it('never repeats the tool description inside a parameter description', () => {
+    for (const t of tools) {
+      for (const [name, p] of Object.entries<any>(t.inputSchema.properties ?? {})) {
+        const d: string = p.description ?? '';
+        if (d.length > 40) expect(t.description, `${t.name}.${name}`).not.toContain(d);
+      }
+    }
+  });
+
   it('never mentions a retired tool name in a description or parameter text', () => {
     for (const t of tools) {
       const text = t.description + ' ' + JSON.stringify(t.inputSchema ?? {});
@@ -175,12 +194,13 @@ describe('tools/call', () => {
     expect(b.memory_discipline).toContain('crbro_consolidate');
   });
 
-  it('crbro_boot maps every retired name to its replacement', async () => {
-    const r: any = await client.callTool({ name: 'crbro_boot', arguments: {} });
-    const b = body(r);
-    expect(b.retired_tools['crbro_status']).toBe('crbro_inspect view=status');
-    for (const old of RETIRED) expect(b.retired_tools[old], old).toBeTruthy();
+  it('crbro_inspect view=status maps every retired name to its replacement (boot did until 2.11)', async () => {
+    const b = body(await client.callTool({ name: 'crbro_boot', arguments: {} }));
+    expect(b.retired_tools).toBeUndefined();
     expect(Array.isArray(b.recent_sessions)).toBe(true);
+    const s = body(await client.callTool({ name: 'crbro_inspect', arguments: { view: 'status' } }));
+    expect(s.retired_tools['crbro_status']).toBe('crbro_inspect view=status');
+    for (const old of RETIRED) expect(s.retired_tools[old], old).toBeTruthy();
   });
 
   it('crbro_recall returns structuredContent with confidence on each result', async () => {
@@ -370,7 +390,9 @@ describe('tools/call', () => {
     expect(w.written).toBe(true);
     const d = body(await client.callTool({ name: 'crbro_context', arguments: { discard_pending: 'certificado TLS' } }));
     expect(d.discarded.length).toBe(1);
-    expect(JSON.stringify(d.recently_closed)).not.toContain('certificado TLS');
+    // A write confirms, it does not echo the context (2.11).
+    expect(d.recently_closed).toBeUndefined();
+    expect(JSON.stringify(body(await client.callTool({ name: 'crbro_context', arguments: {} })).recently_closed)).not.toContain('certificado TLS');
   });
 
   it('crbro_maintenance dry_run leaves prefrontal/global_map.json absent', async () => {

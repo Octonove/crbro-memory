@@ -129,7 +129,7 @@ describe('crbro_boot project (over MCP)', () => {
     const b = await boot();
     expect(b).not.toHaveProperty('project_neurons');
     expect(b).not.toHaveProperty('project_hint');
-    expect(b.hot_topics).toHaveLength(10);
+    expect(b.hot_topics).toHaveLength(8);   // eight pointers since 2.11 (ten before)
     expect(b.hot_topics[0].id).toBe('project_tema_caliente_0');
     expect(b.hot_topics.map((h: any) => h.id)).not.toContain('project_synthetica_decks');
   });
@@ -139,7 +139,7 @@ describe('crbro_boot project (over MCP)', () => {
     expect(b.project_neurons).toEqual([
       { id: 'project_synthetica_decks', name: 'Synthetica Decks', match: 'name', heat: expect.any(Number) },
     ]);
-    expect(b.hot_topics).toHaveLength(10);
+    expect(b.hot_topics).toHaveLength(8);
     expect(b.hot_topics[0].id).toBe('project_synthetica_decks');
     expect(b.hot_topics[1].id).toBe('project_tema_caliente_0');   // the rest keep their heat order
   });
