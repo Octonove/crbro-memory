@@ -86,11 +86,14 @@ function semanticWaitMs(): number {
  * overlap, cut at a sentence or a space. BM25 no longer drowns the one line
  * that matched in the length of the rest, the vector model (which sees about
  * 512 tokens) sees every part, and recall returns the part that matched
- * instead of the opening of a 5,000-character entry.
+ * instead of the opening of a 5,000-character entry. PART_MAX equals the
+ * recall handler's content cap, so a part is never cut again on the way
+ * out. Measured on the synthetic brain: parts of 800 made the index file
+ * 38.5 MB, parts of about 1,000 35.2 MB, for the same benchmark results.
  */
-const PART_MAX = 1000;
-const PART_TARGET = 800;
-const PART_OVERLAP = 150;
+const PART_MAX = 1200;
+const PART_TARGET = 1000;
+const PART_OVERLAP = 120;
 /** Exponent on term coverage. >1 punishes chunks that only match one term. */
 const COVERAGE_EXPONENT = 1.5;
 /** Debounce before writing the index to disk after a learn. */
@@ -450,7 +453,7 @@ export function splitParts(text: string): Array<{ offset: number; text: string }
   let start = 0;
   while (start < text.length) {
     let end = Math.min(text.length, start + PART_TARGET);
-    if (text.length - end < PART_TARGET / 4) end = text.length;   // no tiny last part
+    if (text.length - end < PART_TARGET / 5) end = text.length;   // no tiny last part (and none over PART_MAX)
     if (end < text.length) {
       const ventana = text.slice(start + Math.floor(PART_TARGET * 0.6), end);
       const frase = Math.max(ventana.lastIndexOf('. '), ventana.lastIndexOf('\n'), ventana.lastIndexOf('; '));
