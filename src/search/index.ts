@@ -17,7 +17,8 @@
 import { create, insert, search, remove, save, load, getByID } from '@orama/orama';
 import type { AnyOrama, RawData } from '@orama/orama';
 import path from 'node:path';
-import { readJSON, writeJSON, listJSONFiles, fileExists, deleteJSON, fileMtime, newestMtime } from '../utils/fs.js';
+import { writeFileSync, renameSync } from 'node:fs';
+import { readJSON, writeJSON, listJSONFiles, fileExists, deleteJSON, fileMtime } from '../utils/fs.js';
 import { chunkId, factId } from '../utils/hash.js';
 import { queryTerms, variants, createIndexTokenizer } from './tokenize.js';
 import { SemanticIndex, semanticEnabled, type SemanticHit } from './semantic.js';
@@ -46,6 +47,10 @@ const BREADTH_CAP = 0.25;
 const COVERAGE_EXPONENT = 1.5;
 /** Debounce before writing the index to disk after a learn. */
 const PERSIST_DEBOUNCE_MS = 5000;
+/** How often a long-lived process compares every file even when the folders did not move (2.11). */
+const FULL_CHECK_MS = 60_000;
+/** How long an exiting process may spend writing its index before it leaves anyway (2.11). */
+const EXIT_FLUSH_MS = 2000;
 /** How many of the top results also carry their neuron's next best chunks. */
 const ALSO_MATCHED_RESULTS = 3;
 /** Semantic fusion (opt-in): candidates asked of the vector index per query. */
@@ -195,6 +200,37 @@ function newDb(): AnyOrama {
 interface StoredIndex {
   v: number;
   data: RawData;
+  /**
+   * The file date each neuron and day log had when it was indexed (2.11),
+   * keyed by neuron id or "session:<id>". A loader compares it with the disk
+   * file by file, so an index written by a process that had not seen a later
+   * write never hides that write: the date differs and the neuron is
+   * re-indexed. Before it, freshness was a single timestamp — the index
+   * file's own — and a stale view written late looked newer than everything.
+   */
+  mtimes?: Record<string, number>;
+  /** The semantic noise floor of this brain, when the semantic layer measured one (2.11). */
+  calibration?: SemanticCalibration;
+}
+
+/**
+ * How high a cosine climbs on THIS brain for a question it holds nothing
+ * about (2.11). e5-small compresses every cosine into ~0.80-0.92 and the top
+ * of N cosines grows with N, so a fixed 0.86 meant "strong" for noise on a
+ * big brain (a nonsense query scored 0.859 on a 561-neuron brain). Measured
+ * by asking the vector index random questions made of words that do not go
+ * together and keeping the best cosine each one reached.
+ */
+export interface SemanticCalibration {
+  model: string;
+  vectors: number;
+  samples: number;
+  /** Median and 95th percentile of the best cosine a random question reached. */
+  noise_p50: number;
+  noise_p95: number;
+  /** A vector-only match at or above this is strong: noise_p95 plus a margin. */
+  strong: number;
+  at: string;
 }
 
 /** Filled in by search/searchMany when the caller passes it: what the list left out. */
@@ -339,6 +375,17 @@ export class SearchEngine {
   private rebuilding: Promise<number> | null = null;
   /** When the cortex was last read into this index, in ms. Files newer than this are somebody else's writes. */
   private syncedAt = 0;
+  /** File date of each neuron / "session:<id>" as indexed (see StoredIndex.mtimes). */
+  private indexedMtime = new Map<string, number>();
+  /** Folder dates of cortex and hippocampus at the last refresh: a write by anyone renames a file into them. */
+  private dirsSeen = { cortex: -1, diary: -1 };
+  /** Last full file-by-file comparison, for writers that edit in place without touching the folder. */
+  private lastFullCheck = 0;
+  /** One refresh at a time. */
+  private refreshing: Promise<{ reindexed: number; removed: number }> | null = null;
+  /** The semantic calibration loaded with the index or measured since. */
+  private calibration: SemanticCalibration | null = null;
+  private calibrating: Promise<void> | null = null;
 
   constructor(private brain: Brain) {
     if (semanticEnabled()) {
@@ -402,11 +449,22 @@ export class SearchEngine {
     if (await fileExists(indexPath)) {
       try {
         const stored = await readJSON<StoredIndex>(indexPath);
-        if (stored && stored.v === INDEX_VERSION && stored.data && !(await this.isStale())) {
+        // An index that is merely BEHIND the files is loaded and caught up by
+        // refresh() (2.11). It used to be rebuilt from scratch whenever any
+        // neuron or day log was newer than it — and a plain read rewrites a
+        // neuron (access count) — so a boot after another process's work paid
+        // a full rebuild: crbro_boot 5.9 s instead of 1.57 s on a 561-neuron
+        // brain. Only a different version, a corrupt file or an unknown shape
+        // rebuild now.
+        if (stored && stored.v === INDEX_VERSION && stored.data) {
           this.db = newDb();
           load(this.db, stored.data);
           this.docCount = this.countDocs(stored.data);
-          if (this.recoverChunkMap(stored.data)) return 'loaded';
+          if (this.recoverChunkMap(stored.data)) {
+            this.indexedMtime = new Map(Object.entries(stored.mtimes || {}).filter(([, v]) => typeof v === 'number'));
+            this.calibration = stored.calibration && stored.calibration.model ? stored.calibration : null;
+            return 'loaded';
+          }
           // Could not tell which chunk belongs to which neuron — without
           // that, removal is blind, so a rebuild is the only safe answer.
         }
@@ -420,6 +478,24 @@ export class SearchEngine {
   }
 
   /**
+   * Catch up with writes made by anyone else before answering (2.11). A
+   * process that stays up — a classic stdio server for a whole conversation,
+   * the daemon — only refreshed at boot, so what another session learned was
+   * invisible to it until it restarted. Every writer renames a file into the
+   * cortex or the diary folder, which moves the folder's own date: two stats
+   * per search say whether anything changed, and only then do we compare the
+   * files one by one. Once a minute we compare anyway, for a writer that
+   * edits a file in place.
+   */
+  private async catchUp(): Promise<void> {
+    if (!this.db || this.rebuilding) return;
+    const [cortex, diary] = await Promise.all([fileMtime(this.brain.paths.cortex), fileMtime(this.brain.paths.hippocampus)]);
+    const moved = cortex !== this.dirsSeen.cortex || diary !== this.dirsSeen.diary;
+    if (!moved && Date.now() - this.lastFullCheck < FULL_CHECK_MS) return;
+    await this.refresh();
+  }
+
+  /**
    * Bring the in-memory index up to date with the disk: re-index the neurons
    * and day logs whose files changed since the last sync, drop the chunks of
    * what is gone. This is how writes from ANOTHER process (an older client, a
@@ -429,9 +505,28 @@ export class SearchEngine {
    */
   async refresh(): Promise<{ reindexed: number; removed: number }> {
     if (!this.db) { await this.init(); return { reindexed: 0, removed: 0 }; }
+    if (this.refreshing) return this.refreshing;
+    this.refreshing = this.doRefresh().finally(() => { this.refreshing = null; });
+    return this.refreshing;
+  }
+
+  /**
+   * Has this file changed since it was indexed? Exact file dates when we
+   * recorded one (2.11); for an entry without a record (an index written by
+   * 2.10), the old rule: newer than the last sync, with a second of slack.
+   */
+  private changed(key: string, mtime: number, desde: number): boolean {
+    const known = this.indexedMtime.get(key);
+    return known !== undefined ? known !== mtime : mtime > desde;
+  }
+
+  private async doRefresh(): Promise<{ reindexed: number; removed: number }> {
     await this.settled();
-    const desde = this.syncedAt - 1000;   // the same second of slack isStale() allows
+    const desde = this.syncedAt - 1000;   // one second of slack for entries without a recorded date
     const empezado = Date.now();
+    // Taken BEFORE listing: a write landing during this pass moves the folder
+    // again and the next search looks again.
+    const [dirCortex, dirDiary] = await Promise.all([fileMtime(this.brain.paths.cortex), fileMtime(this.brain.paths.hippocampus)]);
     let reindexed = 0, removed = 0;
 
     const ids = await listJSONFiles(this.brain.paths.cortex);
@@ -442,23 +537,28 @@ export class SearchEngine {
       // header chunk. That is what an index file written by ANOTHER process
       // looks like from here — newer than the neuron, and without it — and the
       // file date alone would never bring it back.
-      if (this.chunksByNeuron.has(id) && (await fileMtime(this.brain.paths.neuron(id))) <= desde) continue;
+      const mtime = await fileMtime(this.brain.paths.neuron(id));
+      if (this.chunksByNeuron.has(id) && !this.changed(id, mtime, desde)) continue;
       try {
         const neuron = await readJSON<Neuron>(this.brain.paths.neuron(id));
         if (!neuron) continue;
         await this.reindexInPlace(neuron);
+        this.indexedMtime.set(id, mtime);
         reindexed++;
       } catch { /* unreadable: leave what we have */ }
     }
     const diarios = await listJSONFiles(this.brain.paths.hippocampus);
     const diasVivos = new Set(diarios.map(d => `session:${d}`));
     for (const id of diarios) {
-      if ((await fileMtime(this.brain.paths.session(id))) <= desde) continue;
+      const key = `session:${id}`;
+      const mtime = await fileMtime(this.brain.paths.session(id));
+      if (!this.changed(key, mtime, desde)) continue;
       try {
         const log = await readJSON<{ session_id: string; date?: string; summary?: string }>(this.brain.paths.session(id));
         if (!log?.session_id) continue;
         await this.removeNeuronChunks(`session:${log.session_id}`);
         if (log.summary) await this.insertSessionChunks(log);
+        this.indexedMtime.set(key, mtime);
         reindexed++;
       } catch { /* skip */ }
     }
@@ -471,10 +571,13 @@ export class SearchEngine {
       const file = key.startsWith('session:') ? this.brain.paths.session(key.slice('session:'.length)) : this.brain.paths.neuron(key);
       if (await fileExists(file)) continue;
       await this.removeNeuronChunks(key);
+      this.indexedMtime.delete(key);
       removed++;
     }
 
     this.syncedAt = empezado;
+    this.dirsSeen = { cortex: dirCortex, diary: dirDiary };
+    this.lastFullCheck = empezado;
     if (reindexed > 0 || removed > 0) {
       this.markDirty();
       // Off the boot path, like rebuild(): every client waits on init(), and
@@ -484,27 +587,6 @@ export class SearchEngine {
       this.embedding = previa.then(() => this.flushEmbeddings()).then(() => this.markDirty()).catch(() => undefined);
     }
     return { reindexed, removed };
-  }
-
-  /**
-   * Has the cortex moved on without the index?
-   *
-   * This used to be impossible to notice: init() only rebuilt when the file
-   * was missing, the version had changed or the JSON was corrupt — never
-   * because it had simply fallen behind. So a lost flush, or a second client
-   * writing neurons while this one held a stale index in memory, left those
-   * facts invisible to recall indefinitely. On the reference brain the index
-   * was five and a half hours behind the newest neuron, and a term saved that
-   * afternoon returned nothing at all.
-   */
-  private async isStale(): Promise<boolean> {
-    const indexAt = await fileMtime(this.brain.paths.chunksIndex());
-    if (indexAt === 0) return true;
-    const cortexAt = await newestMtime(this.brain.paths.cortex);
-    // The diary is indexed too (2.2): a log written by another process counts.
-    const diaryAt = await newestMtime(this.brain.paths.hippocampus);
-    // One second of slack: a write landing during a rebuild is not staleness.
-    return Math.max(cortexAt, diaryAt) > indexAt + 1000;
   }
 
   /**
@@ -526,17 +608,23 @@ export class SearchEngine {
 
   private async doRebuild(): Promise<number> {
     this.syncedAt = Date.now();
+    this.lastFullCheck = this.syncedAt;
+    this.dirsSeen = { cortex: await fileMtime(this.brain.paths.cortex), diary: await fileMtime(this.brain.paths.hippocampus) };
     this.db = newDb();
     this.docCount = 0;
     this.chunksByNeuron.clear();
+    this.indexedMtime.clear();
 
     const ids = await listJSONFiles(this.brain.paths.cortex);
 
     for (const id of ids) {
       try {
+        // Dated before reading: a write in between is simply indexed again later.
+        const mtime = await fileMtime(this.brain.paths.neuron(id));
         const neuron = await readJSON<Neuron>(this.brain.paths.neuron(id));
         if (!neuron) continue;
         await this.insertNeuronChunks(neuron);
+        this.indexedMtime.set(id, mtime);
       } catch {
         // Skip unreadable neuron, keep going.
       }
@@ -545,8 +633,10 @@ export class SearchEngine {
     // The diary too (2.2): every session log, as paragraphs.
     for (const id of await listJSONFiles(this.brain.paths.hippocampus)) {
       try {
+        const mtime = await fileMtime(this.brain.paths.session(id));
         const log = await readJSON<{ session_id: string; date?: string; summary?: string }>(this.brain.paths.session(id));
         if (log?.summary) await this.insertSessionChunks(log);
+        this.indexedMtime.set(`session:${id}`, mtime);
       } catch {
         // Skip unreadable log, keep going.
       }
@@ -556,7 +646,7 @@ export class SearchEngine {
     // hold boot for minutes on a big brain. Recall serves what is embedded so
     // far; the vectors go to disk with the next index write.
     this.embedding = this.flushEmbeddings().then(() => this.markDirty()).catch(() => undefined);
-    await this.persist();
+    await this.writeIndex();
     await this.dropLegacyIndex();
     return this.docCount;
   }
@@ -570,6 +660,9 @@ export class SearchEngine {
     await this.settled();
 
     await this.reindexInPlace(neuron);
+    // The file as it is now is what was just indexed (the cortex calls this
+    // right after writing it): recorded, so the next refresh skips it.
+    this.indexedMtime.set(neuron.id, await fileMtime(this.brain.paths.neuron(neuron.id)));
     // Ids are content hashes: only the neuron's NEW lines get embedded.
     await this.flushEmbeddings();
     this.markDirty();
@@ -601,6 +694,7 @@ export class SearchEngine {
     await this.settled();
     if (!this.chunksByNeuron.has(neuronId)) return;
     await this.removeNeuronChunks(neuronId);
+    this.indexedMtime.delete(neuronId);
     this.markDirty();
   }
 
@@ -609,22 +703,60 @@ export class SearchEngine {
     if (this.embedding) await this.embedding;
   }
 
-  /** Write the index to disk now. */
+  /**
+   * Write the index to disk now. First catch up with whatever another
+   * process wrote (2.11): the file is shared, and a long-lived process that
+   * had not seen a later write used to overwrite the other's newer index
+   * with its older view — after which that write looked indexed to every
+   * loader. Catching up first makes what we write a superset of the disk;
+   * the per-file dates written with it (StoredIndex.mtimes) make any
+   * remaining race visible to the next loader instead of permanent.
+   */
   async persist(): Promise<void> {
+    if (!this.db) return;
+    await this.catchUp().catch(() => undefined);
+    await this.writeIndex();
+  }
+
+  private storedPayload(): StoredIndex {
+    return {
+      v: INDEX_VERSION, data: save(this.db as AnyOrama), mtimes: Object.fromEntries(this.indexedMtime),
+      ...(this.calibration ? { calibration: this.calibration } : {}),
+    };
+  }
+
+  private async writeIndex(): Promise<void> {
     if (!this.db) return;
     if (this.persistTimer) {
       clearTimeout(this.persistTimer);
       this.persistTimer = null;
     }
-    const payload: StoredIndex = { v: INDEX_VERSION, data: save(this.db) };
     // Not pretty-printed: this file reaches tens of MB and indentation costs
     // ~25% of both size and write time for something no human reads.
-    await writeJSON(this.brain.paths.chunksIndex(), payload, { pretty: false });
+    await writeJSON(this.brain.paths.chunksIndex(), this.storedPayload(), { pretty: false });
     this.dirty = false;
     if (this.semantic) {
       try { await this.semantic.persist(); } catch { /* vectors are derived data; recall survives */ }
     }
   }
+
+  /**
+   * Write synchronously, for the 'exit' event, where nothing async runs any
+   * more. Only when there is something unsaved; never throws.
+   */
+  flushSync(): void {
+    if (!this.db || !this.dirty) return;
+    try {
+      const file = this.brain.paths.chunksIndex();
+      const tmp = `${file}.${process.pid}.exit.tmp`;
+      writeFileSync(tmp, JSON.stringify(this.storedPayload()), 'utf-8');
+      renameSync(tmp, file);
+      this.dirty = false;
+    } catch { /* best effort: the next boot refreshes from the files */ }
+  }
+
+  /** Is there anything in memory the file does not have yet? */
+  isDirty(): boolean { return this.dirty; }
 
   /** Flush if there are unsaved changes. Called on consolidate/shutdown. */
   async flush(): Promise<void> {
@@ -649,6 +781,7 @@ export class SearchEngine {
     if (!this.db) await this.init();
     if (!this.db) return [];
     await this.settled();
+    await this.catchUp().catch(() => undefined);
 
     const limit = options?.limit || 10;
     const terms = queryTerms(query);
@@ -1407,6 +1540,7 @@ export class SearchEngine {
     if (!this.db) await this.init();
     if (!this.db) return [];
     await this.settled();
+    await this.catchUp().catch(() => undefined);
 
     // Orama keeps "crbro-memory" and "crbro_memory" as single tokens and
     // matches by prefix, so the project's first word finds every spelling;
@@ -1467,6 +1601,7 @@ export class SearchEngine {
     await this.settled();
     await this.removeNeuronChunks(`session:${log.session_id}`);
     if (log.summary) await this.insertSessionChunks(log);
+    this.indexedMtime.set(`session:${log.session_id}`, await fileMtime(this.brain.paths.session(log.session_id)));
     this.markDirty();
   }
 
@@ -1601,6 +1736,53 @@ export class SearchEngine {
       // Best effort.
     }
   }
+}
+
+/** What flushOnExit listens to: stdin, or a stand-in in tests. */
+type ExitInput = { once(ev: 'end' | 'close', fn: () => void): unknown; off(ev: 'end' | 'close', fn: () => void): unknown };
+
+/**
+ * Classic stdio mode (2.11): write a dirty index before the process leaves.
+ * The index is written five seconds after the last change on a timer that,
+ * on purpose, never keeps the process alive — so a client that closed the
+ * pipe within those five seconds left the next boot behind the files. Now:
+ * stdin ending or closing, SIGINT and SIGTERM flush (at most EXIT_FLUSH_MS,
+ * then leave anyway), and a plain 'exit' writes synchronously if anything is
+ * still unsaved. Not for the daemon, which has its own shutdown, nor for a
+ * proxy. Returns a function that removes the handlers (for tests).
+ */
+export function flushOnExit(
+  engine: Pick<SearchEngine, 'flush' | 'flushSync'>,
+  opts: { input?: ExitInput; exit?: (code: number) => void; signals?: boolean } = {},
+): () => void {
+  const input: ExitInput = opts.input ?? (process.stdin as unknown as ExitInput);
+  const exit = opts.exit ?? ((code: number) => process.exit(code));
+  let leaving = false;
+  const leave = (code: number) => {
+    if (leaving) return;
+    leaving = true;
+    let done = false;
+    const go = () => { if (!done) { done = true; exit(code); } };
+    const timer = setTimeout(go, EXIT_FLUSH_MS);
+    if (typeof timer.unref === 'function') timer.unref();
+    engine.flush().catch(() => undefined).finally(() => { clearTimeout(timer); go(); });
+  };
+  const onEnd = () => leave(0);
+  const onInt = () => leave(130);
+  const onTerm = () => leave(143);
+  // A flush already under way (or abandoned at its deadline) is not repeated synchronously.
+  const onExit = () => { if (!leaving) engine.flushSync(); };
+  input.once('end', onEnd);
+  input.once('close', onEnd);
+  const signals = opts.signals !== false;
+  if (signals) { process.once('SIGINT', onInt); process.once('SIGTERM', onTerm); }
+  process.once('exit', onExit);
+  return () => {
+    input.off('end', onEnd);
+    input.off('close', onEnd);
+    if (signals) { process.off('SIGINT', onInt); process.off('SIGTERM', onTerm); }
+    process.off('exit', onExit);
+  };
 }
 
 /** A fact that has been superseded or retracted must not surface in recall. */
