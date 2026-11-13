@@ -1,0 +1,20 @@
+{
+  "//": "LF sha256 of every hooks/*.mjs CRBRO shipped up to 2.10.0, with the last package version that shipped it. An installed copy without a manifest that matches one is unmodified and is refreshed only by a newer release; anything else was edited and is left alone. Copies installed from 2.11 on are tracked by the manifest beside them, so this list does not need to grow.",
+  "crbro-guard.mjs": {
+    "2e48ef304fc7d5a4e25ff244e0bc00df8b1f6be2a9394fcd73e4dba07b2011fa": "2.5.0",
+    "6759ed093d7fd2a18a95b7e2a5b760e69cbff6ec7e00e53634b3c80b581f0a3f": "2.5.0",
+    "f95ae9748132f8f3fcd1e9ad504e1ef9c903aea86cbfee776c5f84c4a1b0b498": "2.5.0",
+    "e795f02ddcd0298769ff14c65c6c7bef71b6f574b9d22c745cbba85bf0d37fb7": "2.5.1",
+    "5bc7f192cc19a3bab4ad23924ebde1a71e34016f9373ea12124274a26ff516fc": "2.10.0"
+  },
+  "crbro-lifecycle.mjs": {
+    "fabd4da9dd74a0076316fc4005e81e994f10068d60d6b2445edb485fd8f97dcc": "2.7.0",
+    "6f435794f93f7afd6a3799098b6ed20734a4710223a403d73d32b761b6a42707": "2.9.0",
+    "2466c9c02cece56a0c6a352d3d869209a01a5e16b525c7aa5cdd5989efb2268e": "2.10.0"
+  },
+  "crbro-subagent.mjs": {
+    "c154e8a5772bb0773fb5ba12f87a03ee3c03e466a5e26dcccacc75a7acba5cf6": "1.11.1",
+    "13f61c686fbd8faba8c1647d19e47cec9b2cd466f7fa20fc5fbfc044dcc06b3f": "2.6.0",
+    "dbdd768f138892f5617502e9f3b03086d7a8ec9b4258f20f17c1430f2eff1108": "2.10.0"
+  }
+}

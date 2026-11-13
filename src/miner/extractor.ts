@@ -101,7 +101,7 @@ export function extractContent(text: string, filename: string): ExtractedContent
     let match;
     while ((match = pattern.exec(text)) !== null) {
       const decision = match[0].trim();
-      if (decision.length > 10 && decision.length < 200) {
+      if (decision.length > 10 && decision.length < 200 && !isMinerNoise(cleanExtract(decision))) {
         decisions.push(cleanExtract(decision));
       }
     }
@@ -113,7 +113,7 @@ export function extractContent(text: string, filename: string): ExtractedContent
     let match;
     while ((match = pattern.exec(text)) !== null) {
       const fact = match[0].trim();
-      if (fact.length > 10 && fact.length < 200) {
+      if (fact.length > 10 && fact.length < 200 && !isMinerNoise(cleanExtract(fact))) {
         facts.push(cleanExtract(fact));
       }
     }
@@ -142,24 +142,54 @@ function cleanExtract(text: string): string {
 }
 
 /**
- * Generate a one-line summary from the first meaningful paragraph.
+ * Lines that are scaffolding, not knowledge: a checklist item ("- [x] Navigate
+ * to https://…", or "- x Navigate to …" once the brackets were stripped, which
+ * is how ~300 of them reached a real brain as facts), a bare link, a heading,
+ * a rule. Exported for crbro_maintenance, which finds the ones already stored
+ * (purge_boilerplate, reviewed with dry_run first).
+ */
+export function isMinerNoise(text: string): boolean {
+  const t = (text || '').trim();
+  if (!t) return true;
+  if (/^#{1,6}\s/.test(t)) return true;                                   // heading
+  if (/^[-*+]\s*\[[ xX~-]?\]/.test(t)) return true;                       // - [ ] / - [x] checklist
+  if (/^[-*+]\s+[xX]\s+\S/.test(t)) return true;                          // "- x Navigate…": a checklist after cleanup
+  if (/^(?:[-*+]\s*)?<?(?:https?|file):\/\/\S+>?\.?$/i.test(t)) return true;   // a bare link
+  if (/^[-*_=~]{3,}$/.test(t)) return true;                               // a rule
+  return false;
+}
+
+/** A sentence somebody wrote, not a list item, a table row, a quote, markup or a link with a few words around it. */
+function isProse(line: string): boolean {
+  const t = line.trim();
+  if (isMinerNoise(t)) return false;
+  if (/^(?:[-*+]|\d+[.)])\s/.test(t)) return false;                       // list item
+  if (/^[|>]/.test(t) || /^<\/?[a-z]/i.test(t)) return false;            // table, quote, HTML
+  const words = t.split(/\s+/).filter(w => /[\p{L}]/u.test(w));
+  if (words.length < 5) return false;
+  const urls = (t.match(/\S*:\/\/\S+/g) || []).join('').length;
+  return urls <= t.length * 0.4;
+}
+
+/**
+ * A one-line summary from the first real sentence: never a heading, a list or
+ * checklist item, a table row, a link, code or frontmatter. Nothing when the
+ * file has no prose — an empty summary is better than a checklist line stored
+ * as a fact.
  */
 function generateSummary(lines: string[]): string {
-  for (const line of lines) {
-    const trimmed = line.trim();
-    // Skip empty lines, headers, code blocks, frontmatter
-    if (!trimmed) continue;
-    if (trimmed.startsWith('#')) continue;
-    if (trimmed.startsWith('```')) continue;
-    if (trimmed.startsWith('---')) continue;
-    if (trimmed.startsWith('|')) continue;
-    if (trimmed.startsWith('-') && trimmed.length < 20) continue;
-
-    // Found a substantial line
-    if (trimmed.length > 30) {
-      const clean = cleanExtract(trimmed);
-      return clean.length > 150 ? clean.substring(0, 150) + '...' : clean;
-    }
+  let inCode = false;
+  let inFrontmatter = false;
+  for (let i = 0; i < lines.length; i++) {
+    const trimmed = lines[i].trim();
+    if (trimmed.startsWith('```') || trimmed.startsWith('~~~')) { inCode = !inCode; continue; }
+    if (inCode) continue;
+    if (i === 0 && trimmed === '---') { inFrontmatter = true; continue; }
+    if (inFrontmatter) { if (trimmed === '---') inFrontmatter = false; continue; }
+    if (trimmed.length <= 30 || !isProse(trimmed)) continue;
+    const clean = cleanExtract(trimmed);
+    if (isMinerNoise(clean)) continue;
+    return clean.length > 150 ? clean.substring(0, 150) + '...' : clean;
   }
   return '';
 }

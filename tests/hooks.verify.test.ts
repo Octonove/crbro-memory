@@ -134,3 +134,25 @@ describe('install-hooks --verify', () => {
     expect(JSON.parse(readFileSync(settingsPath, 'utf8')).hooks.SubagentStart).toBeUndefined();
   });
 });
+
+describe('an update is not an edit (2.11)', () => {
+  it('a copy an earlier release shipped is "older_release" and passes --verify; an edit is still "different"', async () => {
+    const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = await import('node:fs');
+    const { execFileSync } = await import('node:child_process');
+    const { tmpdir } = await import('node:os');
+    const { verifyHooks } = await import('../src/engine/hookverify.js');
+    const dir = mkdtempSync(join(tmpdir(), 'crbro-verify-old-'));
+    try {
+      const installed = join(dir, 'crbro-hooks');
+      mkdirSync(installed, { recursive: true });
+      writeFileSync(join(installed, 'crbro-guard.mjs'), execFileSync('git', ['show', 'c1edbb8:hooks/crbro-guard.mjs'], { encoding: 'utf8' }));
+      writeFileSync(join(installed, 'crbro-subagent.mjs'), '// mine');
+      const r = verifyHooks({ packageDir: join(__dirname, '..', 'hooks'), installedDir: installed, settingsPath: join(dir, 'settings.json') });
+      expect(r.hooks.find(h => h.name === 'crbro-guard.mjs')!.status).toBe('older_release');
+      expect(r.hooks.find(h => h.name === 'crbro-subagent.mjs')!.status).toBe('different');
+      expect(r.ok).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

@@ -7,6 +7,7 @@ import { entryId } from '../sync/ops.js';
 import { inferEntryDay, isDayPrecision, datesInText } from './dates.js';
 import { fold } from '../search/tokenize.js';
 import { factId } from '../utils/hash.js';
+import { isMinerNoise } from '../miner/extractor.js';
 import { stalenessContextOf, factStaleness, entryStaleness, type StalenessContext, type StaleInfo, type ShelfLife } from './shelf.js';
 import type { Brain } from './brain.js';
 import type { Cortex } from './cortex.js';
@@ -266,7 +267,7 @@ export class Maintenance {
       );
     } else if (report.boilerplate_facts > 0) {
       report.notes.push(
-        `${report.boilerplate_facts} contentless miner fact(s) ("Referenced in: ...") are taking up ` +
+        `${report.boilerplate_facts} contentless miner fact(s) ("Referenced in: ...", checklist lines like "- x Navigate to ...", bare links) are taking up ` +
         'space and index slots. Pass purge_boilerplate:true to remove them.'
       );
     }
@@ -546,9 +547,13 @@ export class Maintenance {
 
   // ─── Private Helpers ──────────────────────────────────────────
 
-  /** "Referenced in: x.md" and "Mined from x.md" carry no information. */
-  private isBoilerplate(text: string): boolean {
-    return /^(Referenced in|Mined from):?\s/i.test((text || '').trim());
+  /**
+   * "Referenced in: x.md" and "Mined from x.md" carry no information; nor do
+   * the checklist lines, bare links and headings the miner stored as facts
+   * before 2.11 (isMinerNoise, only for facts whose source is the miner).
+   */
+  private isBoilerplate(text: string, source?: string): boolean {
+    return /^(Referenced in|Mined from):?\s/i.test((text || '').trim()) || (source === 'miner' && isMinerNoise(text));
   }
 
   private async countBoilerplate(): Promise<number> {
@@ -556,7 +561,7 @@ export class Maintenance {
     for (const id of await this.cortex.allIds()) {
       const neuron = await readJSON<Neuron>(this.brain.paths.neuron(id));
       if (!neuron) continue;
-      n += (neuron.facts || []).filter(f => this.isBoilerplate(f.text)).length;
+      n += (neuron.facts || []).filter(f => this.isBoilerplate(f.text, f.source)).length;
     }
     return n;
   }
@@ -567,7 +572,7 @@ export class Maintenance {
       await updateJSON<Neuron>(this.brain.paths.neuron(id), current => {
         if (!current) return null;
         const antes = (current.facts || []).length;
-        current.facts = (current.facts || []).filter(f => !this.isBoilerplate(f.text));
+        current.facts = (current.facts || []).filter(f => !this.isBoilerplate(f.text, f.source));
         const quitados = antes - current.facts.length;
         if (quitados === 0) return null;
         removed += quitados;

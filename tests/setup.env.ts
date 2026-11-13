@@ -32,3 +32,10 @@ process.env.USERPROFILE = sandbox;
 // CLAUDE_CODE_PLUGIN_DIRS of the person running the suite would leak into
 // the install-mod tests, which read the process environment too.
 delete process.env.CLAUDE_CODE_PLUGIN_DIRS;
+
+// The same for the clients' own folder variables: the installers honour
+// CLAUDE_CONFIG_DIR and CODEX_HOME, so a value of the person running the suite
+// would point a test that forgets to set them at a real config folder.
+delete process.env.CLAUDE_CONFIG_DIR;
+delete process.env.CODEX_HOME;
+delete process.env.CRBRO_ENGINE_DIR;

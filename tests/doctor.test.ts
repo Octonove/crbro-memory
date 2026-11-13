@@ -27,7 +27,8 @@ beforeAll(async () => {
   await put(path.join(pkg, 'bin/crbro.mjs'), await fs.readFile('bin/crbro.mjs'));
   await put(path.join(pkg, 'package.json'), JSON.stringify({ name: 'crbro-memory', version: '0.0.0-fixture' }));
   const files = ['engine/doctor', 'engine/brain', 'engine/backup', 'utils/fs', 'utils/lock',
-    'daemon/endpoint', 'daemon/proxy', 'daemon/lines', 'engine/shelf', 'sync/ops', 'utils/hash', 'version'];
+    'daemon/endpoint', 'daemon/proxy', 'daemon/lines', 'engine/shelf', 'sync/ops', 'utils/hash', 'version',
+    'engine/hookverify', 'engine/hookrefresh', 'engine/installio'];
   for (const file of files) {
     let source: string;
     try { source = await fs.readFile(path.resolve('src', `${file}.ts`), 'utf8'); }
@@ -300,5 +301,117 @@ describe('doctor is observational', () => {
     }
     const { data } = await report();
     expect(data.versions.daemons[0]).toMatchObject({ status: 'unknown', running_version: null });
+  });
+});
+
+describe('doctor tells the truth (2.11)', () => {
+  const stampNow = (daysAgo: number) => {
+    const d = new Date(Date.now() - daysAgo * 86400000);
+    const p = (n: number) => String(n).padStart(2, '0');
+    return `${d.getUTCFullYear()}${p(d.getUTCMonth() + 1)}${p(d.getUTCDate())}-${p(d.getUTCHours())}${p(d.getUTCMinutes())}${p(d.getUTCSeconds())}`;
+  };
+  const slash = (p: string) => p.replace(/\\/g, '/');
+  const backup = (daysAgo: number) => put(path.join(home, `backups/brain-${stampNow(daysAgo)}.json.gz`), 'fixture');
+  beforeAll(async () => {
+    // The fixture package ships the hooks, so installed copies can be compared with it.
+    for (const f of await fs.readdir('hooks')) await put(path.join(pkg, 'hooks', f), await fs.readFile(path.join('hooks', f)));
+    // A release newer than any hook in the history, so an old copy reads as an older release.
+    await put(path.join(pkg, 'package.json'), JSON.stringify({ name: 'crbro-memory', version: '99.0.0' }));
+  });
+
+  it('a healthy brain with a fresh backup is "ok", and the human summary says so', async () => {
+    await manifest();
+    await backup(0);
+    const { code, data } = await report();
+    expect(code).toBe(0);
+    expect(data.status).toBe('ok');
+    expect(data.backups).toMatchObject({ status: 'ok', age_days: 0 });
+    const human = await cli('doctor');
+    expect(human.stdout).toMatch(/— ok\nEverything observed is in order\./);
+    expect(human.stdout).toContain('Not checked:');
+  });
+
+  it('backup age: a warning past 2 days, an error past 7; no backup at all is a warning with the command', async () => {
+    await manifest();
+    expect((await report()).data.backups).toMatchObject({ status: 'warning', latest: null });
+    await backup(3);
+    expect((await report()).data.backups).toMatchObject({ status: 'warning', age_days: 3 });
+    await fs.rm(path.join(home, 'backups'), { recursive: true });
+    await backup(10);
+    const { code, data } = await report();
+    expect(code).toBe(1);
+    expect(data.status).toBe('error');
+    const human = await cli('doctor');
+    expect(human.stdout).toMatch(/Problems:\n {2}• the newest backup is 10 days old/);
+    expect(human.stdout).toContain('→ npx crbro-memory backup');
+  });
+
+  it('automatic backups that stopped are noticed: consolidate ran, no copy since', async () => {
+    await put(path.join(brain, 'manifest.json'), JSON.stringify({ version: '1.0.0', last_consolidation: new Date().toISOString() }));
+    await backup(3);
+    env.CRBRO_AUTOBACKUP = '1';
+    expect((await report()).data.backups.automatic).toMatchObject({ enabled: true, failing: true });
+  });
+
+  it('installed hooks: an older release, an edited copy, a missing script and an npx-cache path, all named', async () => {
+    await manifest();
+    await backup(0);
+    const old = execFileSync('git', ['show', 'c1edbb8:hooks/crbro-guard.mjs'], { encoding: 'utf8' });
+    const hooksDir = path.join(home, '.claude', 'crbro-hooks');
+    await put(path.join(hooksDir, 'crbro-guard.mjs'), old);
+    await put(path.join(hooksDir, 'crbro-subagent.mjs'), '// edited by hand');
+    await put(path.join(home, '.claude', 'settings.json'), JSON.stringify({ hooks: {
+      PreToolUse: [{ hooks: [{ type: 'command', command: `node "${slash(path.join(hooksDir, 'crbro-guard.mjs'))}"` }] }],
+      SessionStart: [{ hooks: [{ type: 'command', command: `node "${slash(path.join(home, 'gone', 'crbro-lifecycle.mjs'))}" session-start` }] }],
+      UserPromptSubmit: [{ hooks: [{ type: 'command', command: 'node "C:/Users/x/AppData/Local/npm-cache/_npx/1f9/node_modules/crbro-memory/hooks/crbro-x.mjs"' }] }],
+    } }));
+    const before = await snapshot(home);
+    const { data } = await report();
+    expect(data.hooks.installed).toEqual(expect.arrayContaining([
+      { client: 'claude-code', file: path.join(hooksDir, 'crbro-guard.mjs'), state: 'older_release' },
+      { client: 'claude-code', file: path.join(hooksDir, 'crbro-subagent.mjs'), state: 'modified' },
+    ]));
+    expect(data.hooks.missing_scripts.some((s: string) => s.includes('gone'))).toBe(true);
+    expect(data.hooks.npx_cache_references).toBe(1);
+    expect(data.status).toBe('warning');
+    expect(await snapshot(home), 'doctor refreshed nothing').toEqual(before);
+  });
+
+  it('daemon leftovers, quarantine and the trigger index are inspected', async () => {
+    await manifest();
+    await backup(0);
+    await put(path.join(brain, '.daemon', 'dead.json'), JSON.stringify({ pid: 2 ** 22 + 12345, build: 'x' }));
+    await put(path.join(brain, '.daemon', 'dead.json.4194303.tmp'), '{}');
+    await put(path.join(brain, '.quarantine', 'n-2026.json'), '{"x":1}');
+    const old = path.join(brain, '.quarantine', 'n-2025.json');
+    await put(old, '{"x":2}');
+    const then = new Date(Date.now() - 400 * 86400000);
+    await fs.utimes(old, then, then);
+    await put(path.join(brain, '.search', 'triggers.json'), JSON.stringify({ v: 1, keys: {}, entries: [] }));
+    const { data } = await report();
+    expect(data.daemon_leftovers).toMatchObject({ status: 'warning', descriptors: 1, dead_descriptors: 1, orphan_tmp: 1 });
+    expect(data.quarantine).toMatchObject({ status: 'warning', files: 2, retention_days: 180 });
+    expect(data.quarantine.oldest_days).toBeGreaterThanOrEqual(399);
+    expect(data.triggers).toMatchObject({ status: 'warning', exists: true, version: 1 });
+    await put(path.join(brain, '.search', 'triggers.json'), JSON.stringify({ v: 3, built: '2026-11-13T00:00:00.000Z', keys: {}, entries: [] }));
+    expect((await report()).data.triggers).toMatchObject({ status: 'ok', version: 3, entries: 0 });
+  });
+
+  it('client registrations: Codex timeouts, npx, and a command or script that does not exist', async () => {
+    await manifest();
+    await backup(0);
+    await put(path.join(home, '.codex/config.toml'), `[mcp_servers.crbro]\ncommand = "npx"\nargs = ["-y", "crbro-memory", "${forbidden}"]\nstartup_timeout_sec = 60\n`);
+    await put(path.join(home, '.cursor/mcp.json'), JSON.stringify({ mcpServers: { crbro: {
+      command: path.join(home, 'no-node.exe'), args: [path.join(home, '.crbro-engine', 'crbro.mjs')] } } }));
+    const { data, stdout } = await report();
+    const codex = data.configs.clients.find((c: any) => c.client === 'Codex');
+    expect(codex).toMatchObject({ status: 'warning', uses_npx: true, startup_timeout_sec: 60, tool_timeout_sec: null });
+    const cursor = data.configs.clients.find((c: any) => c.client === 'Cursor');
+    expect(cursor).toMatchObject({ status: 'warning', uses_npx: false, command_exists: false, script_exists: false });
+    expect(stdout).not.toContain(forbidden);
+    expect(stdout).not.toContain('no-node.exe');
+    const human = await cli('doctor');
+    expect(human.stdout).toContain('has no tool_timeout_sec');
+    expect(human.stdout).toContain('→ npx crbro-memory install-boot');
   });
 });

@@ -6,7 +6,7 @@
 //           remove-miner, install-hooks, install-mod, and MCP server mode (default)
 
 import { platform, homedir } from 'os';
-import { join, dirname } from 'path';
+import { join, dirname, basename } from 'path';
 import { existsSync, readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 
@@ -35,6 +35,189 @@ function isInstallBootHook(h) {
 
 const args = process.argv.slice(2);
 const command = args[0];
+
+// ─── Commands ────────────────────────────────────────────────────
+//
+// Every command the CLI knows, one entry each. Before anything runs, the
+// arguments are checked against its entry: an unknown command or flag is
+// rejected with a short help and exit code 2 (it used to start the MCP
+// server, or — `install-hooks --help` — install), `<command> --help` prints
+// the entry and runs nothing, `--version` prints the version.
+//
+//   usage    the synopsis, as printed by --help and in errors
+//   about    one or more lines of description
+//   flags    switches it accepts; values: flags that take a value (--x v or --x=v)
+//   args     how many positional arguments it takes (default 0)
+//   free     its own parser checks the arguments (daemon, guard, backup)
+//   run      async (args) => void, for commands dispatched from this table;
+//            the older ones are dispatched by the if/else chain further down.
+//
+// To add a command: one entry here, with `run` importing its module, e.g.
+//   view: { usage: 'view [--port N]', about: ['Local viewer'], values: ['--port'], run: a => import(<its module in dist>).then(m => m.main(a)) },
+// A command that fails sets process.exitCode = 1 (or throws: fail() below does it).
+const COMMANDS = {
+  install: { usage: 'install [--clients auto|claude-code,claude-desktop,codex,cursor] [--dry-run] [--engine-dir DIR] [--json]',
+    about: ['Install CRBRO for every MCP client found: copies this engine to ~/.crbro-engine (no npx at startup),',
+      'registers it in each client (Codex with timeouts), and wires the session start. Prints what it did.'],
+    flags: ['--dry-run', '--json'], values: ['--clients', '--engine-dir'] },
+  uninstall: { usage: 'uninstall [--clients auto|claude-code,claude-desktop,codex,cursor] [--dry-run] [--engine-dir DIR] [--json]',
+    about: ['Remove what CRBRO added: registrations that run it, its hooks and boot wiring, the mod, the engine folder.',
+      'Backups are kept and the brain (~/.crbro) is never touched.'],
+    flags: ['--dry-run', '--json'], values: ['--clients', '--engine-dir'] },
+  init: { usage: 'init [--no-semantic]', about: ['Initialize the brain, detect clients, install semantic recall (skip with --no-semantic)'], flags: ['--no-semantic'] },
+  'install-boot': { usage: 'install-boot [--dry-run]', about: ['Make the memory load itself at the start of every conversation (Claude Code, Codex)'], flags: ['--dry-run'] },
+  status: { usage: 'status', about: ['Show brain status'] },
+  doctor: { usage: 'doctor [--json]', about: ['Read-only local diagnostics: brain, clients, hooks, daemon leftovers, backups. Never initializes or boots'], flags: ['--json'] },
+  activate: { usage: 'activate', about: ['Legacy (pre-1.4.0): CRBRO is free, nothing to activate'] },
+  mine: { usage: 'mine [dir]', about: ['One-shot mining of editor artifacts'], args: 1 },
+  'setup-miner': { usage: 'setup-miner', about: ['Install the scheduled auto-miner'] },
+  'miner-status': { usage: 'miner-status', about: ['Check auto-miner status'] },
+  'remove-miner': { usage: 'remove-miner', about: ['Remove the auto-miner'] },
+  reindex: { usage: 'reindex', about: ['Rebuild the search index'] },
+  semantic: { usage: 'semantic [status|install|build]', about: ['Semantic recall (installed by init): status, install the runtime, embed the whole brain'], args: 1, choices: ['status', 'install', 'build'] },
+  eval: { usage: 'eval', about: ['Measure retrieval against <brain>/.eval/queries.json'] },
+  daemon: { usage: 'daemon [status|on|off|stop]', about: ['One process owns the brain for every client (opt-in)'], free: true },
+  guard: { usage: 'guard "<command line>" | guard --rebuild', about: ['What the PreToolUse guard would say for a command; --rebuild writes the trigger index'], free: true },
+  usage: { usage: 'usage [--days N] [--session ID] [--project DIR] [--json]', about: ['Tokens per model and session from Claude Code logs (read-only)'], flags: ['--json'], values: ['--days', '--session', '--project'] },
+  postmortem: { usage: 'postmortem [--days N] [--session ID] [--project DIR] [--max N] [--json]', about: ['Candidate lessons from Claude Code logs (read-only)'], flags: ['--json'], values: ['--days', '--session', '--project', '--max'] },
+  'install-hooks': { usage: 'install-hooks [--inject] | --guard | --compact | --verify [--json]',
+    about: ['Claude Code hooks: SubagentStart (alone; --inject enables injection), the PreToolUse guard (--guard),',
+      'compaction checkpoints (--compact), or check the installed copies against this package (--verify)'],
+    flags: ['--inject', '--guard', '--compact', '--verify', '--json'] },
+  'uninstall-hooks': { usage: 'uninstall-hooks --compact', about: ['Remove the compaction hooks and put back what they replaced'], flags: ['--compact'] },
+  'install-mod': { usage: 'install-mod [--lang en|es|auto] | install-mod --verify [--json]', about: ['Claude Code band + /pending with the open items'], flags: ['--verify', '--json'], values: ['--lang'] },
+  'uninstall-mod': { usage: 'uninstall-mod', about: ['Remove the mod and its CLAUDE_CODE_PLUGIN_DIRS entry; never put back on its own'] },
+  secret: { usage: 'secret <set|get|list|remove|status> [NAME] [--description TEXT] [--yes]', about: ['Credentials, sealed in the OS keychain'], args: 2, flags: ['--yes'], values: ['--description'] },
+  backup: { usage: 'backup [list | restore FILE [--into DIR]] [--dir DIR] [--keep N]', about: ['Back the brain up now, list the copies, or restore one into a NEW folder'], free: true },
+  help: { usage: 'help [command]', about: ['This help, or one command\'s'], args: 1 },
+};
+/** Arguments that start the MCP server, as no arguments do. */
+const SERVER_FLAGS = new Set(['--daemon', '--proxy', '--stdio']);
+
+function commandHelp(name) {
+  const c = COMMANDS[name];
+  const lines = ['', `  npx crbro-memory ${c.usage}`, ''];
+  for (const l of c.about) lines.push(`  ${l}`);
+  lines.push('');
+  return lines.join('\n');
+}
+
+function shortHelp() {
+  return `  Commands: ${Object.keys(COMMANDS).join(', ')}\n  npx crbro-memory --help for all of them, npx crbro-memory <command> --help for one.`;
+}
+
+/** Exit code 2: the command line itself is wrong. Nothing ran. */
+function usageError(message) {
+  console.error(`  ❌ ${message}`);
+  console.error(shortHelp());
+  process.exit(2);
+}
+
+/** A command that failed: a short message (never a stack trace) and exit code 1. */
+function fail(err) {
+  const msg = err && err.code === 'ERR_MODULE_NOT_FOUND' ? 'Build required. Run: npm run build'
+    : err instanceof Error ? err.message : String(err);
+  console.error(`  ❌ ${msg}`);
+  process.exitCode = 1;
+}
+
+/** Checks the arguments against the command's entry; exits 2 on anything it does not take. */
+function checkArgs(name, rest) {
+  const c = COMMANDS[name];
+  if (c.free) return;
+  const flags = new Set(c.flags || []);
+  const values = new Set(c.values || []);
+  const positional = [];
+  for (let i = 0; i < rest.length; i++) {
+    const a = rest[i];
+    if (a.startsWith('-')) {
+      const [flag, inline] = a.split(/=(.*)/s);
+      if (values.has(flag)) {
+        if (inline === undefined) {
+          if (rest[i + 1] === undefined || rest[i + 1].startsWith('--')) usageError(`${flag} needs a value. Usage: npx crbro-memory ${c.usage}`);
+          i++;
+        }
+      } else if (!flags.has(flag) || inline !== undefined) {
+        usageError(`unknown option for ${name}: ${a}. Usage: npx crbro-memory ${c.usage}`);
+      }
+    } else {
+      positional.push(a);
+    }
+  }
+  if (positional.length > (c.args || 0)) usageError(`unexpected argument for ${name}: ${positional[c.args || 0]}. Usage: npx crbro-memory ${c.usage}`);
+  if (c.choices && positional[0] !== undefined && !c.choices.includes(positional[0])) {
+    usageError(`${name} takes ${c.choices.join(', ')}; got: ${positional[0]}`);
+  }
+}
+
+/**
+ * Runs before the if/else chain. True when it handled the command line
+ * (version, help, an error, or a command with `run`); false to go on.
+ */
+function preDispatch() {
+  if (command === undefined || SERVER_FLAGS.has(command)) return false;      // the MCP server
+  if (command === '--version' || command === '-v' || command === 'version') { console.log(pkgVersion()); return true; }
+  if (command === '--help' || command === '-h' || command === 'help') {
+    const topic = args[1];
+    if (topic && !topic.startsWith('-')) {
+      if (!COMMANDS[topic]) usageError(`unknown command: ${topic}`);
+      console.log(commandHelp(topic));
+    } else printHelp();
+    return true;
+  }
+  if (!Object.prototype.hasOwnProperty.call(COMMANDS, command)) {
+    usageError(command.startsWith('-') ? `unknown option: ${command}` : `unknown command: ${command}`);
+  }
+  // `<command> --help` explains and runs nothing — install-hooks --help used to install.
+  if (args.slice(1).some(a => a === '--help' || a === '-h')) { console.log(commandHelp(command)); return true; }
+  checkArgs(command, args.slice(1));
+  const run = COMMANDS[command].run;
+  if (run) {
+    Promise.resolve().then(() => run(args.slice(1))).catch(fail);
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Every install command also brings the hook copies CRBRO installed earlier up
+ * to this version when nobody edited them (hookrefresh.ts); an edited copy is
+ * named and left alone. A courtesy: it never fails the command.
+ */
+function refreshInstalledHooks() {
+  import('../dist/engine/hookrefresh.js').then(hr => {
+    const here = dirname(fileURLToPath(import.meta.url));
+    for (const c of hr.refreshHooks({ home: homedir(), env: process.env, pkgHooks: join(here, '..', 'hooks') })) {
+      const file = join(c.dir, c.name);
+      if (c.refreshed) console.log(`  ✅ ${file} refreshed to this version (it was an unmodified older copy).`);
+      else if (c.error) console.log(`  ⚠️  ${file} could not be refreshed: ${c.error}`);
+      else if (c.state === 'modified') console.log(`  ⚠️  ${file} was edited by hand: left as it is.`);
+    }
+  }).catch(() => { /* never fails the command */ });
+}
+
+/** What install, uninstall and install-boot need: the installer modules and the context they run in. */
+async function installContext(extra = {}) {
+  const [inst, io, { BOOT_NOTICE }] = await Promise.all([
+    import('../dist/engine/installer.js'), import('../dist/engine/installio.js'), import('../hooks/crbro-lifecycle.mjs'),
+  ]);
+  const here = dirname(fileURLToPath(import.meta.url));
+  const ctx = {
+    home: homedir(), env: process.env, platform: platform(), dryRun: false,
+    packageRoot: join(here, '..'), nodePath: process.execPath, bootNotice: BOOT_NOTICE,
+    claude: inst.claudeCli(process.env, platform()), ...extra,
+  };
+  return { ctx, inst, io };
+}
+
+/** The value of a flag given as `--x v` or `--x=v`; undefined when absent. */
+function flagValue(name) {
+  for (let i = 1; i < args.length; i++) {
+    if (args[i] === name) return args[i + 1];
+    if (args[i].startsWith(name + '=')) return args[i].slice(name.length + 1);
+  }
+  return undefined;
+}
 
 // ─── IDE Detection ──────────────────────────────────────────────
 const IDE_CONFIGS = [
@@ -168,7 +351,9 @@ async function semanticBuild() {
   return { chunks, vectors: engine.semanticCount(), seconds: ((Date.now() - started) / 1000).toFixed(1) };
 }
 
-if (command === 'doctor') {
+if (preDispatch()) {
+  // Handled before the chain: --version, --help, an error, or a command with `run`.
+} else if (command === 'doctor') {
   // Observational only: never fall through to initialization or MCP startup.
   const json = args.includes('--json');
   try {
@@ -242,7 +427,7 @@ if (command === 'doctor') {
     console.log('    2. (Optional) npx crbro-memory setup-miner');
     console.log('    3. Restart your IDE — CRBRO boots automatically!');
     console.log('');
-  }).catch(console.error);
+  }).catch(fail);
 
 } else if (command === 'status') {
   // ─── Show brain status ─────────────────────────────────────────
@@ -264,12 +449,16 @@ if (command === 'doctor') {
       console.log('');
 
       // Show detected IDEs
+      // A config file is not a connection: say whether CRBRO is in it.
       const ides = detectIDEs();
       if (ides.length > 0) {
-        console.log('  📡 Connected IDEs:');
+        console.log('  📡 Clients found:');
         for (const ide of ides) {
-          console.log(`     ${ide.exists ? '✅' : '⚠️ '} ${ide.name}`);
+          let registered = false;
+          try { registered = ide.exists && /crbro/i.test(readFileSync(ide.configPath, 'utf8')); } catch { /* unreadable */ }
+          console.log(`     ${registered ? '✅' : '⚪'} ${ide.name}${registered ? ' — CRBRO registered' : ide.exists ? ' — CRBRO not registered' : ' — no config yet'}`);
         }
+        console.log('     npx crbro-memory install registers it everywhere; npx crbro-memory doctor checks each registration.');
         console.log('');
       }
     } catch {
@@ -277,8 +466,9 @@ if (command === 'doctor') {
       console.log('  🧠 CRBRO brain not initialized.');
       console.log('     Run: npx crbro-memory init');
       console.log('');
+      process.exitCode = 1;
     }
-  }).catch(console.error);
+  }).catch(fail);
 
 } else if (command === 'activate') {
   // ─── Legacy command (pre-1.4.0) — CRBRO is now fully free ──────
@@ -317,10 +507,11 @@ if (command === 'doctor') {
       for (const err of result.errors.slice(0, 5)) {
         console.log(`     ${err}`);
       }
+      process.exitCode = 1;
     }
 
     console.log('');
-  }).catch(console.error);
+  }).catch(fail);
 
 } else if (command === 'setup-miner') {
   // ─── Setup automatic mining ────────────────────────────────────
@@ -331,8 +522,9 @@ if (command === 'doctor') {
 
     const result = await setupScheduler();
     console.log(result.message);
+    if (!result.success) process.exitCode = 1;
     console.log('');
-  }).catch(console.error);
+  }).catch(fail);
 
 } else if (command === 'miner-status') {
   // ─── Check miner status ────────────────────────────────────────
@@ -370,7 +562,7 @@ if (command === 'doctor') {
       console.log('  ⚠️  No IDE directories detected.');
     }
     console.log('');
-  }).catch(console.error);
+  }).catch(fail);
 
 } else if (command === 'remove-miner') {
   // ─── Remove automatic mining ───────────────────────────────────
@@ -378,8 +570,9 @@ if (command === 'doctor') {
     const result = await removeScheduler();
     console.log('');
     console.log(result.success ? `  ✅ ${result.message}` : `  ❌ ${result.message}`);
+    if (!result.success) process.exitCode = 1;
     console.log('');
-  }).catch(console.error);
+  }).catch(fail);
 
 } else if (command === 'reindex') {
   // ─── Rebuild the search index from the cortex ──────────────────
@@ -401,7 +594,7 @@ if (command === 'doctor') {
     console.log('     Every fact, decision and pattern is now searchable on its own,');
     console.log('     so a big neuron is no longer buried by short ones.');
     console.log('');
-  }).catch(console.error);
+  }).catch(fail);
 
 } else if (command === 'semantic') {
   // ─── Semantic recall: status | install | build ─────────────────
@@ -424,6 +617,7 @@ if (command === 'doctor') {
         console.log('');
         console.log('  ❌ Runtime not installed. Run: npx crbro-memory semantic install');
         console.log('');
+        process.exitCode = 1;
         return;
       }
       console.log('');
@@ -446,7 +640,7 @@ if (command === 'doctor') {
       console.log(`  Home:     ${st.home}`);
       console.log('');
     }
-  }).catch(console.error);
+  }).catch(fail);
 
 } else if (command === 'eval') {
   // ─── Measure retrieval quality against a query set ─────────────
@@ -478,6 +672,7 @@ if (command === 'doctor') {
       console.log('  Build it from facts you already saved: take six or eight words');
       console.log('  out of a real fact and name the neuron that holds it.');
       console.log('');
+      process.exitCode = 1;
       return;
     }
 
@@ -529,7 +724,7 @@ if (command === 'doctor') {
       if (misses.length > 25) console.log(`  ... and ${misses.length - 25} more`);
     }
     console.log('');
-  }).catch(console.error);
+  }).catch(fail);
 
 } else if (command === 'daemon') {
   // ─── One process owns the brain for every client (opt-in) ──────
@@ -625,19 +820,22 @@ if (command === 'doctor') {
     }
     const texto = process.argv.slice(3).filter(a => !a.startsWith('--')).join(' ').trim();
     if (!texto) {
-      if (!process.argv.includes('--rebuild')) console.log('  Usage: crbro guard "<command line>"   |   crbro guard --rebuild');
+      if (!process.argv.includes('--rebuild')) console.log('  Usage: npx crbro-memory guard "<command line>"   |   npx crbro-memory guard --rebuild');
       return;
     }
     let index;
     try {
       index = JSON.parse(fs.readFileSync(triggerIndexPath(brain), 'utf8'));
     } catch {
-      console.log('  No trigger index yet. Run: crbro guard --rebuild (crbro_consolidate writes it too).');
+      console.log('  No trigger index yet. Run: npx crbro-memory guard --rebuild (crbro_consolidate writes it too).');
+      process.exitCode = 1;
       return;
     }
-    const lessons = lessonsFor(index, texto, 10);
-    if (lessons.length === 0) { console.log('  Nothing stored mentions that command.'); return; }
-    for (const l of lessons) console.log(`  • [${l.k}${l.d ? ' · ' + l.d : ''} · ${l.n}] ${l.t}\n`);
+    // As the hook would answer here: this folder's project, lessons of other origins only with CRBRO_GUARD_ORIGINS=all.
+    const allOrigins = String(process.env.CRBRO_GUARD_ORIGINS || '').toLowerCase() === 'all';
+    const lessons = lessonsFor(index, texto, 10, { cwd: process.cwd(), allOrigins });
+    if (lessons.length === 0) { console.log('  Nothing stored mentions that command (for this folder\'s project).'); return; }
+    for (const l of lessons) console.log(`  • [${l.o ? `from ${l.o} · ` : ''}${l.k}${l.d ? ' · ' + l.d : ''} · ${l.n}] ${l.t}\n`);
   })().catch(e => { console.error(e.message); process.exit(1); });
 
 } else if (command === 'usage' || command === 'postmortem') {
@@ -687,20 +885,29 @@ if (command === 'doctor') {
   // any difference, so it can gate a script.
   // The Claude Code mod is checked too (install-mod): a copy in the home
   // folder that runs in every session, so the same question applies.
-  Promise.all([import('../dist/engine/hookverify.js'), import('../dist/engine/modinstall.js')]).then(([
+  // Codex's copy (<CODEX_HOME>/crbro-hooks, run by hooks.json) is checked the same way when it exists.
+  Promise.all([import('../dist/engine/hookverify.js'), import('../dist/engine/modinstall.js'), import('../dist/engine/installio.js')]).then(([
     { verifyHooks, formatVerify },
     { verifyMod, formatModVerify },
+    io,
   ]) => {
     const here = dirname(fileURLToPath(import.meta.url));
+    const claudeHome = io.claudeDir(homedir(), process.env);
     const r = verifyHooks({
       packageDir: join(here, '..', 'hooks'),
-      installedDir: join(homedir(), '.claude', 'crbro-hooks'),
-      settingsPath: join(homedir(), '.claude', 'settings.json'),
+      installedDir: join(claudeHome, 'crbro-hooks'),
+      settingsPath: join(claudeHome, 'settings.json'),
     });
+    const codexHome = io.codexHome(homedir(), process.env);
+    const codex = existsSync(join(codexHome, 'crbro-hooks')) ? verifyHooks({
+      packageDir: join(here, '..', 'hooks'),
+      installedDir: join(codexHome, 'crbro-hooks'),
+      settingsPath: join(codexHome, 'hooks.json'),
+    }) : null;
     const m = verifyMod({ packageDir: join(here, '..', 'mods', 'crbro-pending'), home: homedir() });
-    if (args.includes('--json')) console.log(JSON.stringify({ ...r, mod: m }, null, 2));
-    else console.log(formatVerify(r) + formatModVerify(m));
-    if (!r.ok || !m.ok) process.exitCode = 1;
+    if (args.includes('--json')) console.log(JSON.stringify({ ...r, mod: m, ...(codex ? { codex } : {}) }, null, 2));
+    else console.log(formatVerify(r) + (codex ? formatVerify(codex) : '') + formatModVerify(m));
+    if (!r.ok || !m.ok || (codex && !codex.ok)) process.exitCode = 1;
   }).catch(err => {
     console.error('  ❌ ' + (err && err.code === 'ERR_MODULE_NOT_FOUND' ? 'Build required. Run: npm run build' : err.message));
     process.exit(1);
@@ -722,27 +929,21 @@ if (command === 'doctor') {
   // crbro-hooks/ so uninstall puts it back exactly. A hand-written CRBRO hook
   // is never replaced: ours is installed with --no-boot / --no-reminder next
   // to it, so nothing is read twice. Merged, never rewritten; idempotent.
-  import('fs').then(async fs => {
-    const settingsPath = join(homedir(), '.claude', 'settings.json');
-    const hookDir = join(homedir(), '.claude', 'crbro-hooks');
+  Promise.all([import('fs'), import('../dist/engine/installio.js'), import('../dist/engine/hookrefresh.js')]).then(async ([fs, io, hr]) => {
+    const claudeHome = io.claudeDir(homedir(), process.env);
+    const settingsPath = join(claudeHome, 'settings.json');
+    const hookDir = join(claudeHome, 'crbro-hooks');
     const hookScript = join(hookDir, 'crbro-lifecycle.mjs');
     const replacedPath = join(hookDir, 'crbro-lifecycle.replaced.json');
     const ours = h => !!h && typeof h.command === 'string' && h.command.includes('crbro-lifecycle');
     const entryIsOurs = e => Array.isArray(e?.hooks) && e.hooks.some(ours);
 
-    let settings = null;
-    try {
-      const raw = fs.readFileSync(settingsPath, 'utf8');
-      settings = JSON.parse(raw.charCodeAt(0) === 0xFEFF ? raw.slice(1) : raw);
-    } catch (e) {
-      if (fs.existsSync(settingsPath)) {
-        console.error(`  ❌ ${settingsPath} exists but could not be parsed — not touching it.`);
-        console.error(`     ${e.message}`);
-        process.exit(1);
-      }
-    }
-    if (settings !== null && (typeof settings !== 'object' || Array.isArray(settings))) {
-      console.error(`  ❌ ${settingsPath} is not a JSON object — not touching it.`);
+    // A settings.json that is not a JSON object is never touched.
+    const read = io.readJsonObject(settingsPath);
+    if (!read.ok) { console.error(`  ❌ ${read.error}`); process.exit(1); }
+    let settings = read.value;
+    if (settings?.hooks !== undefined && (typeof settings.hooks !== 'object' || settings.hooks === null || Array.isArray(settings.hooks))) {
+      console.error(`  ❌ hooks in ${settingsPath} is not an object — not touching it.`);
       process.exit(1);
     }
     for (const event of ['PreCompact', 'SessionStart']) {
@@ -752,10 +953,10 @@ if (command === 'doctor') {
         process.exit(1);
       }
     }
+    // A backup first; refused if Claude Code or an editor saved it since it was read.
     const write = obj => {
-      const tmp = settingsPath + '.' + process.pid + '.tmp';
-      fs.writeFileSync(tmp, JSON.stringify(obj, null, 2) + '\n', 'utf8');
-      fs.renameSync(tmp, settingsPath);
+      const backup = io.writeGuarded(settingsPath, io.jsonText(obj, read.indent, read.eol, read.bom), { expectHash: read.hash });
+      if (backup) console.log(`     backup: ${backup}`);
     };
 
     if (command === 'uninstall-hooks') {
@@ -801,13 +1002,15 @@ if (command === 'doctor') {
     }
 
     // — install —
-    if (settings === null && !fs.existsSync(join(homedir(), '.claude'))) {
-      console.log('  ⚪ ~/.claude not found: Claude Code is the only client with PreCompact, so nothing was wired.');
+    if (settings === null && !fs.existsSync(claudeHome)) {
+      console.log(`  ⚪ ${claudeHome} not found: Claude Code is the only client with PreCompact, so nothing was wired.`);
       return;
     }
     const here = dirname(fileURLToPath(import.meta.url));
-    fs.mkdirSync(hookDir, { recursive: true });
-    fs.copyFileSync(join(here, '..', 'hooks', 'crbro-lifecycle.mjs'), hookScript);
+    // Copied with a manifest entry, so later releases refresh it on their own while it is unmodified.
+    const source = join(here, '..', 'hooks', 'crbro-lifecycle.mjs');
+    hr.installHookFile(dirname(source), basename(source), hookDir);
+    refreshInstalledHooks();   // the other copies CRBRO installed, when unmodified
     settings = settings || {};
     settings.hooks = settings.hooks || {};
     const node = `node "${hookScript.split('\\').join('/')}"`;
@@ -857,11 +1060,12 @@ if (command === 'doctor') {
       console.log('     Undo with: npx crbro-memory uninstall-hooks --compact');
     }
     console.log('     Never blocks; checkpoints are redacted and expire after 7 days. New sessions pick it up.');
-  }).catch(e => { console.error(e); process.exit(1); });
+  }).catch(fail);
 
 } else if (command === 'uninstall-hooks') {
   console.log('  Usage: npx crbro-memory uninstall-hooks --compact');
-  console.log('  (the guard and subagent hooks are removed by deleting their entry from ~/.claude/settings.json)');
+  console.log('  (the guard and subagent hooks are removed by deleting their entry from settings.json, or all of CRBRO with: npx crbro-memory uninstall)');
+  process.exitCode = 2;
 
 } else if (command === 'install-hooks' && process.argv.includes('--guard')) {
   // ─── Wire the PreToolUse guard into Claude Code (opt-in) ───────
@@ -871,46 +1075,44 @@ if (command === 'doctor') {
   // that mention it to the model's context — once per session each, three at
   // most. It never blocks and never asks. Remove the PreToolUse entry from
   // ~/.claude/settings.json to uninstall.
-  import('fs').then(async fs => {
-    const settingsPath = join(homedir(), '.claude', 'settings.json');
+  Promise.all([import('../dist/engine/installio.js'), import('../dist/engine/hookrefresh.js')]).then(async ([io, hr]) => {
+    const claudeHome = io.claudeDir(homedir(), process.env);
+    const settingsPath = join(claudeHome, 'settings.json');
     const here = dirname(fileURLToPath(import.meta.url));
-    const hookDir = join(homedir(), '.claude', 'crbro-hooks');
-    const hookScript = join(hookDir, 'crbro-guard.mjs');
-    fs.mkdirSync(hookDir, { recursive: true });
-    fs.copyFileSync(join(here, '..', 'hooks', 'crbro-guard.mjs'), hookScript);
+    const hookDir = join(claudeHome, 'crbro-hooks');
+    const source = join(here, '..', 'hooks', 'crbro-guard.mjs');
+    const hookScript = hr.installHookFile(dirname(source), basename(source), hookDir);
+    refreshInstalledHooks();   // the other copies CRBRO installed, when unmodified
 
-    let settings = {};
-    try {
-      const raw = fs.readFileSync(settingsPath, 'utf8');
-      settings = JSON.parse(raw.charCodeAt(0) === 0xFEFF ? raw.slice(1) : raw);
-    } catch (e) {
-      if (fs.existsSync(settingsPath)) {
-        console.error(`  ❌ ${settingsPath} exists but could not be parsed — not touching it.`);
-        console.error(`     ${e.message}`);
-        process.exit(1);
-      }
-    }
-    settings.hooks = settings.hooks || {};
-    const list = settings.hooks.PreToolUse = settings.hooks.PreToolUse || [];
-    if (JSON.stringify(list).includes('crbro-guard')) {
-      console.log('  ✅ PreToolUse guard already installed. Script refreshed.');
-    } else {
+    let installed = false;
+    const r0 = io.updateJsonFile(settingsPath, settings => {
+      if (settings.hooks !== undefined && (typeof settings.hooks !== 'object' || settings.hooks === null || Array.isArray(settings.hooks))) throw new Error(`hooks in ${settingsPath} is not an object — not touching it.`);
+      settings.hooks = settings.hooks || {};
+      if (settings.hooks.PreToolUse !== undefined && !Array.isArray(settings.hooks.PreToolUse)) throw new Error(`hooks.PreToolUse in ${settingsPath} is not a list — not touching it.`);
+      const list = settings.hooks.PreToolUse = settings.hooks.PreToolUse || [];
+      if (JSON.stringify(list).includes('crbro-guard')) return false;
       list.push({
         matcher: 'Bash|PowerShell',
         hooks: [{ type: 'command', command: `node "${hookScript.split('\\').join('/')}"`, timeout: 5 }],
       });
-      const tmp = settingsPath + '.' + process.pid + '.tmp';
-      fs.writeFileSync(tmp, JSON.stringify(settings, null, 2), 'utf8');
-      fs.renameSync(tmp, settingsPath);
+      installed = true;
+      return true;
+    });
+    if (!r0.ok) { console.error(`  ❌ ${r0.error}`); process.exit(1); }
+    if (!installed) {
+      console.log('  ✅ PreToolUse guard already installed. Script refreshed.');
+    } else {
       console.log('  ✅ PreToolUse guard installed.');
       console.log(`     ${settingsPath}`);
+      if (r0.backup) console.log(`     backup: ${r0.backup}`);
     }
     const { Brain } = await import('../dist/engine/brain.js');
     const { writeTriggerIndex } = await import('../dist/engine/triggers.js');
     const r = await writeTriggerIndex(new Brain());
-    if (!('error' in r)) console.log(`     Trigger index: ${r.entries} lessons under ${r.keys} commands. Try: crbro guard "git push"`);
+    if ('error' in r) { console.log(`  ⚠️  Trigger index not written: ${r.error}`); process.exitCode = 1; }
+    else console.log(`     Trigger index: ${r.entries} lessons under ${r.keys} commands. Try: npx crbro-memory guard "git push"`);
     console.log('     It adds context, never blocks. New sessions pick it up.');
-  }).catch(console.error);
+  }).catch(fail);
 
 } else if (command === 'install-hooks') {
   // ─── Wire the SubagentStart hook into Claude Code ──────────────
@@ -922,18 +1124,20 @@ if (command === 'doctor') {
   //
   // Merges into ~/.claude/settings.json without touching anything else.
   // Idempotent: running it twice changes nothing the second time.
-  import('fs').then(async fs => {
-    const settingsPath = join(homedir(), '.claude', 'settings.json');
+  Promise.all([import('../dist/engine/installio.js'), import('../dist/engine/hookrefresh.js')]).then(async ([io, hr]) => {
+    const claudeHome = io.claudeDir(homedir(), process.env);
+    const settingsPath = join(claudeHome, 'settings.json');
     const here = dirname(fileURLToPath(import.meta.url));
     const source = join(here, '..', 'hooks', 'crbro-subagent.mjs');
 
     // Copy the hook to a stable location. When CRBRO runs from the npx
     // cache, `here` changes with every release and the stale path would
     // break the hook silently on the next update.
-    const hookDir = join(homedir(), '.claude', 'crbro-hooks');
-    const hookScript = join(hookDir, 'crbro-subagent.mjs');
-    fs.mkdirSync(hookDir, { recursive: true });
-    fs.copyFileSync(source, hookScript);
+    // installHookFile records it in the folder's manifest: an unmodified copy
+    // is refreshed on its own by later releases (hookrefresh.ts).
+    const hookDir = join(claudeHome, 'crbro-hooks');
+    const hookScript = hr.installHookFile(dirname(source), basename(source), hookDir);
+    refreshInstalledHooks();   // the other copies CRBRO installed, when unmodified
     // Injection is OPT-IN since 1.12 (pre-registered consequence of three
     // clean-control benchmark runs: no measured benefit in any model, harm
     // and fabricated compliance in small ones — see the benchmarks in the
@@ -942,43 +1146,38 @@ if (command === 'doctor') {
     const conInyeccion = process.argv.includes('--inject');
     const hookCmd = (conInyeccion ? 'CRBRO_SUBAGENT_INJECT=full ' : '') + `node "${hookScript.split('\\').join('/')}"`;
 
-    let settings = {};
-    try {
-      settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8').replace(/^﻿/, ''));
-    } catch (e) {
-      if (fs.existsSync(settingsPath)) {
-        console.error(`  ❌ ${settingsPath} exists but could not be parsed — not touching it.`);
-        console.error(`     ${e.message}`);
-        process.exit(1);
-      }
-    }
-
-    settings.hooks = settings.hooks || {};
-    const list = settings.hooks.SubagentStart = settings.hooks.SubagentStart || [];
-    const yaEsta = JSON.stringify(list).includes('crbro-subagent');
+    let yaEsta = false, injectsAlready = false;
+    const r0 = io.updateJsonFile(settingsPath, settings => {
+      if (settings.hooks !== undefined && (typeof settings.hooks !== 'object' || settings.hooks === null || Array.isArray(settings.hooks))) throw new Error(`hooks in ${settingsPath} is not an object — not touching it.`);
+      settings.hooks = settings.hooks || {};
+      if (settings.hooks.SubagentStart !== undefined && !Array.isArray(settings.hooks.SubagentStart)) throw new Error(`hooks.SubagentStart in ${settingsPath} is not a list — not touching it.`);
+      const list = settings.hooks.SubagentStart = settings.hooks.SubagentStart || [];
+      yaEsta = JSON.stringify(list).includes('crbro-subagent');
+      injectsAlready = JSON.stringify(list).includes('CRBRO_SUBAGENT_INJECT');
+      if (yaEsta) return false;
+      list.push({
+        hooks: [{
+          type: 'command',
+          command: hookCmd,
+          timeout: 5,
+          statusMessage: 'Inyectando protocolos CRBRO en el subagente...',
+        }],
+      });
+      return true;
+    });
+    if (!r0.ok) { console.error(`  ❌ ${r0.error}`); process.exit(1); }
     if (yaEsta) {
       console.log('  ✅ SubagentStart hook already installed. Script refreshed.');
-      if (conInyeccion && !JSON.stringify(list).includes('CRBRO_SUBAGENT_INJECT')) {
+      if (conInyeccion && !injectsAlready) {
         console.log('     ⚠️  The installed entry does NOT enable injection. To enable it,');
         console.log('     remove the SubagentStart entry from settings.json and re-run');
         console.log('     install-hooks --inject.');
       }
       return;
     }
-    list.push({
-      hooks: [{
-        type: 'command',
-        command: hookCmd,
-        timeout: 5,
-        statusMessage: 'Inyectando protocolos CRBRO en el subagente...',
-      }],
-    });
-
-    const tmp = settingsPath + '.' + process.pid + '.tmp';
-    fs.writeFileSync(tmp, JSON.stringify(settings, null, 2), 'utf8');
-    fs.renameSync(tmp, settingsPath);
     console.log('  ✅ SubagentStart hook installed.');
     console.log(`     ${settingsPath}`);
+    if (r0.backup) console.log(`     backup: ${r0.backup}`);
     if (conInyeccion) {
       console.log('     Injection ENABLED: every Task-spawned subagent receives the');
       console.log('     protocol block. Scope it with CRBRO_SUBAGENT_MATCHER (regex on');
@@ -990,7 +1189,7 @@ if (command === 'doctor') {
       console.log('     three clean benchmark runs found no benefit in any model and');
       console.log('     harm in small ones). Re-run with --inject to enable it.');
     }
-  }).catch(console.error);
+  }).catch(fail);
 
 } else if (command === 'install-mod' && process.argv.includes('--verify')) {
   // ─── Is the installed mod the one this package ships? ──────────
@@ -1061,120 +1260,105 @@ if (command === 'doctor') {
   // like it was never there. Every report of "CRBRO does not remember" so far
   // has been this, not a bug in the recall.
   //
-  // So this wires the start itself, per client:
+  // So this wires the start itself, per client (src/engine/installer.ts):
   //
-  //   Claude Code  ~/.claude/settings.json — SessionStart runs a command whose
+  //   Claude Code  <config>/settings.json — SessionStart runs a command whose
   //                stdout is added to the session, telling the model to call
   //                crbro_boot first. Claude Code has no way to invoke an MCP
   //                tool from a hook, so the instruction is the mechanism.
-  //   Codex        ~/.codex/hooks.json — SessionStart can call an MCP tool
-  //                directly (type "mcp_tool"), so it does, AND keeps the same
-  //                printed instruction as a second layer: the hook can fire
-  //                before the MCP server has finished starting, and then the
-  //                direct call is simply lost.
+  //   Codex        <CODEX_HOME>/config.toml gets the MCP server if it has none,
+  //                and startup/tool timeouts when they are missing (a value
+  //                the user set is kept). hooks/crbro-codex.mjs is copied to
+  //                <CODEX_HOME>/crbro-hooks and wired on SessionStart and
+  //                UserPromptSubmit: it boots the engine itself and hands the
+  //                protocols to the session, or prints the notice.
   //
-  // Only files that already exist are touched, and each one is merged, never
-  // rewritten. Idempotent: a second run reports and changes nothing.
-  import('fs').then(async fs => {
-    // One copy of the notice: the lifecycle hook prints the same text in its
-    // session-start mode, and `install-hooks --compact` swaps this entry for it.
-    const { BOOT_NOTICE: AVISO } = await import('../hooks/crbro-lifecycle.mjs');
-
-    // printf on a shell, Write-Output on Windows PowerShell. One line, no
-    // external file: a path stored in a hook goes stale on the next update.
-    const cmdPosix = bootCommandPosix(AVISO);
-    const cmdWin = `powershell -NoProfile -Command ${JSON.stringify('Write-Output ' + JSON.stringify(AVISO))}`;
-    const MATCHER = 'startup|resume|clear|compact';
-
-    const leerJson = (p) => {
-      if (!fs.existsSync(p)) return null;
-      try {
-        return JSON.parse(fs.readFileSync(p, 'utf8').replace(/^﻿/, ''));
-      } catch (e) {
-        console.error(`  ❌ ${p} exists but could not be parsed — not touching it.`);
-        console.error(`     ${e.message}`);
-        process.exit(1);
-      }
-    };
-    const escribirJson = (p, obj) => {
-      const tmp = p + '.' + process.pid + '.tmp';
-      fs.writeFileSync(tmp, JSON.stringify(obj, null, 2) + '\n', 'utf8');
-      fs.renameSync(tmp, p);
-    };
-
-    let tocados = 0, yaEstaban = 0, ausentes = [];
-
-    // — Claude Code —
-    const claudePath = join(homedir(), '.claude', 'settings.json');
-    const claude = leerJson(claudePath) ?? (fs.existsSync(join(homedir(), '.claude')) ? {} : null);
-    if (claude === null) {
-      ausentes.push('Claude Code (~/.claude not found)');
-    } else {
-      claude.hooks = claude.hooks || {};
-      const list = claude.hooks.SessionStart = claude.hooks.SessionStart || [];
-      // Any mention of crbro counts as "already wired". A hand-rolled hook
-      // often points at a file — `cat ~/.claude/crbro-session-start.txt` — so
-      // looking for crbro_boot alone misses it and installs a second entry
-      // that boots the brain twice.
-      if (/crbro/i.test(JSON.stringify(list))) {
-        yaEstaban++;
-        console.log('  ⚪ Claude Code: SessionStart already starts CRBRO. Left alone.');
-      } else {
-        list.push({
-          matcher: MATCHER,
-          hooks: [{ type: 'command', command: cmdPosix, shell: 'bash', timeout: 10, statusMessage: 'Loading CRBRO memory...' }],
-        });
-        escribirJson(claudePath, claude);
-        tocados++;
-        console.log(`  ✅ Claude Code: SessionStart hook added.\n     ${claudePath}`);
-      }
-    }
-
-    // — Codex —
-    const codexDir = join(homedir(), '.codex');
-    const codexPath = join(codexDir, 'hooks.json');
-    if (!fs.existsSync(codexDir)) {
-      ausentes.push('Codex (~/.codex not found)');
-    } else {
-      const codex = leerJson(codexPath) ?? {};
-      codex.hooks = codex.hooks || {};
-      const list = codex.hooks.SessionStart = codex.hooks.SessionStart || [];
-      // Any mention of crbro counts as "already wired". A hand-rolled hook
-      // often points at a file — `cat ~/.claude/crbro-session-start.txt` — so
-      // looking for crbro_boot alone misses it and installs a second entry
-      // that boots the brain twice.
-      if (/crbro/i.test(JSON.stringify(list))) {
-        yaEstaban++;
-        console.log('  ⚪ Codex: SessionStart already starts CRBRO. Left alone.');
-      } else {
-        list.push({
-          matcher: MATCHER,
-          hooks: [
-            { type: 'mcp_tool', server: 'crbro', tool: 'crbro_boot', input: {}, timeout: 30, statusMessage: 'Loading CRBRO memory...' },
-            { type: 'command', command: cmdPosix, commandWindows: cmdWin, timeout: 10, statusMessage: 'Checking CRBRO start...' },
-          ],
-        });
-        escribirJson(codexPath, codex);
-        tocados++;
-        console.log(`  ✅ Codex: SessionStart hook added (MCP call + fallback).\n     ${codexPath}`);
-      }
-    }
-
+  // Only clients whose folder exists are touched; every file is merged, never
+  // rewritten, after a timestamped backup. Idempotent. --dry-run writes nothing.
+  (async () => {
+    const { ctx, inst, io } = await installContext({ dryRun: args.includes('--dry-run') });
+    const root = io.engineRoot(homedir(), process.env);
+    const stable = existsSync(join(root, 'current.json'));
+    // With a stable engine (crbro-memory install) Codex runs it; otherwise the npx form, as before.
+    const wiring = stable
+      ? { command: process.execPath, args: [join(root, 'crbro.mjs')], replaceCommand: false, engineArg: root }
+      : { command: 'npx', args: ['-y', 'crbro-memory'], replaceCommand: false };
+    const steps = inst.wireBoot(ctx, ['claude-code', 'codex'], wiring);
+    if (ctx.dryRun) console.log('  Dry run: nothing is written.\n');
+    for (const line of inst.formatSteps(steps)) console.log(line);
+    if (!ctx.dryRun) refreshInstalledHooks();
     console.log('');
-    if (!tocados && !yaEstaban) {
-      console.log('  ⚠️  Neither ~/.claude nor ~/.codex was found, so nothing was wired.');
-    }
-    for (const a of ausentes) console.log(`  ⚪ Skipped ${a}`);
+    const wired = steps.filter(s => s.status !== 'skipped');
+    if (!wired.length) console.log(`  ⚠️  Neither ${io.claudeDir(homedir(), process.env)} nor ${io.codexHome(homedir(), process.env)} was found, so nothing was wired.`);
     console.log('');
     console.log('  Other tools (Cursor, Windsurf, Antigravity…) have no session hooks.');
     console.log('  Put this line in their always-on rules file (.cursorrules, .windsurfrules,');
     console.log('  User Rules) and it does the same job:');
     console.log('');
-    console.log(`    ${AVISO}`);
+    console.log(`    ${ctx.bootNotice}`);
     console.log('');
-    if (tocados) console.log('  Restart the tool, then check a new conversation actually boots CRBRO.');
+    if (steps.some(s => s.status === 'done')) console.log('  Restart the tool, then check a new conversation actually boots CRBRO.');
+    if (!stable && steps.some(s => s.client === 'Codex' && s.status !== 'skipped')) {
+      console.log('  For a stable engine that clients start without npx: npx crbro-memory install');
+    }
     console.log('');
-  }).catch(console.error);
+    if (inst.failed(steps)) process.exitCode = 1;
+  })().catch(fail);
+
+} else if (command === 'install' || command === 'uninstall') {
+  // ─── One command in, one command out ───────────────────────────
+  //
+  // install: the engine copied to a stable folder (~/.crbro-engine, or
+  // --engine-dir), registered in each client as `node <launcher>`, the session
+  // start wired, installed hooks brought up to date. uninstall: the reverse,
+  // only what CRBRO added; backups kept; the brain is never touched.
+  // src/engine/installer.ts does the work; this prints it.
+  (async () => {
+    const { ctx, inst } = await installContext({ dryRun: args.includes('--dry-run'), engineDir: flagValue('--engine-dir') });
+    const spec = flagValue('--clients');
+    let clients;
+    try {
+      clients = inst.parseClients(spec, () => inst.detectClients(ctx.home, ctx.env, ctx.platform, ctx.claude));
+    } catch (e) {
+      usageError(e.message);
+    }
+    const json = args.includes('--json');
+    let report, brain = null;
+    if (command === 'install') {
+      report = inst.install(ctx, clients);
+    } else {
+      const [{ resolveBrainDir }, { uninstallMod }] = await Promise.all([import('../dist/engine/brain.js'), import('../dist/engine/modinstall.js')]);
+      brain = resolveBrainDir(process.env, () => {});
+      report = inst.uninstall(ctx, clients, {
+        brainDir: brain, removeEngine: !spec || spec === 'auto',
+        uninstallMod: home => uninstallMod({ home }),
+      });
+    }
+    if (json) {
+      console.log(JSON.stringify({ command, dry_run: ctx.dryRun, clients, ...report }, null, 2));
+    } else {
+      const names = clients.map(c => inst.CLIENT_NAMES[c]).join(', ') || 'none found';
+      console.log('');
+      console.log(`  🧠 CRBRO ${command}${ctx.dryRun ? ' — dry run: nothing is written' : ''} · clients: ${names}`);
+      console.log('');
+      for (const line of inst.formatSteps(report.steps)) console.log(line);
+      console.log('');
+      if (command === 'install') {
+        if (report.engine) console.log(`  Clients start: ${process.execPath} ${report.engine.launcher}`);
+        console.log('  Restart each client; a new conversation boots CRBRO on its own (Claude Code, Codex) or');
+        console.log('  with this line in the tool\'s always-on rules (Cursor, Claude Desktop, others):');
+        console.log(`    ${ctx.bootNotice}`);
+        console.log('  Undo everything with: npx crbro-memory uninstall');
+      } else {
+        console.log(`  Your brain was not touched: ${brain}`);
+        console.log('  Delete that folder yourself if you want the memory gone too. Credentials stay in the OS');
+        console.log('  keychain (npx crbro-memory secret list); the auto-miner, if you set it up, goes with');
+        console.log('  npx crbro-memory remove-miner. Servers already running stop when their client restarts.');
+      }
+      console.log('');
+    }
+    if (inst.failed(report.steps)) process.exitCode = 1;
+  })().catch(fail);
 
 } else if (command === 'secret') {
   // ─── Credentials, from the terminal ────────────────────────────
@@ -1380,75 +1564,86 @@ if (command === 'doctor') {
     process.exit(1);
   });
 
-} else if (command === '--help' || command === '-h') {
-  // ─── Help ──────────────────────────────────────────────────────
-  console.log('');
-  console.log('  🧠 CRBRO — Persistent Neural Memory for AI');
-  console.log('  ═══════════════════════════════════════════');
-  console.log('');
-  console.log('  Setup:');
-  console.log('    npx crbro-memory init             Initialize brain + detect IDEs');
-  console.log('    npx crbro-memory install-boot     Make the memory load itself in every conversation');
-  console.log('    npx crbro-memory status           Show brain status');
-  console.log('    npx crbro-memory doctor [--json]  Read-only local diagnostics; never initializes or boots');
-  console.log('');
-  console.log('  Auto-Mining:');
-  console.log('    npx crbro-memory mine [dir]       One-shot mining of artifacts');
-  console.log('    npx crbro-memory setup-miner      Install scheduled auto-miner');
-  console.log('    npx crbro-memory miner-status     Check auto-miner status');
-  console.log('    npx crbro-memory remove-miner     Remove auto-miner');
-  console.log('');
-  console.log('  Backup (one gzipped file per copy; consolidate makes one a day on its own):');
-  console.log('    npx crbro-memory backup           Back the brain up now (keeps the newest 7)');
-  console.log('    npx crbro-memory backup list      What there is, newest first');
-  console.log('    npx crbro-memory backup restore FILE   Unpack into a NEW folder, never over the live brain');
-  console.log('    CRBRO_BACKUP_DIR=<synced folder>  Put them somewhere that survives the disk');
-  console.log('');
-  console.log('  Guard (opt-in, Claude Code): stored lessons speak before a shell command runs:');
-  console.log('    npx crbro-memory install-hooks --guard   Wire the PreToolUse hook (adds context, never blocks)');
-  console.log('    npx crbro-memory guard "<command>"       What it would say for a command · --rebuild writes the index');
-  console.log('');
-  console.log('  Compact without losing the thread (opt-in, Claude Code):');
-  console.log('    npx crbro-memory install-hooks --compact     PreCompact checkpoint + SessionStart that picks it back up');
-  console.log('    npx crbro-memory uninstall-hooks --compact   Remove both and put back what was replaced');
-  console.log('    npx crbro-memory install-hooks --verify      SHA-256 of the installed hooks and mod against this package (read-only)');
-  console.log('    npx crbro-memory install-mod [--lang en|es|auto]  Claude Code band + /pending with the open items (Claude Code 2.1.286+)');
-  console.log('                                                 crbro_boot installs and updates it on its own; CRBRO_MOD=0 turns that off');
-  console.log('    npx crbro-memory uninstall-mod                Remove the mod and its CLAUDE_CODE_PLUGIN_DIRS entry; never put back on its own');
-  console.log('    npx crbro-memory install-mod --verify         SHA-256 of the installed mod against this package (read-only)');
-  console.log('');
-  console.log('  Looking back at Claude Code sessions (read-only; last 7 days unless --days N, 0 = all):');
-  console.log('    npx crbro-memory usage [--session ID] [--project DIR] [--json]   Tokens per model and session, subagents apart');
-  console.log('    npx crbro-memory postmortem [--max N] [--json]   Candidate lessons: corrections, failing tools, repeats');
-  console.log('');
-  console.log('  Daemon (opt-in): one process owns the brain for every client — one index, one model, one writer:');
-  console.log('    npx crbro-memory daemon on | off  Switch every client of this brain, the next time each starts');
-  console.log('    npx crbro-memory daemon status    Is it on, who is running, how much it holds');
-  console.log('    npx crbro-memory daemon stop      Stop it; clients start a new one on demand');
-  console.log('');
-  console.log('  Search:');
-  console.log('    npx crbro-memory reindex          Rebuild the search index');
-  console.log('    npx crbro-memory eval             Measure retrieval against .crbro/.eval/queries.json');
-  console.log('');
-  console.log('  Semantic layer (opt-in, ~500 MB on disk, measured in benchmarks/):');
-  console.log('    npx crbro-memory semantic install Install transformers.js into ~/.crbro/.semantic');
-  console.log('    npx crbro-memory semantic build   Embed the whole brain once (needs CRBRO_SEMANTIC=1)');
-  console.log('    npx crbro-memory semantic status  Runtime, model and whether it is enabled');
-  console.log('');
-  console.log('  Credentials (per machine, sealed in the OS keychain):');
-  console.log('    npx crbro-memory secret set NAME     Store one; the value is read from stdin, never argv');
-  console.log('    npx crbro-memory secret list         Names only, never values');
-  console.log('    npx crbro-memory secret get NAME     Print one; pipe it to keep it off the screen');
-  console.log('    npx crbro-memory secret remove NAME --yes');
-  console.log('    npx crbro-memory secret status       Which keychain this machine offers');
-  console.log('');
-  console.log('  Server:');
-  console.log('    npx crbro-memory                  Start MCP server (stdio)');
-  console.log('');
-  console.log('  Open source (MIT) — https://github.com/Octonove/crbro-memory');
-  console.log('');
-
 } else {
   // ─── Default: start MCP server ─────────────────────────────────
-  import('../dist/index.js').catch(console.error);
+  // Only with no arguments, or --daemon / --proxy / --stdio: anything else
+  // was checked by preDispatch() and rejected.
+  import('../dist/index.js').catch(fail);
+}
+
+// ─── Help ────────────────────────────────────────────────────────
+function printHelp() {
+  const L = [
+    '',
+    '  🧠 CRBRO — Persistent Neural Memory for AI',
+    '  ═══════════════════════════════════════════',
+    '',
+    '  Setup:',
+    '    npx crbro-memory install          Install for every MCP client found: stable engine in ~/.crbro-engine,',
+    '                                      registrations (Codex with timeouts), session start. --dry-run shows the plan',
+    '    npx crbro-memory uninstall        Remove what install added; backups kept, the brain never touched. --dry-run',
+    '    npx crbro-memory init             Initialize the brain, detect clients, install semantic recall',
+    '    npx crbro-memory install-boot     Make the memory load itself in every conversation (Claude Code, Codex)',
+    '    npx crbro-memory status           Show brain status',
+    '    npx crbro-memory doctor [--json]  Read-only diagnostics: brain, clients, hooks, daemon leftovers, backups',
+    '',
+    '  Auto-Mining:',
+    '    npx crbro-memory mine [dir]       One-shot mining of editor artifacts',
+    '    npx crbro-memory setup-miner      Install scheduled auto-miner',
+    '    npx crbro-memory miner-status     Check auto-miner status',
+    '    npx crbro-memory remove-miner     Remove auto-miner',
+    '',
+    '  Backup (one gzipped file per copy; consolidate makes one a day on its own):',
+    '    npx crbro-memory backup           Back the brain up now (keeps the newest 7)',
+    '    npx crbro-memory backup list      What there is, newest first',
+    '    npx crbro-memory backup restore FILE   Unpack into a NEW folder, never over the live brain',
+    '    CRBRO_BACKUP_DIR=<synced folder>  Put them somewhere that survives the disk',
+    '',
+    '  Hooks (Claude Code; copies in <config>/crbro-hooks refresh themselves when CRBRO updates, unless edited):',
+    '    npx crbro-memory install-hooks           SubagentStart hook, inert unless --inject (CRBRO_SUBAGENT_INJECT=full)',
+    '    npx crbro-memory install-hooks --guard   PreToolUse guard: stored lessons for this project speak before a shell command',
+    '    npx crbro-memory guard "<command>"       What it would say for a command · --rebuild writes the index',
+    '    npx crbro-memory install-hooks --compact     PreCompact checkpoint + SessionStart that picks it back up',
+    '    npx crbro-memory uninstall-hooks --compact   Remove both and put back what was replaced',
+    '    npx crbro-memory install-hooks --verify      SHA-256 of the installed hooks and mod against this package (read-only)',
+    '    npx crbro-memory install-mod [--lang en|es|auto]  Claude Code band + /pending with the open items (Claude Code 2.1.286+)',
+    '                                                 crbro_boot installs and updates it on its own; CRBRO_MOD=0 turns that off',
+    '    npx crbro-memory uninstall-mod                Remove the mod and its CLAUDE_CODE_PLUGIN_DIRS entry; never put back on its own',
+    '    npx crbro-memory install-mod --verify         SHA-256 of the installed mod against this package (read-only)',
+    '',
+    '  Looking back at Claude Code sessions (read-only; last 7 days unless --days N, 0 = all):',
+    '    npx crbro-memory usage [--session ID] [--project DIR] [--json]   Tokens per model and session, subagents apart',
+    '    npx crbro-memory postmortem [--max N] [--json]   Candidate lessons: corrections, failing tools, repeats',
+    '',
+    '  Daemon (opt-in): one process owns the brain for every client — one index, one model, one writer:',
+    '    npx crbro-memory daemon on | off  Switch every client of this brain, the next time each starts',
+    '    npx crbro-memory daemon status    Is it on, who is running, how much it holds',
+    '    npx crbro-memory daemon stop      Stop it; clients start a new one on demand',
+    '',
+    '  Search:',
+    '    npx crbro-memory reindex          Rebuild the search index',
+    '    npx crbro-memory eval             Measure retrieval against <brain>/.eval/queries.json',
+    '',
+    '  Semantic recall (installed by init, ~500 MB once per machine; init --no-semantic skips it, CRBRO_SEMANTIC=0 turns it off):',
+    '    npx crbro-memory semantic status  Runtime, model and whether it is enabled',
+    '    npx crbro-memory semantic install Install transformers.js into ~/.crbro/.semantic and embed the brain',
+    '    npx crbro-memory semantic build   Embed the whole brain again',
+    '',
+    '  Credentials (per machine, sealed in the OS keychain):',
+    '    npx crbro-memory secret set NAME     Store one; the value is read from stdin, never argv',
+    '    npx crbro-memory secret list         Names only, never values',
+    '    npx crbro-memory secret get NAME     Print one; pipe it to keep it off the screen',
+    '    npx crbro-memory secret remove NAME --yes',
+    '    npx crbro-memory secret status       Which keychain this machine offers',
+    '',
+    '  Server:',
+    '    npx crbro-memory                  Start the MCP server (stdio)',
+    '    npx crbro-memory --version        Print the version',
+    '    npx crbro-memory <command> --help Help for one command; nothing runs',
+    '',
+    '  Exit codes: 0 done · 1 failed · 2 the command line is wrong (unknown command or option).',
+    '  Open source (MIT) — https://github.com/Octonove/crbro-memory',
+    '',
+  ];
+  console.log(L.join('\n'));
 }
