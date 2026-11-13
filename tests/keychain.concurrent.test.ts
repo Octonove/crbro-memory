@@ -94,6 +94,10 @@ async function worker() {
 }
 
 const windows = os.platform() === 'win32';
+// The store, its leftovers and nothing else: the marker and the sealed copies
+// (2.11) live beside it on purpose.
+const topLevel = async () => (await fs.readdir(dir))
+  .filter(f => f !== 'keys.dpapi.marker' && f !== 'sealed-copies').sort();
 describe.runIf(windows)('DPAPI integrity across processes (temporary store only)', () => {
   it('preserves B when A writes again with a warm cache', async () => {
     expect(detectBackend().backend).toBe('windows-dpapi');
@@ -152,10 +156,18 @@ describe.runIf(windows)('DPAPI integrity across processes (temporary store only)
   });
 
   it('does not reuse or erase another operation temporary file', async () => {
+    setSecret('FIXTURE_FIRST', 'fake-first');
     await fs.writeFile(path.join(dir, 'keys.dpapi.tmp'), 'unrelated-fixture');
     setSecret('FIXTURE_A', 'fake-a');
     expect(await fs.readFile(path.join(dir, 'keys.dpapi.tmp'), 'utf8')).toBe('unrelated-fixture');
-    expect((await fs.readdir(dir)).sort()).toEqual(['keys.dpapi', 'keys.dpapi.tmp']);
+    expect(await topLevel()).toEqual(['keys.dpapi', 'keys.dpapi.tmp']);
+  });
+
+  it('a missing store next to a leftover temporary is an error, never an empty store (G4)', async () => {
+    await fs.writeFile(path.join(dir, 'keys.dpapi.tmp'), 'leftover-from-an-older-writer');
+    expect(() => listSecrets()).toThrow(/missing/);
+    expect(() => setSecret('FIXTURE_A', 'fake-a')).toThrow(/missing/);
+    expect(await fs.readdir(dir)).toEqual(['keys.dpapi.tmp']);
   });
 
   it('refuses to overwrite a truncated store with an apparently successful write', async () => {
@@ -175,7 +187,8 @@ describe.runIf(windows)('DPAPI integrity across processes (temporary store only)
     fault.mockRestore();
     expect(await fs.readFile(path.join(dir, 'keys.dpapi'), 'utf8')).toBe(original);
     expect(getSecret('FIXTURE_ROTATE')).toBe('fake-old');
-    expect(await fs.readdir(dir)).toEqual(['keys.dpapi']);
+    expect(await topLevel()).toEqual(['keys.dpapi']);
+    expect((await fs.readdir(path.join(dir, 'sealed-copies'))).every(f => f.endsWith('.sealed'))).toBe(true);
   });
 
   it('removes its partial temporary file when writing the ciphertext fails', async () => {
@@ -193,6 +206,7 @@ describe.runIf(windows)('DPAPI integrity across processes (temporary store only)
     fault.mockRestore();
     expect(await fs.readFile(path.join(dir, 'keys.dpapi'), 'utf8')).toBe(original);
     expect(getSecret('FIXTURE_ROTATE')).toBe('fake-old');
-    expect(await fs.readdir(dir)).toEqual(['keys.dpapi']);
+    expect(await topLevel()).toEqual(['keys.dpapi']);
+    expect((await fs.readdir(path.join(dir, 'sealed-copies'))).every(f => f.endsWith('.sealed'))).toBe(true);
   });
 });

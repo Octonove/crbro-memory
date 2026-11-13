@@ -40,6 +40,8 @@ beforeEach(async () => {
 afterEach(async () => {
   delete process.env['CRBRO_KEYS_DIR'];
   delete process.env['TEST_ENV_WINS'];
+  delete process.env['CRBRO_SECRET_TEST_ENV_WINS'];
+  delete process.env['CRBRO_SECRET_ENV'];
   await fs.rm(keysDir, { recursive: true, force: true });
 });
 
@@ -112,13 +114,40 @@ describe('round trip', () => {
   });
 });
 
-describe('environment variables win', () => {
-  it.runIf(hasStore)('prefers the environment over the store', () => {
+describe('environment variables win only when they opt in (G3)', () => {
+  it('never returns an arbitrary environment variable', () => {
+    // 2.10 returned process.env[name] first: get USERNAME answered the login.
+    process.env['TEST_ENV_WINS'] = 'from-environment';
+    let got: string | null = null;
+    try { got = getSecret('TEST_ENV_WINS'); } catch { /* no store on this machine: also not the env value */ }
+    expect(got).not.toBe('from-environment');
+  });
+
+  it('CRBRO_SECRET_<NAME> works without any store', () => {
+    process.env['CRBRO_SECRET_TEST_ENV_WINS'] = 'from-prefixed';
+    expect(getSecret('TEST_ENV_WINS')).toBe('from-prefixed');
+  });
+
+  it('a plain variable counts when CRBRO_SECRET_ENV names it', () => {
+    process.env['TEST_ENV_WINS'] = 'from-environment';
+    process.env['CRBRO_SECRET_ENV'] = 'OTHER_ONE, TEST_ENV_WINS';
+    expect(getSecret('TEST_ENV_WINS')).toBe('from-environment');
+  });
+
+  it.runIf(hasStore)('prefers an opted-in variable over the store', () => {
     // This is what lets CI and one-off overrides work without anyone touching
     // the user's keychain.
     setSecret('TEST_ENV_WINS', 'from-keychain');
     process.env['TEST_ENV_WINS'] = 'from-environment';
-    expect(getSecret('TEST_ENV_WINS')).toBe('from-environment');
+    expect(getSecret('TEST_ENV_WINS')).toBe('from-keychain');
+    process.env['CRBRO_SECRET_TEST_ENV_WINS'] = 'from-prefixed';
+    expect(getSecret('TEST_ENV_WINS')).toBe('from-prefixed');
+  });
+
+  it('get and remove reject names that are not SCREAMING_SNAKE_CASE', () => {
+    expect(() => getSecret('Path')).toThrow(/SCREAMING_SNAKE_CASE/);
+    expect(() => getSecret('../x')).toThrow(/SCREAMING_SNAKE_CASE/);
+    expect(() => removeSecret('lower')).toThrow(/SCREAMING_SNAKE_CASE/);
   });
 });
 

@@ -1265,8 +1265,20 @@ if (command === 'doctor') {
         return;
       }
 
+      if (sub === 'copies') {
+        // Windows: sealed byte copies kept on every write, plus leftovers. Never opened here.
+        const copies = kc.listSealedCopies();
+        console.log('');
+        if (copies.length === 0) { console.log('  No sealed copies or leftovers next to the store.'); console.log(''); return; }
+        for (const c of copies) console.log(`  ${c.id.padEnd(52)} ${c.kind.padEnd(14)} ${c.modified}  ${c.bytes} B`);
+        console.log('');
+        console.log('  Put one back (validated with DPAPI first):  npx crbro-memory secret restore <id> --yes');
+        console.log('');
+        return;
+      }
+
       if (!name) {
-        console.error(`  ❌ Missing name. Usage: npx crbro-memory secret ${sub || '<set|get|list|remove|status>'} NAME`);
+        console.error(`  ❌ Missing name. Usage: npx crbro-memory secret ${sub || '<set|get|list|remove|status|copies|restore>'} NAME`);
         process.exit(1);
       }
 
@@ -1278,7 +1290,7 @@ if (command === 'doctor') {
           console.error('  ❌ Empty value. Nothing was stored.');
           process.exit(1);
         }
-        kc.setSecret(name, value, flagValue('--description'));
+        kc.setSecret(name, value, flagValue('--description'), { force: args.includes('--force') });
         console.log(`  ✅ ${name} sealed in the OS keychain. CRBRO keeps no copy.`);
         console.log('     Record only the NAME in the brain, never the value.');
         return;
@@ -1308,7 +1320,19 @@ if (command === 'doctor') {
         return;
       }
 
-      console.error('  Usage: npx crbro-memory secret <set|get|list|remove|status> [NAME]');
+      if (sub === 'restore') {
+        // `name` is the copy id from `secret copies`.
+        if (!args.includes('--yes')) {
+          console.error(`  ❌ This replaces the current store with ${name} (the current one is kept as a sealed copy).`);
+          console.error(`     Re-run to confirm:  npx crbro-memory secret restore ${name} --yes`);
+          process.exit(1);
+        }
+        const r = kc.restoreSealedCopy(name);
+        console.log(`  ✅ Restored ${r.restored}: ${r.entries} credential(s). The previous store, if any, is kept as a sealed copy.`);
+        return;
+      }
+
+      console.error('  Usage: npx crbro-memory secret <set|get|list|remove|status|copies|restore> [NAME]');
       process.exit(1);
     } catch (err) {
       console.error(`  ❌ ${err instanceof Error ? err.message : err}`);
@@ -1441,6 +1465,8 @@ if (command === 'doctor') {
   console.log('    npx crbro-memory secret get NAME     Print one; pipe it to keep it off the screen');
   console.log('    npx crbro-memory secret remove NAME --yes');
   console.log('    npx crbro-memory secret status       Which keychain this machine offers');
+  console.log('    npx crbro-memory secret copies       Windows: sealed copies of the store');
+  console.log('    npx crbro-memory secret restore ID --yes   Put a sealed copy back');
   console.log('');
   console.log('  Server:');
   console.log('    npx crbro-memory                  Start MCP server (stdio)');
