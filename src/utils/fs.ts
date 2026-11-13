@@ -6,18 +6,46 @@ import path from 'node:path';
 import { withLock } from './lock.js';
 
 /**
+ * A file that exists and cannot be parsed. Its own class so a reader that
+ * walks the whole cortex can skip it, say which file and move on, instead of
+ * letting one bad neuron take recall, maintenance and consolidate down with it.
+ * The message keeps the 2.x wording ("Corrupted JSON at <path>").
+ */
+export class CorruptJSONError extends Error {
+  constructor(public readonly path: string, public readonly reason: string) {
+    super(`CRBRO: Corrupted JSON at ${path}: ${reason}`);
+    this.name = 'CorruptJSONError';
+  }
+}
+
+/**
+ * Text of a JSON file without a leading byte-order mark. Windows PowerShell
+ * 5.1 (`Set-Content -Encoding utf8`, `Out-File`) writes one, and JSON.parse
+ * rejects it: a neuron edited by hand that way became "corrupted" for every
+ * reader although every byte of its content was fine.
+ */
+export function stripBOM(text: string): string {
+  return text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
+}
+
+/**
  * Safely read and parse a JSON file. Returns null if file doesn't exist.
- * Never throws on missing file — only on corrupted JSON.
+ * Never throws on missing file — only on corrupted JSON (CorruptJSONError).
  */
 export async function readJSON<T>(filePath: string): Promise<T | null> {
+  let content: string;
   try {
-    const content = await fs.readFile(filePath, 'utf-8');
-    return JSON.parse(content) as T;
+    content = await fs.readFile(filePath, 'utf-8');
   } catch (err: unknown) {
     if (err instanceof Error && 'code' in err && (err as NodeJS.ErrnoException).code === 'ENOENT') {
       return null;
     }
-    throw new Error(`CRBRO: Corrupted JSON at ${filePath}: ${err instanceof Error ? err.message : String(err)}`);
+    throw new CorruptJSONError(filePath, err instanceof Error ? err.message : String(err));
+  }
+  try {
+    return JSON.parse(stripBOM(content)) as T;
+  } catch (err: unknown) {
+    throw new CorruptJSONError(filePath, err instanceof Error ? err.message : String(err));
   }
 }
 
@@ -82,13 +110,14 @@ export async function fileExists(filePath: string): Promise<boolean> {
  */
 export async function updateJSON<T>(
   filePath: string,
-  mutate: (current: T | null) => Promise<T | null> | T | null
+  mutate: (current: T | null) => Promise<T | null> | T | null,
+  options?: { pretty?: boolean }
 ): Promise<T | null> {
   return withLock(filePath, async () => {
     const current = await readJSON<T>(filePath);
     const next = await mutate(current);
     if (next === null) return current;
-    await writeJSON(filePath, next);
+    await writeJSON(filePath, next, options);
     return next;
   });
 }
