@@ -52,7 +52,12 @@ export function claudeDir(home: string, env: NodeJS.ProcessEnv = process.env): s
 /** Where Claude Code keeps user-scope MCP servers: <CLAUDE_CONFIG_DIR>/.claude.json, else ~/.claude.json. */
 export function claudeJson(home: string, env: NodeJS.ProcessEnv = process.env): string {
   const dir = fromEnv(env.CLAUDE_CONFIG_DIR, home);
-  return dir ? path.join(dir, '.claude.json') : path.join(home, '.claude.json');
+  const inHome = path.join(home, '.claude.json');
+  if (!dir) return inHome;
+  // With CLAUDE_CONFIG_DIR set, Claude Code keeps it in that folder; an older
+  // ~/.claude.json is still read when the folder has none.
+  const inDir = path.join(dir, '.claude.json');
+  return existsSync(inDir) || !existsSync(inHome) ? inDir : inHome;
 }
 
 /** Codex's folder: CODEX_HOME, else ~/.codex. */
@@ -74,6 +79,23 @@ export function cursorConfig(home: string): string {
 /** The stable engine folder `crbro-memory install` copies the package into. */
 export function engineRoot(home: string, env: NodeJS.ProcessEnv = process.env): string {
   return fromEnv(env.CRBRO_ENGINE_DIR, home) ?? path.join(home, '.crbro-engine');
+}
+
+/** `claude`, `claude.cmd`… on PATH; null when absent. */
+export function findOnPath(name: string, env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): string | null {
+  const dirs = (env.PATH || env.Path || '').split(platform === 'win32' ? ';' : ':').filter(Boolean);
+  const exts = platform === 'win32' ? (env.PATHEXT || '.COM;.EXE;.BAT;.CMD').split(';').filter(Boolean) : [''];
+  for (const dir of dirs) {
+    for (const ext of exts) {
+      const p = path.join(dir.replace(/^"|"$/g, ''), name + ext.toLowerCase());
+      try { if (statSync(p).isFile()) return p; } catch { /* next */ }
+      if (ext) {
+        const upper = path.join(dir.replace(/^"|"$/g, ''), name + ext);
+        try { if (statSync(upper).isFile()) return upper; } catch { /* next */ }
+      }
+    }
+  }
+  return null;
 }
 
 // ─── Reading ─────────────────────────────────────────────────────

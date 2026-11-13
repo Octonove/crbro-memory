@@ -35,7 +35,7 @@ import {
 } from 'fs';
 import path from 'path';
 import {
-  claudeDesktopConfig, claudeDir, claudeJson, codexHome, cursorConfig, engineRoot, lfSha, readJsonObject, readText,
+  claudeDesktopConfig, claudeDir, claudeJson, codexHome, cursorConfig, engineRoot, findOnPath, lfSha, readJsonObject, readText,
   updateJsonFile, writeGuarded,
 } from './installio.js';
 import { ensureCodexServer, pointsAtCrbro, readCodexServer, removeCodexServer, SERVER_NAME } from './codexconfig.js';
@@ -94,22 +94,7 @@ function step(steps: Step[], s: Step): Step {
 
 const isObject = (v: unknown): v is Record<string, any> => typeof v === 'object' && v !== null && !Array.isArray(v);
 
-/** `claude`, `claude.cmd`… on PATH; null when absent. */
-export function findOnPath(name: string, env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): string | null {
-  const dirs = (env.PATH || env.Path || '').split(platform === 'win32' ? ';' : ':').filter(Boolean);
-  const exts = platform === 'win32' ? (env.PATHEXT || '.COM;.EXE;.BAT;.CMD').split(';').filter(Boolean) : [''];
-  for (const dir of dirs) {
-    for (const ext of exts) {
-      const p = path.join(dir.replace(/^"|"$/g, ''), name + ext.toLowerCase());
-      try { if (statSync(p).isFile()) return p; } catch { /* next */ }
-      if (ext) {
-        const upper = path.join(dir.replace(/^"|"$/g, ''), name + ext);
-        try { if (statSync(upper).isFile()) return upper; } catch { /* next */ }
-      }
-    }
-  }
-  return null;
-}
+export { findOnPath } from './installio.js';
 
 /** One argument quoted for the Windows C runtime (what node.exe and claude.exe parse). */
 export function winQuote(arg: string): string {
