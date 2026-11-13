@@ -1,0 +1,60 @@
+{
+  "nota": "Banco en castellano (2.11). Hechos con á, í, ú, ñ, ü, compuestos con guion, entradas largas con la respuesta al final, y una neurona gorda del mismo dominio que se genera en run.mjs. Escrito por el mismo ingeniero que hizo los cambios de búsqueda: NO es a ciegas. Se congeló en git antes de medir los cambios de ranking.",
+  "neurons": [
+    { "id": "project_diseno_web_lumina", "name": "Diseño web Lúmina", "domain": "proyectos-web", "facts": [
+      "El diseño de la página de inicio de Lúmina usa la tipografía Montserrat y un menú fijo arriba.",
+      "La categoría «Ofertas» de la tienda Lúmina muestra 24 productos por página, ordenados por descuento.",
+      "El título SEO de la ficha de producto se genera con el nombre del producto seguido de la marca."
+    ]},
+    { "id": "project_cliente_penalara", "name": "Cliente Peñalara", "domain": "clientes", "facts": [
+      "La compañía Peñalara paga las facturas a 60 días por transferencia bancaria.",
+      "El año pasado Peñalara renovó el contrato de mantenimiento por 1.200 € anuales."
+    ]},
+    { "id": "project_encuentro_equipo", "name": "Encuentro del equipo", "domain": "personal", "facts": [
+      "La reunión anual del equipo en España se celebra en Cádiz durante la segunda semana de junio."
+    ]},
+    { "id": "tech_infraestructura", "name": "Infraestructura", "domain": "infraestructura", "facts": [
+      "El servidor de producción tiene 16 GB de RAM y corre Ubuntu 24.04 LTS.",
+      "Las copias de seguridad se guardan cifradas en un bucket de Backblaze B2 cada noche.",
+      "El certificado TLS se renueva con certbot desde un cron a las 3:00."
+    ]},
+    { "id": "tech_paquetes_npm", "name": "Paquetes npm", "domain": "desarrollo", "facts": [
+      "El paquete crbro-memory se publica en npm con provenance desde GitHub Actions.",
+      "El hook pre-commit ejecuta eslint y los tests unitarios antes de aceptar el cambio.",
+      "El modelo e5-small multilingüe ocupa 118 MB cuantizado en int8.",
+      "El script build-mcpb genera el paquete para Claude Desktop."
+    ]},
+    { "id": "project_demo_musica", "name": "Demo con música", "domain": "personal", "facts": [
+      "La canción elegida para la demo es «Pingüinos en la playa», de un grupo indie de Vigo."
+    ]},
+    { "id": "project_corpus", "name": "Corpus de frases", "domain": "datos", "facts": [
+      "El corpus lingüístico del proyecto tiene 3.000 frases etiquetadas a mano por dos anotadoras."
+    ]},
+    { "id": "project_app_movil", "name": "App móvil", "domain": "proyectos-web", "facts": [
+      "La versión móvil de la app usa React Native con Expo SDK 52.",
+      "El número de usuarios activos diarios de la app móvil ronda los 4.500."
+    ]},
+    { "id": "process_contabilidad", "name": "Contabilidad", "domain": "finanzas", "facts": [
+      "El IVA trimestral se presenta con el modelo 303 antes del día 20 del mes siguiente.",
+      "La cuota de autónomo sube a 310 € al mes desde enero."
+    ]}
+  ],
+  "long": [
+    { "id": "project_auditoria_oficina", "name": "Auditoría de la oficina", "domain": "infraestructura",
+      "answer": "El router de la oficina se reinicia solo los domingos a las 4:00 para liberar memoria." },
+    { "id": "project_migracion_datos", "name": "Migración de datos", "domain": "desarrollo",
+      "answer": "La migración de la base de datos a PostgreSQL 16 terminó el 3 de marzo sin pérdida de registros." },
+    { "id": "project_correo", "name": "Correo de la plataforma", "domain": "desarrollo",
+      "answer": "El proveedor de correo transaccional es Postmark, con un plan de 10.000 envíos al mes." }
+  ],
+  "filler": [
+    "Durante la revisión se repasaron los pasos del procedimiento uno por uno con el responsable.",
+    "Se anotaron las incidencias menores en la hoja compartida para tratarlas más adelante.",
+    "El equipo comentó que la documentación interna está desactualizada en varios apartados.",
+    "Quedó pendiente preparar un resumen para la dirección con los puntos más relevantes.",
+    "Algunas tareas se movieron al siguiente sprint por falta de tiempo.",
+    "Se acordó revisar de nuevo el estado general dentro de un mes.",
+    "Las pruebas manuales no mostraron problemas visibles en la interfaz.",
+    "El responsable pidió dejar constancia escrita de cada decisión tomada."
+  ]
+}
