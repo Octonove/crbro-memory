@@ -148,6 +148,8 @@ async function runArm() {
   const engine = new SearchEngine(brain);
   await engine.init();
   await engine.awaitEmbeddings?.();
+  // The semantic arm measures with this brain's calibration in place (2.11), not while it is being taken.
+  const calibration = process.env.CRBRO_SEMANTIC === '1' && engine.calibrate ? await engine.calibrate() : null;
 
   const isHit = (r, e) => r.neuron_id === e.neuron && (r.entry_id === e.eid);
   const res = { answerable: { n: 0, at1: 0, at3: 0, mrr: 0, top1_strong: 0 }, many: { n: 0, at1: 0 }, by_type: {},
@@ -187,6 +189,7 @@ async function runArm() {
   }
   res.unanswerable = { n: un.n, no_answer: un.no_answer, avg_rows: Math.round(un.rows / un.n * 10) / 10,
     avg_chars: Math.round(un.chars / un.n), top1_strong: un.top1_strong };
+  if (calibration) res.calibration = calibration;
   rmSync(holder, { recursive: true, force: true });
   return res;
 }
