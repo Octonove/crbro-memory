@@ -145,7 +145,7 @@ describe('an update is not an edit (2.11)', () => {
     try {
       const installed = join(dir, 'crbro-hooks');
       mkdirSync(installed, { recursive: true });
-      writeFileSync(join(installed, 'crbro-guard.mjs'), execFileSync('git', ['show', 'de025af:hooks/crbro-guard.mjs'], { encoding: 'utf8' }));
+      writeFileSync(join(installed, 'crbro-guard.mjs'), execFileSync('git', ['show', 'c1edbb8:hooks/crbro-guard.mjs'], { encoding: 'utf8' }));
       writeFileSync(join(installed, 'crbro-subagent.mjs'), '// mine');
       const r = verifyHooks({ packageDir: join(__dirname, '..', 'hooks'), installedDir: installed, settingsPath: join(dir, 'settings.json') });
       expect(r.hooks.find(h => h.name === 'crbro-guard.mjs')!.status).toBe('older_release');

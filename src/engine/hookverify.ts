@@ -17,7 +17,7 @@ import { createHash } from 'crypto';
 import { existsSync, readdirSync, readFileSync, statSync } from 'fs';
 import path from 'path';
 import os from 'os';
-import { readManifest, shippedHashes } from './hookrefresh.js';
+import { compareVersions, readManifest, shippedHashes, writtenBy } from './hookrefresh.js';
 
 export type HookStatus =
   /** Byte for byte the packaged file. */
@@ -30,6 +30,8 @@ export type HookStatus =
    * an edit. crbro_boot refreshes it on its own (hookrefresh.ts).
    */
   | 'older_release'
+  /** An unmodified copy written by another build of this version or a newer one: not an edit either. */
+  | 'other_build'
   | 'different'
   /** Shipped by the package, not installed. */
   | 'not_installed'
@@ -136,6 +138,8 @@ export function verifyHooks(opts: VerifyOptions): VerifyReport {
   const hooks: HookCheck[] = [];
   const known = shippedHashes(opts.packageDir);
   const manifest = readManifest(opts.installedDir);
+  let version = '';
+  try { version = String(JSON.parse(readFileSync(path.join(opts.packageDir, '..', 'package.json'), 'utf8')).version || ''); } catch { /* unknown */ }
   for (const name of shipped) {
     const pkg = readFileSync(path.join(opts.packageDir, name));
     const check: HookCheck = { name, status: 'not_installed', package_sha256: sha256(pkg), in_settings: referenced.has(name) };
@@ -145,8 +149,10 @@ export function verifyHooks(opts: VerifyOptions): VerifyReport {
       check.installed_sha256 = sha256(mine);
       if (check.installed_sha256 === check.package_sha256) check.status = 'same';
       else if (lfSha(mine) === lfSha(pkg)) check.status = 'line_endings_only';
-      else if (manifest?.files[name] === lfSha(mine) || (known[name] ?? []).includes(lfSha(mine))) check.status = 'older_release';
-      else check.status = 'different';
+      else {
+        const by = writtenBy(name, lfSha(mine), manifest, known);
+        check.status = by === null ? 'different' : compareVersions(version, by) > 0 ? 'older_release' : 'other_build';
+      }
     }
     hooks.push(check);
   }
@@ -158,7 +164,7 @@ export function verifyHooks(opts: VerifyOptions): VerifyReport {
 
   const missing = [...new Set(crbroScripts)].filter(p => !existsSync(p));
   const ok = !settingsUnreadable && missing.length === 0 &&
-    hooks.every(h => h.status === 'same' || h.status === 'line_endings_only' || h.status === 'not_installed' || h.status === 'older_release');
+    hooks.every(h => h.status === 'same' || h.status === 'line_endings_only' || h.status === 'not_installed' || h.status === 'older_release' || h.status === 'other_build');
 
   return {
     package_dir: opts.packageDir,
@@ -175,6 +181,7 @@ const STATUS_TEXT: Record<HookStatus, string> = {
   same: '✅ same as the package',
   line_endings_only: '✅ same except line endings (CRLF/LF)',
   older_release: '⚪ from an older CRBRO release, unmodified: refreshed at the next crbro_boot',
+  other_build: '⚪ unmodified, from another CRBRO build of this version or a newer one',
   different: '⚠️  DIFFERENT from the package',
   not_installed: '⚪ not installed',
   unknown: '⚠️  not a hook of this package',

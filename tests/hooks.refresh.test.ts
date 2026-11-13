@@ -15,7 +15,7 @@ const lf = (s: string) => createHash('sha256').update(s.replace(/\r\n/g, '\n')).
 let home: string, pkg: string, claudeHooks: string, codexHooks: string;
 const env = () => ({ HOME: home, USERPROFILE: home } as NodeJS.ProcessEnv);
 
-function makePackage(version: string, files: Record<string, string>, shipped: Record<string, string[]> = {}) {
+function makePackage(version: string, files: Record<string, string>, shipped: Record<string, Record<string, string>> = {}) {
   rmSync(pkg, { recursive: true, force: true });
   mkdirSync(join(pkg, 'hooks'), { recursive: true });
   writeFileSync(join(pkg, 'package.json'), JSON.stringify({ name: 'crbro-memory', version }));
@@ -35,18 +35,18 @@ describe('hook copies follow the package', () => {
   it('a copy installed by an earlier version (manifest) is refreshed; the manifest moves with it', () => {
     makePackage('2.10.0', { 'crbro-guard.mjs': 'old guard' });
     installHookFile(join(pkg, 'hooks'), 'crbro-guard.mjs', claudeHooks);
-    expect(readManifest(claudeHooks)).toMatchObject({ version: '2.10.0', files: { 'crbro-guard.mjs': lf('old guard') } });
+    expect(readManifest(claudeHooks)).toMatchObject({ version: '2.10.0', files: { 'crbro-guard.mjs': { sha256: lf('old guard'), version: '2.10.0' } } });
 
     makePackage('2.11.0', { 'crbro-guard.mjs': 'new guard' });
     const r = refreshHooks({ home, env: env(), pkgHooks: join(pkg, 'hooks') });
 
     expect(r).toEqual([expect.objectContaining({ name: 'crbro-guard.mjs', state: 'stale', refreshed: true })]);
     expect(readFileSync(join(claudeHooks, 'crbro-guard.mjs'), 'utf8')).toBe('new guard');
-    expect(readManifest(claudeHooks)).toMatchObject({ version: '2.11.0', files: { 'crbro-guard.mjs': lf('new guard') } });
+    expect(readManifest(claudeHooks)).toMatchObject({ version: '2.11.0', files: { 'crbro-guard.mjs': { sha256: lf('new guard'), version: '2.11.0' } } });
   });
 
   it('a copy from before manifests is recognised by the list of every hook CRBRO shipped', () => {
-    makePackage('2.11.0', { 'crbro-lifecycle.mjs': 'new' }, { 'crbro-lifecycle.mjs': [lf('2.7 lifecycle')] });
+    makePackage('2.11.0', { 'crbro-lifecycle.mjs': 'new' }, { 'crbro-lifecycle.mjs': { [lf('2.7 lifecycle')]: '2.7.0' } });
     mkdirSync(claudeHooks, { recursive: true });
     writeFileSync(join(claudeHooks, 'crbro-lifecycle.mjs'), '2.7 lifecycle'.replace(/\n/g, '\r\n'));
 
@@ -56,7 +56,7 @@ describe('hook copies follow the package', () => {
   });
 
   it('an edited copy is left alone, reported once, and taken over with a backup only on an explicit install', () => {
-    makePackage('2.11.0', { 'crbro-guard.mjs': 'new guard' }, { 'crbro-guard.mjs': [lf('old guard')] });
+    makePackage('2.11.0', { 'crbro-guard.mjs': 'new guard' }, { 'crbro-guard.mjs': { [lf('old guard')]: '2.10.0' } });
     mkdirSync(claudeHooks, { recursive: true });
     writeFileSync(join(claudeHooks, 'crbro-guard.mjs'), 'my edited guard');
 
@@ -74,7 +74,7 @@ describe('hook copies follow the package', () => {
   });
 
   it('dry run reports and writes nothing; a current copy (CRLF or not) is current; Codex\'s folder too', () => {
-    makePackage('2.11.0', { 'crbro-codex.mjs': 'a\nb\n', 'crbro-guard.mjs': 'new' }, { 'crbro-guard.mjs': [lf('old')] });
+    makePackage('2.11.0', { 'crbro-codex.mjs': 'a\nb\n', 'crbro-guard.mjs': 'new' }, { 'crbro-guard.mjs': { [lf('old')]: '2.10.0' } });
     mkdirSync(codexHooks, { recursive: true });
     writeFileSync(join(codexHooks, 'crbro-codex.mjs'), 'a\r\nb\r\n');
     writeFileSync(join(codexHooks, 'crbro-guard.mjs'), 'old');
@@ -86,6 +86,19 @@ describe('hook copies follow the package', () => {
     expect(existsSync(join(codexHooks, HOOK_MANIFEST))).toBe(false);
   });
 
+  it('only a newer release replaces a copy: another build of the same version, or an older one, leaves it alone', () => {
+    makePackage('2.11.0', { 'crbro-guard.mjs': 'build A' });
+    installHookFile(join(pkg, 'hooks'), 'crbro-guard.mjs', claudeHooks);
+    makePackage('2.11.0', { 'crbro-guard.mjs': 'build B (a checkout)' });
+    expect(refreshHooks({ home, env: env(), pkgHooks: join(pkg, 'hooks') })[0].state).toBe('other_build');
+    makePackage('2.10.0', { 'crbro-guard.mjs': 'older' });
+    expect(refreshHooks({ home, env: env(), pkgHooks: join(pkg, 'hooks') })[0].state).toBe('other_build');
+    expect(readFileSync(join(claudeHooks, 'crbro-guard.mjs'), 'utf8')).toBe('build A');
+    makePackage('2.12.0', { 'crbro-guard.mjs': 'newer' });
+    expect(refreshHooks({ home, env: env(), pkgHooks: join(pkg, 'hooks') })[0]).toMatchObject({ state: 'stale', refreshed: true });
+    expect(readFileSync(join(claudeHooks, 'crbro-guard.mjs'), 'utf8')).toBe('newer');
+  });
+
   it('never creates a hooks folder that was not there', () => {
     makePackage('2.11.0', { 'crbro-guard.mjs': 'new' });
     expect(refreshHooks({ home, env: env(), pkgHooks: join(pkg, 'hooks') })).toEqual([]);
@@ -94,8 +107,8 @@ describe('hook copies follow the package', () => {
 });
 
 describe('at boot', () => {
-  it('a guard installed by 2.6.0 (from git history) is brought to this release by crbro_boot, even with CRBRO_MOD=0', async () => {
-    const old = execFileSync('git', ['show', 'de025af:hooks/crbro-guard.mjs'], { cwd: join(__dirname, '..'), encoding: 'utf8' });
+  it('a guard installed by 2.5.1 (from git history) is brought to this release by crbro_boot, even with CRBRO_MOD=0', async () => {
+    const old = execFileSync('git', ['show', 'c1edbb8:hooks/crbro-guard.mjs'], { cwd: join(__dirname, '..'), encoding: 'utf8' });
     mkdirSync(claudeHooks, { recursive: true });
     writeFileSync(join(claudeHooks, 'crbro-guard.mjs'), old);
     resetModOnBoot();
@@ -109,7 +122,7 @@ describe('at boot', () => {
   });
 
   it('CRBRO_HOOK_REFRESH=0 leaves the copies as they are', async () => {
-    const old = execFileSync('git', ['show', 'de025af:hooks/crbro-guard.mjs'], { cwd: join(__dirname, '..'), encoding: 'utf8' });
+    const old = execFileSync('git', ['show', 'c1edbb8:hooks/crbro-guard.mjs'], { cwd: join(__dirname, '..'), encoding: 'utf8' });
     mkdirSync(claudeHooks, { recursive: true });
     writeFileSync(join(claudeHooks, 'crbro-guard.mjs'), old);
     resetModOnBoot();

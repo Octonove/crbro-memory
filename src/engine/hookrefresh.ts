@@ -27,11 +27,26 @@ export const HOOK_MANIFEST = 'crbro-hooks.manifest.json';
 export const SHIPPED_HASHES = 'crbro-hooks.shipped.json';
 
 export interface HookManifest {
+  /** The CRBRO version that last wrote this manifest. */
   version: string;
-  /** file name → LF sha256 of the copy CRBRO wrote. */
-  files: Record<string, string>;
+  /** file name → what CRBRO wrote there: its LF sha256 and the version that wrote it. */
+  files: Record<string, { sha256: string; version: string }>;
   /** "name:sha" of edited copies already reported at boot, so it is said once. */
   noticed?: string[];
+}
+
+/**
+ * -1, 0 or 1 on x.y.z; a prerelease is below its release; anything that is
+ * not x.y.z compares equal, which never counts as newer (same as modinstall).
+ */
+export function compareVersions(a: string, b: string): number {
+  const parse = (v: string) => /^(\d+)\.(\d+)\.(\d+)(-)?/.exec(v);
+  const x = parse(a);
+  const y = parse(b);
+  if (!x || !y) return 0;
+  for (let i = 1; i <= 3; i++) if (Number(x[i]) !== Number(y[i])) return Number(x[i]) < Number(y[i]) ? -1 : 1;
+  if (!!x[4] !== !!y[4]) return x[4] ? -1 : 1;
+  return 0;
 }
 
 export interface HookDir {
@@ -55,7 +70,11 @@ export function readManifest(dir: string): HookManifest | null {
   try {
     const m = JSON.parse(readFileSync(path.join(dir, HOOK_MANIFEST), 'utf8'));
     if (m && typeof m === 'object' && m.files && typeof m.files === 'object') {
-      return { version: String(m.version ?? ''), files: m.files, ...(Array.isArray(m.noticed) ? { noticed: m.noticed } : {}) };
+      const files: HookManifest['files'] = {};
+      for (const [k, v] of Object.entries(m.files as Record<string, any>)) {
+        if (v && typeof v.sha256 === 'string') files[k] = { sha256: v.sha256, version: String(v.version ?? '') };
+      }
+      return { version: String(m.version ?? ''), files, ...(Array.isArray(m.noticed) ? { noticed: m.noticed } : {}) };
     }
   } catch { /* none yet */ }
   return null;
@@ -68,16 +87,30 @@ function writeManifest(dir: string, m: HookManifest): void {
   renameSync(tmp, file);
 }
 
-/** Every LF hash CRBRO has shipped for a hook, from the package's list. */
-export function shippedHashes(pkgHooks: string): Record<string, string[]> {
+/** Every LF hash CRBRO shipped for a hook before manifests existed, with the last version that shipped it. */
+export function shippedHashes(pkgHooks: string): Record<string, Record<string, string>> {
   try {
     const raw = JSON.parse(readFileSync(path.join(pkgHooks, SHIPPED_HASHES), 'utf8'));
-    const out: Record<string, string[]> = {};
-    for (const [k, v] of Object.entries(raw)) if (Array.isArray(v)) out[k] = v.filter(x => typeof x === 'string');
+    const out: Record<string, Record<string, string>> = {};
+    for (const [k, v] of Object.entries(raw)) {
+      if (!v || typeof v !== 'object' || Array.isArray(v)) continue;
+      out[k] = Object.fromEntries(Object.entries(v as Record<string, unknown>).filter(([, x]) => typeof x === 'string')) as Record<string, string>;
+    }
     return out;
   } catch {
     return {};
   }
+}
+
+/**
+ * Which CRBRO version wrote this copy, when it is one CRBRO wrote unmodified:
+ * by the folder's manifest, or by the list of hooks shipped before manifests.
+ * Null when it matches neither: somebody edited it.
+ */
+export function writtenBy(name: string, sha: string, manifest: HookManifest | null, shipped: Record<string, Record<string, string>>): string | null {
+  const m = manifest?.files[name];
+  if (m && m.sha256 === sha) return m.version || '0.0.0';
+  return shipped[name]?.[sha] ?? null;
 }
 
 function pkgVersion(pkgHooks: string): string {
@@ -101,16 +134,17 @@ export function installHookFile(pkgHooks: string, name: string, targetDir: strin
   mkdirSync(targetDir, { recursive: true });
   const src = readFileSync(path.join(pkgHooks, name));
   const target = path.join(targetDir, name);
+  const version = pkgVersion(pkgHooks);
+  const before = readManifest(targetDir);
   // A copy somebody edited is kept aside before it is replaced.
   try {
     const mine = lfSha(readFileSync(target));
-    const known = readManifest(targetDir)?.files[name] === mine || (shippedHashes(pkgHooks)[name] ?? []).includes(mine);
-    if (mine !== lfSha(src) && !known) backupFile(target);
+    if (mine !== lfSha(src) && writtenBy(name, mine, before, shippedHashes(pkgHooks)) === null) backupFile(target);
   } catch { /* not there yet */ }
-  const before = readManifest(targetDir);
   let same = false;
   try { same = readFileSync(target).equals(src); } catch { /* not there */ }
-  if (same && before?.files[name] === lfSha(src) && before.version === pkgVersion(pkgHooks)) return target;   // idempotent
+  const entry = before?.files[name];
+  if (same && entry?.sha256 === lfSha(src) && entry.version === version) return target;   // idempotent
   if (!same) {
     const tmp = `${target}.${process.pid}.tmp`;
     try {
@@ -121,9 +155,9 @@ export function installHookFile(pkgHooks: string, name: string, targetDir: strin
       throw e;
     }
   }
-  const m = before ?? { version: pkgVersion(pkgHooks), files: {} };
-  m.version = pkgVersion(pkgHooks);
-  m.files[name] = lfSha(src);
+  const m = before ?? { version, files: {} };
+  m.version = version;
+  m.files[name] = { sha256: lfSha(src), version };
   writeManifest(targetDir, m);
   return target;
 }
@@ -133,6 +167,13 @@ export type HookCopyState =
   | 'current'
   /** An unmodified copy of an older release: refreshed (or, read-only, would be). */
   | 'stale'
+  /**
+   * An unmodified copy written by this version or a newer one, from another
+   * build (a checkout beside the npm copy, a newer CRBRO elsewhere on this
+   * machine). It keeps it: an older or a sibling build never takes it back,
+   * or two builds would rewrite each other at every start.
+   */
+  | 'other_build'
   /** Not what CRBRO installed: somebody edited it. Left alone. */
   | 'modified';
 
@@ -178,11 +219,13 @@ export function refreshHooks(opts: RefreshOptions): HookCopy[] {
       const mineSha = lfSha(mine);
       if (mineSha === pkgSha) {
         out.push({ client, dir, name, state: 'current' });
-        if (next.files[name] !== pkgSha) { next.files[name] = pkgSha; manifestChanged = true; }
+        if (next.files[name]?.sha256 !== pkgSha) { next.files[name] = { sha256: pkgSha, version }; manifestChanged = true; }
         continue;
       }
-      const ours = next.files[name] === mineSha || (shipped[name] ?? []).includes(mineSha);
-      if (!ours) { out.push({ client, dir, name, state: 'modified' }); continue; }
+      const by = writtenBy(name, mineSha, manifest, shipped);
+      if (by === null) { out.push({ client, dir, name, state: 'modified' }); continue; }
+      // Only a newer release replaces it.
+      if (compareVersions(version, by) <= 0) { out.push({ client, dir, name, state: 'other_build' }); continue; }
       const row: HookCopy = { client, dir, name, state: 'stale' };
       if (!opts.dryRun) {
         const target = path.join(dir, name);
@@ -193,7 +236,7 @@ export function refreshHooks(opts: RefreshOptions): HookCopy[] {
           writeFileSync(tmp, pkg);
           renameSync(tmp, target);
           row.refreshed = true;
-          next.files[name] = pkgSha;
+          next.files[name] = { sha256: pkgSha, version };
           manifestChanged = true;
         } catch (e) {
           rmSync(tmp, { force: true });
@@ -202,7 +245,7 @@ export function refreshHooks(opts: RefreshOptions): HookCopy[] {
       }
       out.push(row);
     }
-    if (!opts.dryRun && (manifestChanged || (manifest && manifest.version !== version && out.some(c => c.dir === dir && c.state !== 'modified')))) {
+    if (!opts.dryRun && manifestChanged) {
       try {
         next.version = version;
         writeManifest(dir, next);

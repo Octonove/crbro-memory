@@ -357,7 +357,7 @@ async function inspectHooks(home: string, env: NodeJS.ProcessEnv) {
   const installed = copies.map(c => ({ client: c.client, file: path.join(c.dir, c.name),
     state: c.state === 'stale' ? 'older_release' as const : c.state }));
   const status: DoctorStatus = missing_scripts.length || settings_unreadable || npx_cache_references
-    || installed.some(c => c.state !== 'current') ? 'warning' : 'ok';
+    || installed.some(c => c.state === 'older_release' || c.state === 'modified') ? 'warning' : 'ok';
   return { status, installed, missing_scripts: [...new Set(missing_scripts)].sort(), settings_unreadable, npx_cache_references };
 }
 

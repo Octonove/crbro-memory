@@ -315,6 +315,8 @@ describe('doctor tells the truth (2.11)', () => {
   beforeAll(async () => {
     // The fixture package ships the hooks, so installed copies can be compared with it.
     for (const f of await fs.readdir('hooks')) await put(path.join(pkg, 'hooks', f), await fs.readFile(path.join('hooks', f)));
+    // A release newer than any hook in the history, so an old copy reads as an older release.
+    await put(path.join(pkg, 'package.json'), JSON.stringify({ name: 'crbro-memory', version: '99.0.0' }));
   });
 
   it('a healthy brain with a fresh backup is "ok", and the human summary says so', async () => {
@@ -354,7 +356,7 @@ describe('doctor tells the truth (2.11)', () => {
   it('installed hooks: an older release, an edited copy, a missing script and an npx-cache path, all named', async () => {
     await manifest();
     await backup(0);
-    const old = execFileSync('git', ['show', 'de025af:hooks/crbro-guard.mjs'], { encoding: 'utf8' });
+    const old = execFileSync('git', ['show', 'c1edbb8:hooks/crbro-guard.mjs'], { encoding: 'utf8' });
     const hooksDir = path.join(home, '.claude', 'crbro-hooks');
     await put(path.join(hooksDir, 'crbro-guard.mjs'), old);
     await put(path.join(hooksDir, 'crbro-subagent.mjs'), '// edited by hand');
