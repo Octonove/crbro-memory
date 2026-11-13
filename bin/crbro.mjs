@@ -1380,6 +1380,11 @@ if (command === 'doctor') {
     process.exit(1);
   });
 
+} else if (command === 'export') { import('../dist/cli/export.js').then(m => m.main(args.slice(1))).then(code => { process.exitCode = code; }, err => { console.error(`  ❌ export: ${err?.message || err}`); process.exitCode = 1; });
+} else if (command === 'import') { import('../dist/cli/import.js').then(m => m.main(args.slice(1))).then(code => { process.exitCode = code; }, err => { console.error(`  ❌ import: ${err?.message || err}`); process.exitCode = 1; });
+} else if (command === 'view') { import('../dist/cli/view.js').then(m => m.main(args.slice(1))).then(code => { process.exit(code); }, err => { console.error(`  ❌ view: ${err?.message || err}`); process.exit(1); });
+} else if (command === 'serve') { import('../dist/cli/serve.js').then(m => m.main(args.slice(1))).then(code => { process.exit(code); }, err => { console.error(`  ❌ serve: ${err?.message || err}`); process.exit(1); });
+
 } else if (command === '--help' || command === '-h') {
   // ─── Help ──────────────────────────────────────────────────────
   console.log('');
@@ -1444,6 +1449,12 @@ if (command === 'doctor') {
   console.log('');
   console.log('  Server:');
   console.log('    npx crbro-memory                  Start MCP server (stdio)');
+  console.log('    npx crbro-memory serve --http [--port 8787] [--host 127.0.0.1] [--allow-remote] [--new-token]   MCP over Streamable HTTP, bearer token, no OAuth');
+  console.log('');
+  console.log('  See and move your memory (--help on each for details):');
+  console.log('    npx crbro-memory view [--port N] [--no-open]   Local page (127.0.0.1, one-time token): neurons, search, open items, stale entries');
+  console.log('    npx crbro-memory export [--out DIR] [--format md|json] [--include-retired]   Obsidian vault or JSON; read-only, credentials redacted');
+  console.log('    npx crbro-memory import PATH [--apply] [--topic NAME] [--type fact|preference|pattern]   CLAUDE.md, Claude Code memory, CRBRO export; dry run by default');
   console.log('');
   console.log('  Open source (MIT) — https://github.com/Octonove/crbro-memory');
   console.log('');
