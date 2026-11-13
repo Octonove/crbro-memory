@@ -12,12 +12,15 @@ import { randomUUID } from 'node:crypto';
 import { readJSON, writeJSON, updateJSON, fileExists, now } from '../utils/fs.js';
 import { withLock } from '../utils/lock.js';
 import { contentHash } from '../utils/hash.js';
-import { secretKinds } from '../engine/secrets.js';
+import { redact, secretKinds } from '../engine/secrets.js';
 import { sanitizeReference } from '../engine/evidence.js';
 import type { MergeReport } from './materialize.js';
 import { decodeOps, encodeOp, entryId, opsRelPath, OPS_VERSION, type Op } from './ops.js';
 import type { Emitter } from '../engine/cortex.js';
-import { git, gitAvailable, initSpace, cloneSpace, syncSpace, type GitResult } from './git.js';
+import { gitAsync, gitAvailableAsync, initSpaceAsync, cloneSpaceAsync, syncSpaceAsync, type GitResult } from './git.js';
+import {
+  safeSpaceDir, spaceNameProblem, remoteProblem, branchProblem, NEURON_DIR_RE, sanitizeIncomingOps,
+} from './validate.js';
 import type { Brain } from '../engine/brain.js';
 import type { Cortex } from '../engine/cortex.js';
 import type { Neuron } from '../types/index.js';
@@ -52,6 +55,14 @@ export interface SyncReport {
   merged: MergeReport[];
   pushed: boolean;
   message: string;
+  /**
+   * Folders in the space that match a local neuron you never shared there
+   * (2.11). They are left alone: no merge, no "shared" mark. crbro_share
+   * the neuron to follow it in the space.
+   */
+  left_alone?: string[];
+  /** Incoming ops dropped as malformed or naming another neuron (2.11). */
+  ops_dropped?: number;
 }
 
 // Fuera de shared/: el bloqueo debe sobrevivir al traslado de un espacio.
@@ -116,18 +127,25 @@ export async function getIdentity(brain: Brain, author?: string): Promise<Identi
   return id;
 }
 
+/**
+ * The folder of a space. Throws for a name that is not a plain slug or that
+ * would resolve outside shared/: with "..", create used to run `git add -A`
+ * and push the whole brain to whatever remote it was given (G1).
+ */
 export function spaceDir(brain: Brain, name: string): string {
-  return path.join(brain.paths.shared, name);
+  return safeSpaceDir(brain.paths.shared, name);
 }
 
+/** The space's config, or null — also for a name that cannot be a space. */
 export async function readSpace(brain: Brain, name: string): Promise<SpaceConfig | null> {
+  if (spaceNameProblem(name)) return null;
   return readJSON<SpaceConfig>(path.join(spaceDir(brain, name), 'space.json'));
 }
 
 export async function listSpaces(brain: Brain): Promise<string[]> {
   try {
     const entries = await fs.readdir(brain.paths.shared, { withFileTypes: true });
-    return entries.filter(e => e.isDirectory()).map(e => e.name);
+    return entries.filter(e => e.isDirectory() && !spaceNameProblem(e.name)).map(e => e.name);
   } catch {
     return [];
   }
@@ -145,10 +163,18 @@ export async function createSpace(
   return withSharedState(brain, () => createSpaceUnlocked(brain, name, remote, author, branch));
 }
 
+/** One message for a name, remote or branch that cannot be used. */
+function invalidInput(name: string, remote: string, branch: string): { ok: false; message: string } | null {
+  const problem = spaceNameProblem(name) || remoteProblem(remote) || branchProblem(branch);
+  return problem ? { ok: false, message: `Nothing was created or cloned. ${problem}` } : null;
+}
+
 async function createSpaceUnlocked(
   brain: Brain, name: string, remote: string, author: string, branch: string
 ): Promise<{ ok: boolean; message: string; detail?: string }> {
-  if (!gitAvailable()) {
+  const invalido = invalidInput(name, remote, branch);
+  if (invalido) return invalido;
+  if (!(await gitAvailableAsync())) {
     return { ok: false, message: 'git is not installed, and it is what carries the shared memory. Install it and try again.' };
   }
   const dir = spaceDir(brain, name);
@@ -157,27 +183,27 @@ async function createSpaceUnlocked(
   }
 
   const id = await getIdentity(brain, author);
-  const pushed = await initSpace(dir, remote, branch);
+  const pushed = await initSpaceAsync(dir, remote, branch);
 
   const cfg: SpaceConfig = { v: 1, name, created_by: id.author, created: now(), branch };
   await writeJSON(path.join(dir, 'space.json'), cfg);
   await fs.mkdir(path.join(dir, '.local'), { recursive: true });
 
-  git(['add', '-A', '.'], dir);
-  git(['commit', '-q', '-m', `CRBRO space "${name}"`], dir);
-  const again = git(['push', 'origin', `HEAD:${branch}`], dir, 30_000);
+  await gitAsync(['add', '-A', '.'], dir);
+  await gitAsync(['commit', '-q', '-m', `CRBRO space "${name}"`], dir);
+  const again = await gitAsync(['push', 'origin', `HEAD:${branch}`], dir, 30_000);
 
   if (!pushed.ok && !again.ok) {
     return {
       ok: false,
       message: 'The space was created locally but could not reach the remote. Check the URL and that you have push access.',
-      detail: (again.stderr || pushed.stderr).slice(0, 300),
+      detail: redact((again.stderr || pushed.stderr).slice(0, 300)).text,
     };
   }
 
   return {
     ok: true,
-    message: `Space "${name}" created and pushed. Anyone you invite to ${remote} can now join it.`,
+    message: redact(`Space "${name}" created and pushed. Anyone you invite to ${remote} can now join it.`).text,
   };
 }
 
@@ -194,7 +220,9 @@ export async function joinSpace(
 async function joinSpaceUnlocked(
   brain: Brain, name: string, remote: string, author: string, branch: string
 ): Promise<{ ok: boolean; message: string; detail?: string }> {
-  if (!gitAvailable()) {
+  const invalido = invalidInput(name, remote, branch);
+  if (invalido) return invalido;
+  if (!(await gitAvailableAsync())) {
     return { ok: false, message: 'git is not installed, and it is what carries the shared memory. Install it and try again.' };
   }
   const dir = spaceDir(brain, name);
@@ -204,14 +232,14 @@ async function joinSpaceUnlocked(
 
   await getIdentity(brain, author);
   await fs.mkdir(brain.paths.shared, { recursive: true });
-  const r = cloneSpace(dir, remote, branch);
+  const r = await cloneSpaceAsync(dir, remote, branch);
   if (!r.ok) {
     return {
       ok: false,
       message: r.reason === 'auth'
         ? 'Cloned nothing: no access to that repository. Ask to be added as a collaborator.'
         : 'Could not clone the space. Check the URL and your connection.',
-      detail: r.stderr.slice(0, 300),
+      detail: redact(r.stderr.slice(0, 300)).text,
     };
   }
 
@@ -225,7 +253,7 @@ function neuronOps(neuron: Neuron, id: Identity): Op[] {
   const at = now();
   const ops: Op[] = [
     { v: OPS_VERSION, op: 'neuron', nid: neuron.id, by: id.author, at,
-      name: neuron.name, ntype: neuron.type, domain: neuron.domain },
+      name: redact(neuron.name || '').text, ntype: neuron.type, domain: neuron.domain },
   ];
 
   for (const f of neuron.facts || []) {
@@ -236,7 +264,7 @@ function neuronOps(neuron: Neuron, id: Identity): Op[] {
       ...(f.reference ? { reference: f.reference } : {}),
       ...(f.temporal ? { temporal: f.temporal } : {}),
       ...(f.verification_invalidated_at ? { verification_invalidated_at: f.verification_invalidated_at } : {}),
-      ...(f.keys?.length ? { keys: f.keys } : {}),
+      ...(f.keys?.length ? { keys: f.keys.map(k => redact(k).text) } : {}),
       ...(f.shelf_life ? { shelf: f.shelf_life } : {}) });
     if (f.verified) {
       ops.push({ v: OPS_VERSION, op: 'verify', nid: neuron.id, by: id.author, at: f.verified, eid: fid, ekind: 'fact',
@@ -244,14 +272,14 @@ function neuronOps(neuron: Neuron, id: Identity): Op[] {
     }
     if (f.status === 'superseded' || f.status === 'retracted') {
       ops.push({ v: OPS_VERSION, op: 'status', nid: neuron.id, by: id.author,
-        at: f.revised || at, fid, to: f.status, why: f.revision_note });
+        at: f.revised || at, fid, to: f.status, why: f.revision_note ? redact(f.revision_note).text : undefined });
     }
   }
 
   for (const d of neuron.decisions || []) {
     if (!d.text) continue;
     ops.push({ v: OPS_VERSION, op: 'decision', nid: neuron.id, by: id.author,
-      at: d.date || at, did: entryId(d.text), text: d.text, why: d.rationale });
+      at: d.date || at, did: entryId(d.text), text: d.text, why: d.rationale ? redact(d.rationale).text : d.rationale });
   }
   // Dated entries carry their own date in `at`, so the team sees when a
   // pattern, error or debt was really recorded, not when it was shared.
@@ -322,7 +350,20 @@ export async function prepareShare(
   for (const [k, v] of Object.entries(neuron.entry_verification || {})) {
     revisarReferencia(`entry_verification[${k}].reference`, v.reference);
   }
-  (neuron.decisions || []).forEach((d, i) => revisar(`decisions[${i}]`, d.text));
+  (neuron.decisions || []).forEach((d, i) => {
+    revisar(`decisions[${i}]`, d.text);
+    revisar(`decisions[${i}].rationale`, d.rationale);
+  });
+  // Every other field that travels in an op, not only the entry texts (G8):
+  // a credential in a rationale, an alias or a revision note went out while
+  // the dry run reported nothing blocked.
+  (neuron.facts || []).forEach((f, i) => {
+    (f.keys || []).forEach((k, j) => revisar(`facts[${i}].keys[${j}]`, k));
+    if (f.revision_note) revisar(`facts[${i}].revision_note`, f.revision_note);
+  });
+  revisar('name', neuron.name);
+  revisar('summary', neuron.summary);
+  (neuron.tags || []).forEach((t, i) => revisar(`tags[${i}]`, t));
   (neuron.patterns || []).forEach((p, i) => revisar(`patterns[${i}]`, p));
   (neuron.errors || []).forEach((e, i) => revisar(`errors[${i}]`, e));
   (neuron.debts || []).forEach((d, i) => revisar(`debts[${i}]`, d));
@@ -568,6 +609,8 @@ export async function emitOps(brain: Brain, neuronId: string, make: (id: Identit
 
 // ─── Sync ────────────────────────────────────────────────────────
 
+const MAX_LOG_BYTES = 32 * 1024 * 1024;
+
 async function readAllOps(dir: string, neuronId: string): Promise<Op[]> {
   const opsDir = path.join(dir, 'neurons', neuronId, 'ops');
   let files: string[];
@@ -580,7 +623,10 @@ async function readAllOps(dir: string, neuronId: string): Promise<Op[]> {
   for (const f of files) {
     if (!f.endsWith('.jsonl')) continue;
     try {
-      const raw = await fs.readFile(path.join(opsDir, f), 'utf-8');
+      const p = path.join(opsDir, f);
+      // A log that size is not notes; reading it whole would only cost memory.
+      if ((await fs.stat(p)).size > MAX_LOG_BYTES) continue;
+      const raw = await fs.readFile(p, 'utf-8');
       all.push(...decodeOps(raw).ops);
     } catch { /* unreadable log: skip it, keep the rest */ }
   }
@@ -606,11 +652,17 @@ async function syncSpaceUnlocked(
   const cfg = await readSpace(brain, spaceName);
   if (!cfg) return { ...base, state: 'not_joined', message: `You are not in a space called "${spaceName}".` };
   await withOutboxState(brain, () => drainOutboxUnlocked(brain, spaceName));
-  if (!gitAvailable()) return { ...base, state: 'no_git', message: 'git is not installed on this machine.' };
+  if (!(await gitAvailableAsync())) return { ...base, state: 'no_git', message: 'git is not installed on this machine.' };
+
+  // space.json arrives from the remote: its branch is checked like any input.
+  const branch = cfg.branch || 'main';
+  if (branchProblem(branch)) {
+    return { ...base, state: 'conflict', message: 'The space.json of this space names an invalid branch. Nothing was synced.' };
+  }
 
   const dir = spaceDir(brain, spaceName);
   const id = await getIdentity(brain);
-  const { pulled, pushed } = syncSpace(dir, id.author, cfg.branch || 'main', timeoutMs);
+  const { pulled, pushed } = await syncSpaceAsync(dir, id.author, branch, timeoutMs);
 
   if (!pulled.ok) {
     const state = (pulled.reason === 'offline' || pulled.reason === 'timeout') ? 'offline'
@@ -636,10 +688,28 @@ async function syncSpaceUnlocked(
 
   // Neurons this machine stopped following: no merge, no markShared.
   const fuera = new Set(await unsharedList(brain));
+  const mapa = await sharedMap(brain);
+  const intactas: string[] = [];
+  let descartadas = 0;
 
   for (const nid of neuronIds) {
     if (fuera.has(nid)) continue;
-    const ops = await readAllOps(dir, nid);
+    // A folder name is what becomes a file name in the cortex: only what
+    // CRBRO itself would have written.
+    if (!NEURON_DIR_RE.test(nid)) continue;
+    const owner = mapa[nid];
+    // Followed in another space: that space's sync owns it.
+    if (owner && owner !== spaceName) continue;
+    // A local neuron you never shared here stays yours. Until 2.10 a
+    // teammate could create neurons/<your id>/ and the next sync merged into
+    // it and marked it shared, so everything you learned there went out (G2).
+    if (!owner && await fileExists(brain.paths.neuron(nid))) {
+      intactas.push(nid);
+      continue;
+    }
+    const leidas = await readAllOps(dir, nid);
+    const { ops, dropped } = sanitizeIncomingOps(nid, leidas);
+    descartadas += dropped;
     if (ops.length === 0) continue;
 
     const { report, created } = await cortex.mergeFromSync(nid, ops);
@@ -653,8 +723,10 @@ async function syncSpaceUnlocked(
       base.neurons_touched.push(nid);
       base.merged.push(report);
     }
-    await markSharedUnlocked(brain, nid, spaceName);
+    if (!owner) await markSharedUnlocked(brain, nid, spaceName);
   }
+  if (intactas.length) base.left_alone = intactas;
+  if (descartadas) base.ops_dropped = descartadas;
 
   const pending = await withOutboxState(brain, () => drainOutboxUnlocked(brain, spaceName));
   // Git solo envió lo que había antes: lo añadido después espera el próximo sync.
@@ -666,6 +738,11 @@ async function syncSpaceUnlocked(
   if (!base.pushed && pushed) {
     base.message += ' Your own notes could not be pushed this time; they will go with the next sync.';
   }
+  if (intactas.length) {
+    base.message += ` ${intactas.length} neuron(s) in the space have the id of a private neuron of yours and were left ` +
+      `alone (${intactas.slice(0, 5).join(', ')}${intactas.length > 5 ? ', …' : ''}). To merge one, crbro_share it into "${spaceName}".`;
+  }
+  if (descartadas) base.message += ` ${descartadas} malformed incoming note(s) were ignored.`;
   return base;
 }
 
@@ -701,7 +778,7 @@ export function attachSync(brain: Brain, cortex: Cortex): void {
                   ...(change.reference ? { reference: change.reference } : {}),
                   ...(change.temporal ? { temporal: change.temporal } : {}),
                   ...(change.verification_invalidated_at ? { verification_invalidated_at: change.verification_invalidated_at } : {}),
-                  ...(change.keys?.length ? { keys: change.keys } : {}),
+                  ...(change.keys?.length ? { keys: change.keys.map(k => redact(k).text) } : {}),
                   ...(change.shelf ? { shelf: change.shelf } : {}) } as Op];
       }
       if (change.kind === 'verify') {
@@ -709,11 +786,11 @@ export function attachSync(brain: Brain, cortex: Cortex): void {
           ...(change.verification ? { verification: change.verification } : {}) } as Op];
       }
       if (change.kind === 'status') {
-        return [{ ...comun, op: 'status', fid: change.fid, to: change.to, why: change.why } as Op];
+        return [{ ...comun, op: 'status', fid: change.fid, to: change.to, why: change.why ? redact(change.why).text : change.why } as Op];
       }
       if (change.kind === 'decision') {
         return [{ ...comun, op: 'decision', did: entryId(change.text),
-                  text: change.text, why: change.why } as Op];
+                  text: change.text, why: change.why ? redact(change.why).text : change.why } as Op];
       }
       if (change.kind === 'error') {
         return [{ ...comun, op: 'error', text: change.text } as Op];
