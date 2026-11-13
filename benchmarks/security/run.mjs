@@ -28,28 +28,38 @@ const { redact, secretKinds } = await import(pathToFileURL(join(DIST, 'engine/se
 // de GitHub bloquea el push de un benchmark de detección de secretos —
 // exactamente lo que pasó al publicar la 1.11. El `+` parte cada valor en
 // dos trozos que el escáner no reconoce por separado.
-const G = (...p) => p.join('');   // ensambla el valor
+// Cada valor ensamblado queda anotado: un caso cuenta como cazado solo si
+// NINGUNO de sus valores sobrevive en el texto redactado. Antes bastaba con
+// que el texto cambiara, y una clave privada con la cabecera tachada y el
+// cuerpo intacto contaba como cazada (G7).
+let valores = [];
+const G = (...p) => { const v = p.join(''); valores.push(v); return v; };   // ensambla el valor
+const caso = (d, t) => { const c = { d, t, v: valores }; valores = []; return c; };
 const SECRETOS = [
-  { d: 'AWS access key', t: 'la clave es ' + G('AKIAIOSF', 'ODNN7EXAMPLE') + ', guárdala' },
-  { d: 'AWS secret en prosa', t: 'el secret access key vale ' + G('wJalrXUtnFEMI/K7MDENG/', 'bPxRfiCYEXAMPLEKEY') },
-  { d: 'GitHub PAT', t: 'token ' + G('ghp_', '1234567890abcdefghijklmnopqrstuvwxyzAB') + ' para el push' },
-  { d: 'GitHub fine-grained', t: 'usa ' + G('github_pat_11ABCDEFG0abcdefghijkl_', '1234567890abcdefghijklmnopqrstuvwxyz1234567890ABCD') },
-  { d: 'OpenAI key', t: 'OPENAI_API_KEY=' + G('sk-proj-', 'abc123def456ghi789jkl012mno345pqr678stu901vwx234yz') },
-  { d: 'Google API key', t: 'la clave web es ' + G('AIzaSy', 'C3xK9mP2qR7tV4wX1yZ8aB5cD6eF7gH8i') },
-  { d: 'Slack token', t: G('xoxb-', '123456789012-1234567890123-AbCdEfGhIjKlMnOpQrStUvWx') + ' en el webhook' },
-  { d: 'JWT', t: 'Authorization: Bearer ' + G('eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.', 'eyJzdWIiOiIxMjM0NTY3ODkwIn0.', 'dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U') },
-  { d: 'Postgres DSN', t: 'DATABASE_URL=postgres://' + G('admin:', 'S3cr3tP4ss') + '@db.example.com:5432/prod' },
-  { d: 'Mongo DSN', t: 'mongodb+srv://' + G('user:', 'p4ssw0rd') + '@cluster0.abcde.mongodb.net/mydb' },
-  { d: 'WordPress app password', t: 'application password: ' + G('abcd efgh ijkl ', 'mnop qrst uvwx') },
-  { d: 'contraseña en prosa castellana', t: 'la contraseña de WP-Admin es ' + G('Muñoz2024', '$Reformas!') + ' no la pierdas' },
-  { d: 'Stripe live', t: 'STRIPE_SECRET_KEY=' + G('sk_live_51', 'ABCdefGHIjklMNOpqrsTUVwxyz0123456789abcdefGHIJ') },
-  { d: 'clave privada SSH (cabecera)', t: '-----BEGIN OPENSSH PRIVATE KEY-----\n' + G('b3BlbnNzaC1rZXkt', 'djEAAAAABG5vbmUAAAAEbm9uZQ') },
-  { d: 'clave partida en dos frases', t: 'el token empieza por ghp_ y sigue con ' + G('1234567890', 'abcdefghijklmnopqrstuvwxyzAB') },
-  { d: 'Twilio', t: G('ACb1234567890abcdef', '1234567890abcdef') + ' con su auth token ' + G('0123456789abcdef', '0123456789abcdef') },
-  { d: 'SendGrid', t: G('SG.', 'aBcDeFgHiJkLmNoPqRsTuV.', 'wXyZ0123456789aBcDeFgHiJkLmNoPqRsTuVwXyZ01234567') },
-  { d: 'genérico API_KEY=', t: 'API_KEY=' + G('9f8e7d6c5b4a3928', '1706f5e4d3c2b1a0') },
-  { d: 'base64 largo con pinta de clave', t: 'secret: ' + G('dGhpc2lzYXZlcnlsb25nc2Vj', 'cmV0dG9rZW5pbmJhc2U2NGZvcnRlc3Rpbmc=') },
-  { d: 'basic auth en URL', t: 'curl https://' + G('apiuser:', '8f3kd9sldkfj') + '@api.example.com/v1/data' },
+  caso('AWS access key', 'la clave es ' + G('AKIAIOSF', 'ODNN7EXAMPLE') + ', guárdala'),
+  caso('AWS secret en prosa', 'el secret access key vale ' + G('wJalrXUtnFEMI/K7MDENG/', 'bPxRfiCYEXAMPLEKEY')),
+  caso('GitHub PAT', 'token ' + G('ghp_', '1234567890abcdefghijklmnopqrstuvwxyzAB') + ' para el push'),
+  caso('GitHub fine-grained', 'usa ' + G('github_pat_11ABCDEFG0abcdefghijkl_', '1234567890abcdefghijklmnopqrstuvwxyz1234567890ABCD')),
+  caso('OpenAI key', 'OPENAI_API_KEY=' + G('sk-proj-', 'abc123def456ghi789jkl012mno345pqr678stu901vwx234yz')),
+  caso('Google API key', 'la clave web es ' + G('AIzaSy', 'C3xK9mP2qR7tV4wX1yZ8aB5cD6eF7gH8i')),
+  caso('Slack token', G('xoxb-', '123456789012-1234567890123-AbCdEfGhIjKlMnOpQrStUvWx') + ' en el webhook'),
+  caso('JWT', 'Authorization: Bearer ' + G('eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.', 'eyJzdWIiOiIxMjM0NTY3ODkwIn0.', 'dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U')),
+  caso('Postgres DSN', 'DATABASE_URL=postgres://' + G('admin:', 'S3cr3tP4ss') + '@db.example.com:5432/prod'),
+  caso('Mongo DSN', 'mongodb+srv://' + G('user:', 'p4ssw0rd') + '@cluster0.abcde.mongodb.net/mydb'),
+  caso('WordPress app password', 'application password: ' + G('abcd efgh ijkl ', 'mnop qrst uvwx')),
+  caso('contraseña en prosa castellana', 'la contraseña de WP-Admin es ' + G('Muñoz2024', '$Reformas!') + ' no la pierdas'),
+  caso('Stripe live', 'STRIPE_SECRET_KEY=' + G('sk_live_51', 'ABCdefGHIjklMNOpqrsTUVwxyz0123456789abcdefGHIJ')),
+  caso('clave privada SSH (cabecera)', '-----BEGIN OPENSSH PRIVATE KEY-----\n' + G('b3BlbnNzaC1rZXkt', 'djEAAAAABG5vbmUAAAAEbm9uZQ')),
+  caso('clave partida en dos frases', 'el token empieza por ghp_ y sigue con ' + G('1234567890', 'abcdefghijklmnopqrstuvwxyzAB')),
+  caso('Twilio', G('ACb1234567890abcdef', '1234567890abcdef') + ' con su auth token ' + G('0123456789abcdef', '0123456789abcdef')),
+  caso('SendGrid', G('SG.', 'aBcDeFgHiJkLmNoPqRsTuV.', 'wXyZ0123456789aBcDeFgHiJkLmNoPqRsTuVwXyZ01234567')),
+  caso('genérico API_KEY=', 'API_KEY=' + G('9f8e7d6c5b4a3928', '1706f5e4d3c2b1a0')),
+  caso('base64 largo con pinta de clave', 'secret: ' + G('dGhpc2lzYXZlcnlsb25nc2Vj', 'cmV0dG9rZW5pbmJhc2U2NGZvcnRlc3Rpbmc=')),
+  caso('basic auth en URL', 'curl https://' + G('apiuser:', '8f3kd9sldkfj') + '@api.example.com/v1/data'),
+  caso('clave privada completa (cuerpo y END)', '-----BEGIN RSA PRIVATE KEY-----\n' + G('MIIEowIBAAKCAQEA', 'u1SU1LfVLPHCozMxH2Mo') + '\n' + G('4lgOEePzNm0tRgeL', 'ezV6ffAt0gunVTLw7onLRnrq0') + '==\n-----END RSA PRIVATE KEY-----\ny sigue la nota'),
+  caso('PASS valor (sin dos puntos)', 'USER admin PASS ' + G('Xy7kk', '22Wq') + ' para el panel de pruebas'),
+  caso('pass valor (minúsculas)', 'usuario admin pass ' + G('Xy7#k', 'k22w') + ' para el panel de pruebas'),
+  caso('la contraseña valor (', 'la contraseña ' + G('Rf7kk', '22Wz') + ' (la del panel de pruebas)'),
 ];
 
 // ─── Cosas que NO son secretos (falsos positivos a vigilar) ────────
@@ -75,12 +85,23 @@ const INOCENTES = [
   'el secret key vive en el fichero /etc/ssl/private/server.pem del VPS',
   'el token empieza por gh y sigue con el resto que te dije por teléfono',
   'auth token caducado desde marzo, renuévalo en el panel de Twilio',
+  // 2.11: cebos de las reglas sin separador (PASS / contraseña valor) y dos
+  // formas reales que la 2.10 marcaba por error (valores inventados).
+  'ACCESOS: SSH con CLAVE, no contrasena: key_filename=~/.ssh/id_ejemplo, host.ejemplo:65002',
+  '(2) Reset contraseña = Supabase Auth built-in. (3) WELCOME = arreglado.',
+  'pass userId42 to the helper function and return early',
+  'PASS  tests/keychain.test.ts (12 tests) 40ms',
+  'pass: completed en la última corrida del CI',
+  'Decisión clave: mantener el plan de octubre',
+  'Dato clave: 4-oct-2026 es la fecha de corte',
+  'la contraseña debe tener al menos 12 caracteres y un símbolo',
+  '-----BEGIN PUBLIC KEY----- es pública y puede ir en el repo',
 ];
 
 let cazados = 0; const fallidos = [];
 for (const s of SECRETOS) {
   const { text, found } = redact(s.t);
-  const cazado = found.length > 0 && !text.includes(s.t.trim());
+  const cazado = found.length > 0 && s.v.length > 0 && s.v.every(v => !text.includes(v));
   if (cazado) cazados++; else fallidos.push(s.d);
 }
 

@@ -108,7 +108,10 @@ export const SECRET_PATTERNS = [
     kind: 'auth token (hex)',
     re: /\bauth[ _-]?token\b[^\S\n]{0,3}(?:[:=]|es|is)?[^\S\n]{0,3}["'`]?([0-9a-fA-F]{30,34})\b/gi,
   },
-  { kind: 'private key block', re: /-----BEGIN [A-Z ]*PRIVATE KEY-----/g },
+  {
+    kind: 'private key block',
+    re: /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----(?:[\s\S]{0,16384}?-----END [A-Z0-9 ]*PRIVATE KEY-----|(?:\s{1,4}(?:[A-Za-z0-9+/]{16,}={0,2}|[A-Za-z0-9+/]{2,}={1,2})(?!\S)){0,256})/g,
+  },
   { kind: 'JSON Web Token', re: /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g },
   {
     kind: 'WordPress application password',
@@ -116,7 +119,7 @@ export const SECRET_PATTERNS = [
   },
   {
     kind: 'password',
-    re: /\b(?:password|passwd|contrase[nñ]a)\s*(?:es|is)?\s*[:=]\s*["'`]?([^\s"'`,;]{8,})/gi,
+    re: /\b(?:[Pp]assword|PASSWORD|[Pp]asswd|PASSWD|[Cc]ontrase[nñ]a|CONTRASE[NÑ]A)\s*(?:es|is|ES|IS)?\s*[:=]\s*["'`]?(?![A-Z][a-z]+(?![^\s"'`,;]))(?![A-Za-z_]+=)(?!~?\/)([^\s"'`,;]{8,})/g,
   },
   {
     kind: 'password',
@@ -125,6 +128,14 @@ export const SECRET_PATTERNS = [
   {
     kind: 'password (prose)',
     re: /\b(?:password|passwd|contrase[nñ]a|clave)\b(?:\s+(?:de|del|of|for)\s+[^\s]{1,30})?\s+(?:es|is)\s+["'`]?((?=[^\s"'`,;]*[A-Za-z])(?=[^\s"'`,;]*[0-9])[^\s"'`,;]{8,})/gi,
+  },
+  {
+    kind: 'password',
+    re: /\b(?:PASS|PASSWORD|PASSWD|[Pp]assword|[Pp]asswd|[Cc]ontrase[nñ]a|CONTRASE[NÑ]A)\b[^\S\n]+["'`]?((?:(?=[^\s"'`,;()]*[a-z])(?=[^\s"'`,;()]*[A-Z])(?=[^\s"'`,;()]*[0-9])|(?=[^\s"'`,;()]*[a-z])(?=[^\s"'`,;()]*[A-Z])(?=[^\s"'`,;()]*[!@#$%^&*+=?~])|(?=[^\s"'`,;()]*[a-z])(?=[^\s"'`,;()]*[0-9])(?=[^\s"'`,;()]*[!@#$%^&*+=?~])|(?=[^\s"'`,;()]*[A-Z])(?=[^\s"'`,;()]*[0-9])(?=[^\s"'`,;()]*[!@#$%^&*+=?~]))[^\s"'`,;()]{8,})/g,
+  },
+  {
+    kind: 'password',
+    re: /\b(?:PASS|[Pp]ass)\b(?:[^\S\n]*[:=][^\S\n]*["'`]?((?=[^\s"'`,;()]*[A-Za-z])(?=[^\s"'`,;()]*[0-9!@#$%^&*+=?~])[^\s"'`,;()]{8,})|[^\S\n]+["'`]?(?![$-])((?=[^\s"'`,;()]*[A-Za-z])(?=[^\s"'`,;()]*[0-9])(?=[^\s"'`,;()]*[!@#$%^&*+=?~])[^\s"'`,;()]{8,}))/g,
   },
   {
     kind: 'split credential',
@@ -150,8 +161,9 @@ export function redact(text) {
     re.lastIndex = 0;
     let m;
     while ((m = re.exec(text)) !== null) {
-      const value = m[1] !== undefined ? m[1] : m[0];
-      const at = m[1] !== undefined ? m.index + m[0].indexOf(m[1]) : m.index;
+      const group = m.slice(1).find(g => g !== undefined);
+      const value = group !== undefined ? group : m[0];
+      const at = group !== undefined ? m.index + m[0].lastIndexOf(group) : m.index;
       hits.push({ kind, index: at, length: value.length });
       if (m[0].length === 0) re.lastIndex++;
     }

@@ -52,7 +52,15 @@ const PATTERNS: Pattern[] = [
     kind: 'auth token (hex)',
     re: /\bauth[ _-]?token\b[^\S\n]{0,3}(?:[:=]|es|is)?[^\S\n]{0,3}["'`]?([0-9a-fA-F]{30,34})\b/gi,
   },
-  { kind: 'private key block', re: /-----BEGIN [A-Z ]*PRIVATE KEY-----/g },
+  // The whole block, not just its header: the body IS the key. Through the
+  // END line when there is one (16 KB is more than any real key); without
+  // it, every base64 token that follows (16+ characters, or a padded tail);
+  // the first ordinary word stops it. Matching only the header used to
+  // leave the body on disk while the benchmark counted it as caught.
+  {
+    kind: 'private key block',
+    re: /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----(?:[\s\S]{0,16384}?-----END [A-Z0-9 ]*PRIVATE KEY-----|(?:\s{1,4}(?:[A-Za-z0-9+/]{16,}={0,2}|[A-Za-z0-9+/]{2,}={1,2})(?!\S)){0,256})/g,
+  },
   { kind: 'JSON Web Token', re: /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g },
 
   // WordPress application password: six groups of four, anchored to the label.
@@ -74,8 +82,14 @@ const PATTERNS: Pattern[] = [
   // copula ("la contraseña es X", "the password is X") with no separator,
   // requiring the value to mix classes so plain words do not match.
   {
+    // Three shapes after the separator are prose, not a value, and are left
+    // alone (seen on a real brain): a capitalised product name ("Reset
+    // contraseña = Supabase Auth built-in"), an assignment ("contraseña:
+    // key_filename=~/.ssh/id_x") and a path ("~/.ssh/…", "/etc/…").
     kind: 'password',
-    re: /\b(?:password|passwd|contrase[nñ]a)\s*(?:es|is)?\s*[:=]\s*["'`]?([^\s"'`,;]{8,})/gi,
+    // No /i flag: the capitalised-word check needs case. The label is
+    // spelled in the three casings people write.
+    re: /\b(?:[Pp]assword|PASSWORD|[Pp]asswd|PASSWD|[Cc]ontrase[nñ]a|CONTRASE[NÑ]A)\s*(?:es|is|ES|IS)?\s*[:=]\s*["'`]?(?![A-Z][a-z]+(?![^\s"'`,;]))(?![A-Za-z_]+=)(?!~?\/)([^\s"'`,;]{8,})/g,
   },
   {
     // "clave" is also the Spanish adjective "key/important": "Decisión clave:
@@ -97,6 +111,26 @@ const PATTERNS: Pattern[] = [
     // is X" — one qualifier word between label and copula.
     kind: 'password (prose)',
     re: /\b(?:password|passwd|contrase[nñ]a|clave)\b(?:\s+(?:de|del|of|for)\s+[^\s]{1,30})?\s+(?:es|is)\s+["'`]?((?=[^\s"'`,;]*[A-Za-z])(?=[^\s"'`,;]*[0-9])[^\s"'`,;]{8,})/gi,
+  },
+  {
+    // The label with no separator and no copula, as people really jot it:
+    // "PASS Xy7#kk22w", "la contraseña Xy7kk22W (la del panel)". Without a
+    // separator the value carries the whole burden of proof, so it must mix
+    // three of lower case, upper case, digit and symbol — the rule that keeps
+    // "clave" the adjective out (2.9.1). Case-sensitive labels for the same
+    // reason. "pass" in lower case is an English verb ("pass userId42 to…"),
+    // so it gets its own rule below; "clave" stays out of this one entirely.
+    kind: 'password',
+    re: /\b(?:PASS|PASSWORD|PASSWD|[Pp]assword|[Pp]asswd|[Cc]ontrase[nñ]a|CONTRASE[NÑ]A)\b[^\S\n]+["'`]?((?:(?=[^\s"'`,;()]*[a-z])(?=[^\s"'`,;()]*[A-Z])(?=[^\s"'`,;()]*[0-9])|(?=[^\s"'`,;()]*[a-z])(?=[^\s"'`,;()]*[A-Z])(?=[^\s"'`,;()]*[!@#$%^&*+=?~])|(?=[^\s"'`,;()]*[a-z])(?=[^\s"'`,;()]*[0-9])(?=[^\s"'`,;()]*[!@#$%^&*+=?~])|(?=[^\s"'`,;()]*[A-Z])(?=[^\s"'`,;()]*[0-9])(?=[^\s"'`,;()]*[!@#$%^&*+=?~]))[^\s"'`,;()]{8,})/g,
+  },
+  {
+    // "pass" as a label: "user admin pass: Xy7kk22w", "pass Xy7#kk22w".
+    // With ":"/"=" the value needs a letter and a digit or symbol ("pass:
+    // completed" is a test report). Without a separator it needs a letter, a
+    // digit AND a symbol, and may not start with $ or - — that is what keeps
+    // "pass userId42 to the helper", "pass user_id2" and "pass $TOKEN2" out.
+    kind: 'password',
+    re: /\b(?:PASS|[Pp]ass)\b(?:[^\S\n]*[:=][^\S\n]*["'`]?((?=[^\s"'`,;()]*[A-Za-z])(?=[^\s"'`,;()]*[0-9!@#$%^&*+=?~])[^\s"'`,;()]{8,})|[^\S\n]+["'`]?(?![$-])((?=[^\s"'`,;()]*[A-Za-z])(?=[^\s"'`,;()]*[0-9])(?=[^\s"'`,;()]*[!@#$%^&*+=?~])[^\s"'`,;()]{8,}))/g,
   },
   {
     // A credential dictated in two pieces to slip past filters: "the token
@@ -148,9 +182,11 @@ export function findSecrets(text: string): SecretHit[] {
     re.lastIndex = 0;
     let m: RegExpExecArray | null;
     while ((m = re.exec(text)) !== null) {
-      // For the labelled-password pattern, redact only the value, not the label.
-      const value = m[1] !== undefined ? m[1] : m[0];
-      const at = m[1] !== undefined ? m.index + m[0].indexOf(m[1]) : m.index;
+      // For the labelled patterns, redact only the value, not the label. A
+      // pattern with alternatives captures the value in whichever group matched.
+      const group = m.slice(1).find(g => g !== undefined);
+      const value = group !== undefined ? group : m[0];
+      const at = group !== undefined ? m.index + m[0].lastIndexOf(group) : m.index;
       hits.push({ kind, index: at, length: value.length });
       if (m[0].length === 0) re.lastIndex++;
     }
