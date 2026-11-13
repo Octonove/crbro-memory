@@ -617,6 +617,8 @@ export function createServer(shared?: Engines): McpServer {
             if (found) neuron = await cortex.peek(found.id);
           }
           if (!neuron) {
+            const roto = (await cortex.unreadable()).find(u => u.id === args.neuron);   // 2.11 (C1)
+            if (roto) return textResult(`Neuron "${roto.id}" exists but cannot be read (${roto.error}). ${roto.recovery}`, true);
             return textResult(
               `Neuron not found: "${args.neuron}". Find the id with crbro_recall or crbro_inspect view=neurons.`, true);
           }
@@ -775,7 +777,7 @@ export function createServer(shared?: Engines): McpServer {
         if (args.view === 'neurons') {
           const limit = Math.min(Math.max(args.limit ?? 50, 1), 500);
           const offset = Math.max(args.offset ?? 0, 0);
-          const { total, rows } = await cortex.listWithTotal({
+          const { total, rows, unreadable } = await cortex.listWithTotal({
             domain: args.domain,
             type: args.type,
             min_heat: args.min_heat,
@@ -784,7 +786,8 @@ export function createServer(shared?: Engines): McpServer {
           });
           // total is what matched the filters, not what this page carries:
           // a pager told "total: 50" on a 1,145-neuron brain stops at the first page.
-          return done({ total, offset, returned: rows.length, has_more: offset + rows.length < total, neurons: rows });
+          return done({ total, offset, returned: rows.length, has_more: offset + rows.length < total, neurons: rows,
+            ...(unreadable.length ? { unreadable } : {}) });   // 2.11 (C1): skipped files, with where a good copy is
         }
 
         if (args.view === 'sessions') {
@@ -877,6 +880,7 @@ export function createServer(shared?: Engines): McpServer {
         // One of the two has to name a neuron. A blank topic counts as missing:
         // "   " is truthy, and left alone it creates a neuron called nothing.
         let topic = (args.topic ?? '').trim();
+        let resolvedId: string | undefined;   // 2.11 (C1): the id a name in neuron_id resolved to
         if (!topic) {
           if (!args.neuron_id) {
             return textResult(
@@ -885,18 +889,22 @@ export function createServer(shared?: Engines): McpServer {
           }
           const target = await resolveNeuron(args.neuron_id);
           if (!target) {
+            const roto = (await cortex.unreadable()).find(u => u.id === args.neuron_id);   // 2.11 (C1)
+            if (roto) return textResult(`Neuron "${roto.id}" exists but cannot be read (${roto.error}). Nothing was written. ${roto.recovery}`, true);
             return textResult(
               `No neuron with id "${args.neuron_id}". Find the right id with crbro_recall, ` +
               'or pass `topic` and the neuron will be created.', true);
           }
           topic = target.name;
+          resolvedId = target.id;
         }
 
         const result = await cortex.learn(topic, args.type, args.content, {
           confidence: args.confidence,
           domain: args.domain,
           rationale: args.rationale,
-          neuronId: args.neuron_id,
+          // A neuron_id that does not exist is an error from the engine (2.11), never a fallback to topic.
+          neuronId: resolvedId ?? args.neuron_id,
           supersedes: args.supersedes,
           keys: args.keywords,
           keysReplace: args.keywords_replace,
@@ -985,6 +993,9 @@ export function createServer(shared?: Engines): McpServer {
           // Legacy response field retained; a repeated mention is never verification.
           reconfirmed: result.reconfirmed || undefined,
           shared_warning: shelfSharedWarning,
+          // 2.11 (C1): said only when the name did not resolve exactly, or could mean several neurons.
+          resolved_by: result.resolved_by === 'variant' ? 'variant' : undefined,
+          ambiguous: result.ambiguous?.length ? result.ambiguous : undefined,
           total_facts: result.neuron.facts.length,
           total_decisions: result.neuron.decisions.length,
           total_patterns: result.neuron.patterns.length,
@@ -1867,11 +1878,29 @@ export function createServer(shared?: Engines): McpServer {
         repair: z.boolean().optional().describe('Fix what the integrity check found: dangling connection ids, synapse files pointing at missing neurons, entry_dates/entry_status keys with no live entry, manifest counters. Off in dry_run; the report lists repairs[] one line each.'),
         backfill_dates: z.boolean().optional().describe('Date the patterns, preferences, errors and debts written before 1.13 (recall shows them with an empty matched_added), using only a date stated in the text of the entry itself, to the day; the rest stay undated — nothing is guessed. Every run reports undated_entries and datable_entries; this writes them (dates_backfilled). Off in dry_run.'),
         compact: z.boolean().optional().describe('Fold the one-line neurons a bulk import left (compact_groups: 25+ born the same day in one domain, no tags, links or summary, 30+ days old) into one digest neuron per group. Identical lines are kept once, each source name becomes search keys of its line, every source is copied to quarantine first. Shared neurons are never touched. Off in dry_run — run that first and read the samples.'),
+        stale_list: z.object({ offset: z.number().int().min(0).optional(), limit: z.number().int().min(1).max(200).optional(), neuron_id: z.string().optional() }).optional()
+          .describe('Batch review, read-only: page through EVERY stale entry (stale_sample shows only 10), most overdue first — neuron_id, entry_id, kind, age_days, preview. Only this runs; returns stale_list. Default limit 50.'),
+        stale_review: z.object({
+          action: z.enum(['verify', 'superseded', 'retracted']),
+          entries: z.array(z.object({ neuron_id: z.string(), entry_id: z.string() })).min(1).max(500),
+          note: z.string().optional(),
+        }).optional().describe('Batch review, write: act on many stale entries at once — verify (checked against the source, still true: the clock restarts) or retire them (superseded / retracted, note kept). Takes the pairs stale_list returns; only this runs. Refused with dry_run.'),
       },
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
     },
     async (args) => {
       try {
+        // 2.11 (C1): batch review of stale entries. Runs alone, without the full cycle.
+        if (args.stale_review) {
+          if (args.dry_run) return textResult('stale_review writes; it cannot run with dry_run. Page with stale_list first.', true);
+          const r = await maintenance.reviewStale(args.stale_review.entries, args.stale_review.action, args.stale_review.note);
+          return jsonResult({ mode: 'STALE REVIEW', ...r, done_count: r.done.length, unmatched_count: r.unmatched.length });
+        }
+        if (args.stale_list) {
+          const page = await maintenance.listStale({ offset: args.stale_list.offset, limit: args.stale_list.limit, neuronId: args.stale_list.neuron_id });
+          return jsonResult({ mode: 'STALE LIST', stale_list: page,
+            hint: 'Check each against its source, then crbro_maintenance stale_review {action:"verify"|"superseded"|"retracted", entries:[{neuron_id, entry_id}]} for many at once.' });
+        }
         const report = await maintenance.run(args.dry_run, {
           archive: args.archive,
           purgeBoilerplate: args.purge_boilerplate,

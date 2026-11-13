@@ -1,7 +1,8 @@
 // ─── CRBRO Hippocampus Engine ────────────────────────────────────
 // Session logging and memory formation
 
-import { readJSON, writeJSON, updateJSON, listJSONFiles, deleteJSON, now, today } from '../utils/fs.js';
+import { readJSON, updateJSON, listJSONFiles, deleteJSON, today } from '../utils/fs.js';
+import { writeQuarantine } from './quarantine.js';
 import { sessionId } from '../utils/ids.js';
 import { redact, secretKinds } from './secrets.js';
 import type { Brain } from './brain.js';
@@ -87,16 +88,22 @@ export class Hippocampus {
    * List recent sessions.
    */
   async listSessions(limit: number = 10): Promise<SessionLog[]> {
-    const ids = await listJSONFiles(this.brain.paths.hippocampus);
+    // The names are session_YYYY-MM-DD: they sort by day, so only the newest
+    // `limit` files are read (2.11). Boot asks for 3 and used to parse all
+    // 146 logs of the reference brain to keep 3. An unreadable log is skipped.
+    const ids = (await listJSONFiles(this.brain.paths.hippocampus)).sort().reverse();
     const sessions: SessionLog[] = [];
 
     for (const id of ids) {
-      const session = await readJSON<SessionLog>(this.brain.paths.session(id));
+      if (sessions.length >= limit) break;
+      let session: SessionLog | null = null;
+      try { session = await readJSON<SessionLog>(this.brain.paths.session(id)); } catch { /* corrupt: skipped */ }
       if (session) sessions.push(session);
     }
 
-    // Sort by date descending (newest first)
-    sessions.sort((a, b) => b.date.localeCompare(a.date));
+    // Sort by date descending (newest first): a log whose file name is not a
+    // day id still lands by its own date among the ones read.
+    sessions.sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
 
     return sessions.slice(0, limit);
   }
@@ -143,9 +150,9 @@ export class Hippocampus {
     const log = await readJSON<SessionLog>(ruta);
     if (!log) return { session_id, removed: false, backup: null };
 
-    const sello = now().replace(/[:.]/g, '-');
-    const backup = `${this.brain.paths.quarantine}/${session_id}.${sello}.json`;
-    await writeJSON(backup, log);
+    // Same quarantine as the cortex: retention, and sealed when encryption at
+    // rest is on (throws, deleting nothing, when it is on and keyless).
+    const backup = await writeQuarantine(this.brain.paths.quarantine, session_id, log, 'whole');
     await deleteJSON(ruta);
 
     const manifest = await this.brain.getManifest();

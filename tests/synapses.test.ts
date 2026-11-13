@@ -61,6 +61,8 @@ describe('Synapses.decay', () => {
     const raw = JSON.parse(await fs.readFile(synPath, 'utf-8'));
     raw.strength = 0.05;
     raw.last_co_access = new Date(Date.now() - 200 * 24 * 60 * 60 * 1000).toISOString();
+    // 2.11: decay follows the time elapsed since it was last applied.
+    raw.decayed_at = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
     await fs.writeFile(synPath, JSON.stringify(raw));
 
     const pruned = await synapses.decay();

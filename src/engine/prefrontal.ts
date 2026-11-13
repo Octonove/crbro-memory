@@ -217,7 +217,9 @@ export class Prefrontal {
     const neurons: Neuron[] = [];
 
     for (const id of ids) {
-      const neuron = await readJSON<Neuron>(this.brain.paths.neuron(id));
+      // 2.11 (C1): an unreadable neuron is skipped, not the end of maintenance or the map.
+      let neuron: Neuron | null = null;
+      try { neuron = await readJSON<Neuron>(this.brain.paths.neuron(id)); } catch { /* corrupt: skipped */ }
       if (neuron) neurons.push(neuron);
     }
 

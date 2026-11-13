@@ -14,13 +14,14 @@ beforeEach(async () => {
   c.setIndexer(n => engine.indexNeuron(n));
   await c.learn('Alpha', 'fact', 'El despliegue usa puerto 8443.', { neuronId: 'project_alpha' });
   await c.learn('Beta', 'fact', 'El despliegue usa puerto 9443.', { neuronId: 'project_beta' });
+  // 2.11: the neuron_id is honoured (S6). 2.10 ignored it, fell back to the topic and created project_general.
   await c.learn('General', 'preference', 'Antes de un despliegue verificar el puerto.', { neuronId: 'tech_general' });
 });
 afterEach(async () => { await fs.rm(root, { recursive: true, force: true, maxRetries: 3 }); });
 
 it('filtra antes del límite sin perder preferencias globales', async () => {
   const rows = await engine.search('despliegue puerto', { neuronIds: ['project_beta'], includeGlobal: true, limit: 10 });
-  expect(rows.map(r => r.neuron_id).sort()).toEqual(['project_beta', 'project_general']);
+  expect(rows.map(r => r.neuron_id).sort()).toEqual(['project_beta', 'tech_general']);
   const strict = await engine.search('despliegue puerto', { neuronIds: ['project_beta'], limit: 1 });
   expect(strict.map(r => r.neuron_id)).toEqual(['project_beta']);
 });
@@ -48,7 +49,7 @@ it('global no convierte todos los hechos tech en hechos del proyecto actual', as
   await fs.writeFile(path.join(root, 'cortex', n.id + '.json'), JSON.stringify(n));
   await engine.indexNeuron(n);
   const rows = await engine.search('despliegue puerto', { neuronIds: ['project_alpha'], includeGlobal: true, globalExcludedNeurons: [n.id], limit: 10 });
-  expect(rows.map(r => r.neuron_id).sort()).toEqual(['project_alpha', 'project_general']);
+  expect(rows.map(r => r.neuron_id).sort()).toEqual(['project_alpha', 'tech_general']);
   const factsOnly = await engine.search('despliegue puerto', { neuronIds: ['project_alpha'], includeGlobal: true, kinds: ['fact'] });
   expect(factsOnly.map(r => r.neuron_id)).toEqual(['project_alpha']);
 });
