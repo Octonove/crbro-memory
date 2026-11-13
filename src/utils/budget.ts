@@ -27,6 +27,8 @@ export interface BudgetReport {
   /** Arrays cut short, by path. */
   entries_dropped?: Record<string, { returned: number; total: number }>;
   how_to_get_more?: string;
+  /** Set when the kept blocks alone outgrow the budget: nothing else was left to cut. */
+  over_budget_after_cuts?: true;
 }
 
 export interface BudgetOptions {
@@ -38,6 +40,18 @@ export interface BudgetOptions {
   howToGetMore?: string;
   /** Keys never shortened or dropped, whatever the size (protocol blocks). */
   keep?: string[];
+  /**
+   * Top-level keys whose arrays are cut first, in this order, before the
+   * largest-first rule applies to the rest. The least useful block goes
+   * first: in a boot that is session headlines, not open items.
+   */
+  dropFirst?: string[];
+  /**
+   * Per top-level key, the call that returns what was cut from it. When set,
+   * how_to_get_more names only the doors of what was actually shortened, so
+   * the notice never talks about a block that came back whole.
+   */
+  moreByKey?: Record<string, string>;
 }
 
 export const DEFAULT_BUDGET_CHARS = 24_000;
@@ -111,13 +125,21 @@ export function fitToBudget<T>(payload: T, opts: BudgetOptions = {}): T {
     }
   };
 
+  // The block a path belongs to: "open_items[3].text" → "open_items".
+  const topKey = (p: string) => p.split(/[.[]/)[0];
+  const order = opts.dropFirst ?? [];
+  const rank = (p: string) => {
+    const i = order.indexOf(topKey(p));
+    return i === -1 ? order.length : i;
+  };
+
   let guard = 0;
   while (size(copy) > budget && guard++ < 200) {
     const found: Array<{ path: string; arr: unknown[] }> = [];
     arraysOf(copy, '', found);
     const biggest = found
       .filter(a => a.arr.length > 1)
-      .sort((a, b) => size(b.arr) - size(a.arr))[0];
+      .sort((a, b) => rank(a.path) - rank(b.path) || size(b.arr) - size(a.arr))[0];
     if (!biggest) break;
 
     const total = dropped[biggest.path]?.total ?? biggest.arr.length;
@@ -140,7 +162,11 @@ export function fitToBudget<T>(payload: T, opts: BudgetOptions = {}): T {
       : shortened;
   }
   if (Object.keys(dropped).length) report.entries_dropped = dropped;
-  if (opts.howToGetMore) report.how_to_get_more = opts.howToGetMore;
+  if (report.returned_chars > budget) report.over_budget_after_cuts = true;
+  const cutKeys = [...new Set([...Object.keys(shortened), ...Object.keys(dropped)].map(topKey))];
+  const doors = opts.moreByKey ? cutKeys.map(k => opts.moreByKey![k]).filter(Boolean) : [];
+  if (doors.length) report.how_to_get_more = [...new Set(doors)].join(' ');
+  else if (opts.howToGetMore) report.how_to_get_more = opts.howToGetMore;
 
   copy.truncated = report;
   return copy as T;

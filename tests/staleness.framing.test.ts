@@ -118,7 +118,11 @@ describe('recall frames a possibly_stale row as a last-known value to check', ()
     expect(row.warning).toBe(`last known value, unverified for 150 days (since ${ago(150).slice(0, 10)}): may have changed`);
     // The line cites its source: the next step is to open it.
     expect(row.next_step).toMatch(/^Before answering, open config\/limits\.yml \(named in this entry\) and answer with what it says now\./);
-    expect(row.next_step).toContain(`say this value is from ${ago(150).slice(0, 10)} and may be out of date`);
+    // 2.11: the "if you cannot check" fallback is said once, in stale_warning,
+    // not repeated in every row; the row's warning keeps the date.
+    expect(row.next_step).not.toContain('may be out of date');
+    expect(out.stale_warning).toContain('say it may be out of date');
+    expect(row.warning).toContain(ago(150).slice(0, 10));
     // What the row always carried is still there.
     expect(row).toMatchObject({ neuron_id: garza, age_days: 150, shelf_life: 'volatile', shelf_inferred: false });
     expect(row.entry_id).toBeTruthy();
@@ -128,7 +132,7 @@ describe('recall frames a possibly_stale row as a last-known value to check', ()
     const out = await json('crbro_recall', { query: 'panel administración Garza puerto' });
     const row = out.possibly_stale.find((x: any) => x.last_known === BARE);
     expect(row.next_step).toMatch(/^Before answering, look for the current value where it lives: the project's files or config if you can read them, or the user\./);
-    expect(row.next_step).toContain('do not state it as current');
+    expect(out.stale_warning).toContain('Do not answer with');
   });
 
   it('the hint puts the order to check before the general advice', async () => {
@@ -138,9 +142,13 @@ describe('recall frames a possibly_stale row as a last-known value to check', ()
     expect(out.results.length).toBeGreaterThan(0);
     expect(out.possibly_stale.length).toBeGreaterThan(0);
     const h: string = out.hint;
-    expect(h).toContain('possibly_stale holds last-known values that may have changed: do not answer with one as current');
-    expect(h.indexOf('do not answer with one as current')).toBeLessThan(h.indexOf('weak: verify'));
-    expect(h).toContain('If you cannot check, say it may be out of date.');
+    // 2.11: "do not answer with it as current" and the fallback live in
+    // stale_warning, which opens the answer; the hint keeps the follow-up
+    // writes, still before the general advice.
+    expect(out.stale_warning).toContain('Do not answer with');
+    expect(out.stale_warning).toContain('say it may be out of date');
+    expect(h).toContain('After checking a possibly_stale row');
+    expect(h.indexOf('After checking a possibly_stale row')).toBeLessThan(h.indexOf('weak: verify'));
     // Two stale rows (two neurons): the warning speaks in the plural, with the youngest age.
     const other = (await json('crbro_learn', { topic: 'Cormorán', type: 'fact', content: 'El límite de subida de ficheros de Cormorán es 5 MB.', keywords: ['upload'], shelf_life: 'volatile' })).neuron_id;
     const file = path.join(root, 'cortex', `${other}.json`);

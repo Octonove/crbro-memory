@@ -711,23 +711,26 @@ describe('crbro_context', () => {
   it('discard_pending drops without recording, resolve_pending records, clear empties everything', async () => {
     await call('crbro_context', { clear: true });
     await call('crbro_context', { set_topics: ['project_uno', 'project_dos'], add_pending: 'Renovar el certificado del dominio principal' });
-    const added = body(await call('crbro_context', { add_pending: 'Revisar las alertas de disco del VPS' }));
+    // 2.11: a write confirms what changed and the counts; return_context
+    // brings the whole context back, as every write did before.
+    const added = body(await call('crbro_context', { add_pending: 'Revisar las alertas de disco del VPS', return_context: true }));
     expect(added.written).toBe(true);
     expect(added.active_topics).toEqual(['project_uno', 'project_dos']);
     expect(added.pending_tasks).toHaveLength(2);
 
     const resolved = body(await call('crbro_context', { resolve_pending: 'certificado del dominio' }));
     expect(resolved.resolved).toHaveLength(1);
-    expect(resolved.recently_closed).toHaveLength(1);
-    expect(resolved.pending_tasks).toHaveLength(1);
+    expect(resolved.counts).toEqual({ open: 1, recently_closed: 1 });
+    expect(resolved.pending_tasks).toBeUndefined();
 
     const discarded = body(await call('crbro_context', { discard_pending: 'alertas de disco' }));
     expect(discarded.written).toBe(true);
     expect(discarded.discarded).toHaveLength(1);
     expect(discarded.discarded[0].text).toBe('Revisar las alertas de disco del VPS');
-    expect(discarded.pending_tasks).toEqual([]);
-    expect(discarded.recently_closed).toHaveLength(1);           // untouched by the discard
-    expect(JSON.stringify(discarded.recently_closed)).not.toContain('alertas de disco');
+    expect(discarded.counts).toEqual({ open: 0, recently_closed: 1 });   // closed untouched by the discard
+    const ctx = body(await call('crbro_context'));
+    expect(ctx.pending_tasks).toEqual([]);
+    expect(JSON.stringify(ctx.recently_closed)).not.toContain('alertas de disco');
 
     const read = body(await call('crbro_context'));
     expect(read.written).toBe(false);
@@ -736,7 +739,7 @@ describe('crbro_context', () => {
     expect(read.recently_closed).toHaveLength(1);
 
     await call('crbro_context', { add_pending: 'Algo que el clear se lleva' });
-    const cleared = body(await call('crbro_context', { clear: true }));
+    const cleared = body(await call('crbro_context', { clear: true, return_context: true }));
     expect(cleared.written).toBe(true);
     expect(cleared.active_topics).toEqual([]);
     expect(cleared.pending_tasks).toEqual([]);
@@ -744,8 +747,8 @@ describe('crbro_context', () => {
 
     // clear runs before the other updates in the same call.
     const both = body(await call('crbro_context', { clear: true, add_pending: 'Sobrevive al clear de la misma llamada' }));
-    expect(both.pending_tasks).toHaveLength(1);
-    expect(both.pending_tasks[0].text).toBe('Sobrevive al clear de la misma llamada');
+    expect(both.counts).toEqual({ open: 1, recently_closed: 0 });
+    expect(both.added.text).toBe('Sobrevive al clear de la misma llamada');
     await call('crbro_context', { clear: true });
   });
 
@@ -817,7 +820,7 @@ describe('crbro_maintenance', () => {
 
 // ═══════════════════════════════════════════════════════════════════
 describe('crbro_boot', () => {
-  it('serves the full retired_tools map and the last three sessions, last_session first', async () => {
+  it('serves the full retired_tools map (view=status since 2.11) and the last three sessions, last_session first', async () => {
     const expected: Record<string, string> = {
       crbro_status: 'crbro_inspect view=status',
       crbro_neuron: 'crbro_inspect view=neuron neuron=<id or name>',
@@ -831,7 +834,8 @@ describe('crbro_boot', () => {
     };
     const c = body(await call('crbro_consolidate', { summary: 'Sesion para comprobar recent_sessions en boot.' }));
     const b = body(await call('crbro_boot'));
-    expect(b.retired_tools).toEqual(expected);
+    expect(b.retired_tools).toBeUndefined();
+    expect(body(await call('crbro_inspect', { view: 'status' })).retired_tools).toEqual(expected);
     expect(Array.isArray(b.recent_sessions)).toBe(true);
     expect(b.recent_sessions.length).toBeGreaterThanOrEqual(1);
     expect(b.recent_sessions.length).toBeLessThanOrEqual(3);
@@ -843,10 +847,10 @@ describe('crbro_boot', () => {
     for (const old of Object.keys(expected)) expect(b.memory_discipline).not.toContain(old);
   });
 
-  it('exports RETIRED_TOOLS from the server module with the same content boot serves', async () => {
+  it('exports RETIRED_TOOLS from the server module with the same content view=status serves', async () => {
     const mod: any = await import('../src/server.js');
-    const b = body(await call('crbro_boot'));
-    expect(mod.RETIRED_TOOLS).toEqual(b.retired_tools);
+    const s = body(await call('crbro_inspect', { view: 'status' }));
+    expect(mod.RETIRED_TOOLS).toEqual(s.retired_tools);
     expect(Object.isFrozen(mod.RETIRED_TOOLS) || typeof mod.RETIRED_TOOLS === 'object').toBe(true);
   });
 });

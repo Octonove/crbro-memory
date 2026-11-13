@@ -26,14 +26,24 @@ function normalizeContext(ctx: ActiveContext | null): ActiveContext {
   };
 }
 
+/**
+ * The one order open items are read in, whatever the scope: what is due
+ * first, then the newest. A cap applied after it keeps what matters now; the
+ * insertion order kept the oldest, so a boot without a project showed the
+ * twelve items nobody had touched in months.
+ */
+export function sortOpenItems<T extends { due?: string; added?: string }>(items: T[]): T[] {
+  return [...items].sort((a, b) =>
+    (a.due || '9999').localeCompare(b.due || '9999') || String(b.added || '').localeCompare(String(a.added || '')));
+}
+
 function projectView(ctx: ActiveContext, project?: string): ActiveContext {
   if (!project) return ctx;
   const visible = (t: PendingTask) => !t.project || t.project === project;
   return {
     ...ctx, active_topics: ctx.project_topics?.[project] || [],
     project_topics: ctx.project_topics?.[project] ? { [project]: ctx.project_topics[project] } : {},
-    pending_tasks: ctx.pending_tasks.map(toTask).filter(visible)
-      .sort((a, b) => (a.due || '9999').localeCompare(b.due || '9999') || b.added.localeCompare(a.added)),
+    pending_tasks: sortOpenItems(ctx.pending_tasks.map(toTask).filter(visible)),
     recently_closed: (ctx.recently_closed || []).filter(visible),
   };
 }
@@ -78,7 +88,7 @@ export class Prefrontal {
     discard_pending?: string;
     /** Empty active_topics, pending_tasks and recently_closed. Runs before the other updates. */
     clear?: boolean;
-  }): Promise<ActiveContext & { resolved: PendingTask[]; discarded: PendingTask[]; written: boolean; redacted?: string[] }> {
+  }): Promise<ActiveContext & { resolved: PendingTask[]; discarded: PendingTask[]; written: boolean; redacted?: string[]; added?: PendingTask }> {
     if (updates.project && !/^[a-zA-Z0-9_-]{1,100}$/.test(updates.project)) throw new Error('Invalid project id.');
     if (updates.due && (!/^\d{4}-\d{2}-\d{2}$/.test(updates.due) ||
       !Number.isFinite(Date.parse(updates.due)) || new Date(updates.due).toISOString().slice(0, 10) !== updates.due)) {
@@ -98,6 +108,7 @@ export class Prefrontal {
     let resolved: PendingTask[] = [];
     let discarded: PendingTask[] = [];
     let redacted: string[] = [];
+    let added: PendingTask | undefined;
     const saved = await updateJSON<ActiveContext>(this.brain.paths.activeContext(), current => {
     const ctx = normalizeContext(current);
 
@@ -136,6 +147,7 @@ export class Prefrontal {
       };
       if (existing) Object.assign(existing, metadata);
       else tasks.push({ id, text, added: now(), status: 'open', ...metadata });
+      added = { ...(existing ?? tasks[tasks.length - 1]) };
     }
 
     // Id, exact text, or a case-insensitive substring of at least 8 chars in
@@ -171,7 +183,8 @@ export class Prefrontal {
     ctx.last_updated = now();
     return ctx;
     });
-    return { ...projectView(saved!, updates.project), resolved, discarded, written: true, ...(redacted.length ? { redacted } : {}) };
+    return { ...projectView(saved!, updates.project), resolved, discarded, written: true,
+      ...(redacted.length ? { redacted } : {}), ...(added ? { added } : {}) };
   }
 
   /**

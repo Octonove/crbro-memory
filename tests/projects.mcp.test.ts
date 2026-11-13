@@ -51,8 +51,11 @@ it('separa relevancia, verificación y los registros históricos de un dato actu
   const learned = await call(a, 'crbro_learn', { topic: 'Archivo', type: 'fact', content: 'El servidor juniper utilizaba el puerto 7777.', temporal: 'historical' });
   const r = await call(a, 'crbro_recall', { query: 'juniper puerto', intent: 'current', scope: 'all' });
   expect(r.results.map((x: any) => x.neuron_id)).not.toContain(learned.neuron_id);
-  expect(r.historical_matches[0]).toMatchObject({ neuron_id: learned.neuron_id, temporal: 'historical', verification: { method: 'none' } });
-  expect(r.historical_matches[0].relevance.meaning).toBe('search_match_not_truth');
+  expect(r.historical_matches[0]).toMatchObject({ neuron_id: learned.neuron_id, temporal: 'historical' });
+  // 2.11: a field at its default is left out (verification none), and relevance
+  // keeps only its score; the description says both.
+  expect(r.historical_matches[0].verification).toBeUndefined();
+  expect(typeof r.historical_matches[0].relevance.score).toBe('number');
   const history = await call(a, 'crbro_recall', { query: 'juniper puerto', intent: 'history', scope: 'all' });
   expect(history.results[0].neuron_id).toBe(learned.neuron_id);
 });
@@ -62,10 +65,11 @@ it('registra fuente explícita sin convertir una repetición en comprobación', 
   const learned = await call(a, 'crbro_learn', { topic: 'Osprey', type: 'fact', content, reference: { kind: 'file', value: 'config/app.json', field: 'port' } });
   await call(a, 'crbro_learn', { topic: 'Osprey', type: 'fact', content });
   let r = await call(a, 'crbro_recall', { query: 'osprey puerto', scope: 'all' });
-  expect(r.results[0].verification.method).toBe('none');
+  expect(r.results[0].verification).toBeUndefined();   // method none: the default, left out (2.11)
   await call(a, 'crbro_revise', { neuron: learned.neuron_id, facts: [content], status: 'verified', evidence: { method: 'source', reference: { kind: 'file', value: 'config/app.json', field: 'port' } } });
   r = await call(a, 'crbro_recall', { query: 'osprey puerto', scope: 'all' });
-  expect(r.results[0]).toMatchObject({ verification: { method: 'source', reference: { value: 'config/app.json' } }, provenance: { origin: 'local' } });
+  expect(r.results[0]).toMatchObject({ verification: { method: 'source', reference: { value: 'config/app.json' } } });
+  expect(r.results[0].provenance).toBeUndefined();     // origin local: the default, left out (2.11)
   const detail = await call(a, 'crbro_inspect', { view: 'neuron', neuron: learned.neuron_id, entries: [content] });
   expect(detail.neuron.entries[0]).toMatchObject({ verification: { method: 'source' }, reference: { value: 'config/app.json' } });
   const index = await call(a, 'crbro_inspect', { view: 'neuron', neuron: learned.neuron_id });

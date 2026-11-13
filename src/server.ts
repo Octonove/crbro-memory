@@ -13,9 +13,11 @@
 // 2.0 folded the nine read/duplicate tools of 1.x (status, neuron, neurons,
 // hot_topics, connections, sessions, global_map, session_log, sync) into
 // crbro_inspect, crbro_space action=sync and crbro_consolidate. RETIRED_TOOLS
-// below is the only place the old names survive: boot serves it so a client
-// with an old habit finds the replacement without a round trip.
+// below is the only place the old names survive: crbro_inspect view=status
+// serves it (boot did until 2.11, at every session start, to clients that had
+// never seen those names).
 
+import { randomBytes } from 'node:crypto';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
@@ -24,7 +26,7 @@ import { Cortex, sessionScope, findPromotionCandidates, type PromotionCandidate 
 import { Synapses } from './engine/synapses.js';
 import { HeatEngine } from './engine/heat.js';
 import { Hippocampus } from './engine/hippocampus.js';
-import { Prefrontal } from './engine/prefrontal.js';
+import { Prefrontal, sortOpenItems } from './engine/prefrontal.js';
 import { ProjectRegistry, type ProjectProfile } from './engine/projects.js';
 import { SearchEngine, RECALL_KINDS } from './search/index.js';
 import { entryQuality } from './search/quality.js';
@@ -77,12 +79,12 @@ import {
 import { readJSON } from './utils/fs.js';
 import { contentHash, factId } from './utils/hash.js';
 import { entryId } from './sync/ops.js';
-import type { HotTopics, Neuron } from './types/index.js';
+import type { HotTopics, Neuron, PendingTask } from './types/index.js';
 
 /**
  * Old tool name → how to do the same thing on the 2.0 surface. Served by
- * crbro_boot as `retired_tools` for the whole 2.x line, and asserted by the
- * definitions test. Keys are the ONLY place a retired name may appear in a
+ * crbro_inspect view=status as `retired_tools` (by boot until 2.11), and
+ * asserted by the definitions test. Keys are the ONLY place a retired name may appear in a
  * string the model receives.
  */
 export const RETIRED_TOOLS: Readonly<Record<string, string>> = {
@@ -97,31 +99,23 @@ export const RETIRED_TOOLS: Readonly<Record<string, string>> = {
   crbro_sync: 'crbro_space action=sync [name]',
 };
 
-/** The one sentence about the lifecycle, shared by three descriptions and boot. */
-const THREE_STAGES =
-  'A new truth that REPLACES an old one → crbro_learn with supersedes (one call does both). ' +
-  'Something stopped being true, or was never true, and nothing replaces it → crbro_revise ' +
-  '(kept in the file, gone from recall, reversible with status active). Something must not exist ' +
-  'on disk at all — a credential, personal data, a whole neuron → crbro_forget (quarantine copy first).';
-
 /**
- * What to do with a recall's possibly_stale block (shelf life), said once per
- * answer at the START of `hint` (iteration 2, staleness.md §14): the order to
- * check comes first, the follow-up writes after it. Each row carries its own
- * next_step (where to look); this says what to do with the result.
+ * What to do with a recall's possibly_stale block once it has been checked
+ * (shelf life). The order to check first and the "say it may be out of date"
+ * fallback are said once, in stale_warning, which opens the answer; each row
+ * carries only its own next_step (where to look). 2.11: this used to repeat
+ * the warning and every row repeated the fallback, five times per answer.
  */
 const STALE_HINT =
-  'possibly_stale holds last-known values that may have changed: do not answer with one as current. Check it first ' +
-  '(its next_step says where), then: still true → crbro_revise neuron=<neuron_id> status=verified facts=[entry_id] ' +
-  '(entries=[entry_id] for a decision or pattern); changed → crbro_learn the new value with supersedes=[entry_id]. ' +
-  'If you cannot check, say it may be out of date.';
+  'After checking a possibly_stale row: still true → crbro_revise neuron=<neuron_id> status=verified facts=[entry_id] ' +
+  '(entries=[entry_id] for a decision or pattern); changed → crbro_learn the new value with supersedes=[entry_id].';
 
 /**
  * The per-row framing of a possibly_stale row (iteration 2). The stored line
  * comes back as `last_known`, not as `matching_content`, behind a warning and
  * a concrete next step: open what the line itself names, when it names a
- * file, path or URL; otherwise look where that kind of value lives, and if
- * that is not possible, say the value may be out of date.
+ * file, path or URL; otherwise look where that kind of value lives. What to
+ * do when neither is possible is said once, in stale_warning (2.11).
  */
 function staleFraming(text: string, s: { age_days: number; last_verified: string; age_from?: string }): { warning: string; next_step: string } {
   const since = s.last_verified;
@@ -129,11 +123,50 @@ function staleFraming(text: string, s: { age_days: number; last_verified: string
     ? `last known value, not verified since ${since}: past its shelf life, may have changed`
     : `last known value, unverified for ${s.age_days} days (since ${since}): may have changed`;
   const named = namedSources(text);
-  const fallback = `If you cannot check, say this value is from ${since} and may be out of date; do not state it as current.`;
   const next_step = named.length
-    ? `Before answering, open ${named.join(' / ')} (named in this entry) and answer with what it says now. ${fallback}`
-    : `Before answering, look for the current value where it lives: the project's files or config if you can read them, or the user. ${fallback}`;
+    ? `Before answering, open ${named.join(' / ')} (named in this entry) and answer with what it says now.`
+    : `Before answering, look for the current value where it lives: the project's files or config if you can read them, or the user.`;
   return { warning, next_step };
+}
+
+/**
+ * entryQuality without what holds its default (2.11). On the reference brain
+ * one fact in 5,459 was verified, so nearly every row carried
+ * temporal:"current_claim", verification:{method:"none"} and
+ * freshness:{state:"unverified"} — about 150 characters a row, twice per
+ * answer, saying nothing. recall's and inspect's descriptions say that an
+ * absent field means its default.
+ */
+function qualityDelta(q: ReturnType<typeof entryQuality>) {
+  return {
+    ...(q.temporal !== 'current_claim' ? { temporal: q.temporal } : {}),
+    ...(q.verification.method !== 'none' ? { verification: q.verification } : {}),
+    ...(q.freshness.state !== 'unverified' ? { freshness: q.freshness } : {}),
+    ...(q.reference ? { reference: q.reference } : {}),
+  };
+}
+
+/** Boot's open items: at most this many, due first then newest, each text cut here. */
+const BOOT_OPEN_CAP = 8;
+const BOOT_OPEN_TEXT = 180;
+/** Boot's recently closed: a short list of titles, not the items. */
+const BOOT_CLOSED_CAP = 5;
+const BOOT_CLOSED_TITLE = 80;
+/** An open item older than this with no due date is flagged for a "still alive?" review. */
+const PENDING_REVIEW_DAYS = 30;
+
+const cut = (t: string, n: number) => (t.length > n ? `${t.slice(0, n).trimEnd()}…` : t);
+const ageDays = (iso: string | undefined, nowMs: number): number | undefined => {
+  const t = iso ? Date.parse(iso) : NaN;
+  return Number.isFinite(t) ? Math.max(0, Math.floor((nowMs - t) / 86_400_000)) : undefined;
+};
+
+/** Mixed into crbro_forget's confirm_token: a token only a dry run of this process hands out. */
+const FORGET_NONCE = randomBytes(8).toString('hex');
+
+/** A not-found or bad-parameter answer: nothing was done, and the flag says so (2.11). */
+function failed(text: string) {
+  return textResult(text, true);
 }
 
 /** The version this process runs (read once at load: src/version.ts). */
@@ -145,8 +178,8 @@ function textResult(text: string, isError = false) {
   return { content: [{ type: 'text' as const, text }], ...(isError ? { isError: true as const } : {}) };
 }
 
-function jsonResult(payload: unknown) {
-  return { content: [{ type: 'text' as const, text: JSON.stringify(payload) }] };
+function jsonResult(payload: unknown, isError = false) {
+  return { content: [{ type: 'text' as const, text: JSON.stringify(payload) }], ...(isError ? { isError: true as const } : {}) };
 }
 
 function errorResult(where: string, err: unknown) {
@@ -282,12 +315,12 @@ export function createServer(shared?: Engines): McpServer {
     'crbro_boot',
     {
       title: 'Boot the brain',
-      description: 'Read the brain at session start — call it FIRST in every conversation, before any other work; writes only the boot stamp (and the brain itself on first use). Loads memory from earlier sessions: hot topics, active context with open_items and recently_closed (never report recently_closed as pending; verify open_items before repeating them), recent_sessions, counts, active protocols as a protocol_enforcement block you must follow, memory_discipline (the rules for using this memory well) and retired_tools (old tool names → their replacement). Readies the search index and syncs shared team spaces (offline is normal). Pass project (the working folder or repo name) to put that project\'s neurons first: project_neurons. Skipping it loses all context; close the session with crbro_consolidate.',
+      description: 'Read the brain at session start — call it FIRST in every conversation; writes only the boot stamp. Returns protocol_enforcement (mandatory directives: follow them), counts, open_items (due first, then newest; review:true = over a month old, no due date), recently_closed (done: never report as pending), hot_topics, recent_sessions headlines and memory_discipline; `more` names the call for what is left out. Syncs team spaces (offline is normal). Pass project (working folder or repo) to scope open items and rank its neurons first; project_neurons binds them. Close with crbro_consolidate.',
       inputSchema: {
-        project: z.string().optional().describe('Working folder or repository. Full paths identify distinct projects, even with the same folder name. Existing aliases resolve to one stable project; this connection keeps its own scope.'),
-        project_id: z.string().optional().describe('Optional stable local project id when declaring aliases; never use a credential.'),
-        project_aliases: z.array(z.string()).max(31).optional().describe('Other folders/remotes explicitly belonging to this project. No remote access is performed.'),
-        project_neurons: z.array(z.string()).max(100).optional().describe('Existing neuron ids to bind to this project. Replaces the binding; omitted preserves it. Suggested name matches are not an explicit binding.'),
+        project: z.string().optional().describe('Working folder or repository; full paths tell same-named folders apart. The scope lasts for this connection.'),
+        project_id: z.string().optional().describe('Stable local id when declaring aliases.'),
+        project_aliases: z.array(z.string()).max(31).optional().describe('Other folders or remotes of the same project. Nothing remote is contacted.'),
+        project_neurons: z.array(z.string()).max(100).optional().describe('Neuron ids to bind to the project; replaces the binding, omitted keeps it. Unknown ids are skipped and listed in unknown_project_neurons.'),
       },
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },
@@ -309,34 +342,25 @@ export function createServer(shared?: Engines): McpServer {
         const equipos = await syncAll(brain, cortex, 5_000);
 
         const response: any = { ...result };
+        const nowMs = Date.now();
+
+        // Two levels (2.11). What a session needs to start correctly comes
+        // every time — the protocols whole, the counts, the open items, the
+        // hot topics and the last sessions' headlines; the rest is one call
+        // away and the `more` line names the call. The boot measured 21,527
+        // characters on a mature brain; most of it was text the model had
+        // read before (closed items in full, the same discipline paragraph,
+        // the 1.x tool names) or could fetch when it mattered.
 
         // The last three real session logs, and last_session taken from them:
         // the manifest field brain.boot reads was never written by anything,
-        // so it came back null in every session.
-        // Headlines, not transcripts. Three full summaries were 82% of an
-        // 81,000-character boot on a mature brain — text the model had already
-        // read once, at consolidation, re-read at every start. The opening
-        // line is where a summary says what happened; the rest is a call away.
+        // so it came back null in every session. Headlines only: the summary
+        // whole is crbro_inspect view=sessions.
         const recientes = await hippocampus.listSessions(3);
-        response.recent_sessions = recientes.map((s: any) => {
-          const texto = String(s.summary || '');
-          const titular = texto.length > 240 ? `${texto.slice(0, 240).trimEnd()}…` : texto;
-          const topics: string[] = s.topics_touched || [];
-          // Same key as before, `summary`, so nothing that reads it breaks; when
-          // it is only the opening, summary_truncated says so next to it.
-          return {
-            session_id: s.session_id, date: s.date, summary: titular,
-            ...(texto.length > 240 ? { summary_truncated: true, summary_chars: texto.length } : {}),
-            topics_touched: topics.slice(0, 5),
-            ...(topics.length > 5 ? { topics_count: topics.length } : {}),
-            key_facts_added: s.key_facts_added, decisions_made: s.decisions_made,
-            new_neurons_created: s.new_neurons_created, synapses_updated: s.synapses_updated,
-            duration_estimate: s.duration_estimate,
-          };
-        });
-        if (recientes.some((s: any) => String(s.summary || '').length > 240)) {
-          response.sessions_note = 'recent_sessions carries the first 240 characters of each summary (summary_chars is the full size). crbro_inspect view=sessions limit=1 returns the latest one whole; limit=3 returns the three, each capped at 3,000 characters and declared.';
-        }
+        response.recent_sessions = recientes.map((s: any, i: number) => ({
+          session_id: s.session_id, date: dia(s.date),
+          summary: cut(String(s.summary || ''), i === 0 ? 160 : 80),
+        }));
         // P5 (2.7): the session says where it works, and that project's
         // neurons stop competing with everything else that is warm. Served
         // from the index already in memory; without `project` nothing here runs.
@@ -344,12 +368,20 @@ export function createServer(shared?: Engines): McpServer {
         const proyecto = (args?.project ?? '').trim();
         if (proyecto) {
           const boundIds: string[] | undefined = args.project_neurons ? [] : undefined;
+          // An id that no longer exists (forgotten, merged, renamed) is left
+          // out and named, never a failed boot: the boot is what brings the
+          // protocols, and a stale binding used to cost the session all of it.
+          const desconocidas: string[] = [];
           if (args.project_neurons) {
             for (const id of args.project_neurons) {
-              const n = await resolveNeuron(id);
-              if (!n) throw new Error('Unknown project neuron; create or inspect it first.');
-              boundIds!.push(n.id);
+              let n: Neuron | null = null;
+              try { n = await resolveNeuron(id); } catch { n = null; }
+              if (n) { if (!boundIds!.includes(n.id)) boundIds!.push(n.id); } else desconocidas.push(id);
             }
+          }
+          if (desconocidas.length) {
+            response.unknown_project_neurons = desconocidas;
+            response.unknown_project_neurons_hint = 'Not bound: no neuron has these ids or names. The others were bound; check the ids with crbro_recall or crbro_inspect view=neurons.';
           }
           sessionProject = await projects.bind(proyecto, {
             id: args.project_id, aliases: args.project_aliases, neurons: boundIds,
@@ -359,70 +391,86 @@ export function createServer(shared?: Engines): McpServer {
           const ids = new Set(sessionProject.neurons.length ? sessionProject.neurons : delProyecto.map(p => p.id));
           // Stable partition: the project's hot topics first, in their heat order.
           calientes = [...calientes.filter(h => ids.has(h.id)), ...calientes.filter(h => !ids.has(h.id))];
-          response.project_neurons = delProyecto.slice(0, 5);
+          response.project_neurons = delProyecto.slice(0, 3);
           response.project_context = { id: sessionProject.id, neurons: sessionProject.neurons,
             binding: sessionProject.neurons.length ? 'explicit' : 'unbound',
             hint: sessionProject.neurons.length ? 'recall prioritizes these neurons; scope=all searches across projects.'
-              : 'Name matches are suggestions only. Pass project_neurons to bind them; recall remains global until then.' };
-          const scopedContext = await prefrontal.getContext(sessionProject.id);
-          response.active_context = scopedContext;
-          response.open_items = scopedContext.pending_tasks;
-          response.recently_closed = scopedContext.recently_closed;
+              : 'Name matches are suggestions: bind them with project_neurons; recall stays global until then.' };
           if (delProyecto.length === 0) {
             response.project_hint = `Nothing stored names "${proyecto}" yet. crbro_recall it before working; what you learn about it is worth a neuron.`;
           }
         } else sessionProject = null;
-        // Ten hot topics with the day, not twenty with the millisecond: each
-        // row is a pointer the model follows with recall, not a record.
-        response.hot_topics = calientes.slice(0, 10)
-          .map((h: any) => ({ ...h, last_access: dia(h.last_access) }));
-        // active_context repeated open_items and recently_closed, which boot
-        // already serves at the top level: 1,414 characters said twice.
-        if (response.active_context && typeof response.active_context === 'object') {
-          const { pending_tasks: _p, recently_closed: _r, project_topics: _t, ...resto } = response.active_context;
-          response.active_context = resto;
+        // Eight hot topics as pointers — id, name, heat — followed with recall.
+        response.hot_topics = calientes.slice(0, 8)
+          .map((h: any) => ({ id: h.id, name: h.name, heat: Math.round((Number(h.heat) || 0) * 100) / 100 }));
+
+        // Pending items, one source and one order whatever the scope (S3, S12):
+        // the counts, the message and the rows all come from this same view,
+        // so the boot can no longer say 33, 24 and 12 about one list.
+        const ctx = await prefrontal.getContext(sessionProject?.id);
+        const abiertos = sortOpenItems(ctx.pending_tasks as PendingTask[]);
+        const cerrados = ctx.recently_closed || [];
+        const revisar = abiertos.filter(t => !t.due && (ageDays(t.added, nowMs) ?? 0) > PENDING_REVIEW_DAYS);
+        response.open_items = abiertos.slice(0, BOOT_OPEN_CAP).map(t => {
+          const edad = ageDays(t.added, nowMs);
+          return {
+            id: t.id, text: cut(t.text, BOOT_OPEN_TEXT),
+            ...(t.added ? { added: dia(t.added) } : {}),
+            ...(edad !== undefined ? { age_days: edad } : {}),
+            ...(t.due ? { due: t.due } : {}),
+            ...(t.project ? { project: t.project } : {}),
+            ...(!t.due && edad !== undefined && edad > PENDING_REVIEW_DAYS ? { review: true } : {}),
+          };
+        });
+        response.recently_closed = cerrados.slice(0, BOOT_CLOSED_CAP).map(t => ({
+          id: t.id, text: cut(t.text, BOOT_CLOSED_TITLE), ...(t.closed ? { closed: dia(t.closed) } : {}),
+        }));
+        response.pending = {
+          scope: sessionProject ? 'project' : 'all',
+          open_total: abiertos.length,
+          open_returned: response.open_items.length,
+          closed_total: cerrados.length,
+          closed_returned: response.recently_closed.length,
+          // Pending items do not age by themselves (idea 6): one older than a
+          // month with no due date is asked about, never deleted.
+          ...(revisar.length ? {
+            review: { count: revisar.length, older_than_days: PENDING_REVIEW_DAYS,
+              ask: 'review:true rows are over a month old with no due date: ask if still alive.' },
+          } : {}),
+        };
+        if (abiertos.length || cerrados.length) {
+          response.pending_guidance = 'recently_closed is done, never pending. An open item may be finished: verify before repeating it.';
         }
-        for (const [k, cap] of [['open_items', 12], ['recently_closed', 8]] as const) {
-          const lista = response[k];
-          if (!Array.isArray(lista)) continue;
-          if (lista.length > cap) response[`${k}_total`] = lista.length;
-          response[k] = lista.slice(0, cap).map((it: any) => ({
-            ...it,
-            ...(it.added ? { added: dia(it.added) } : {}),
-            ...(it.closed ? { closed: dia(it.closed) } : {}),
-          }));
-        }
+        // The working context minus what boot serves elsewhere: only the
+        // active topics, and only when there are any.
+        if (ctx.active_topics?.length) response.active_context = { active_topics: ctx.active_topics };
+        else delete response.active_context;
         response.last_session = response.recent_sessions[0]?.session_id ?? result.last_session ?? null;
-        response.retired_tools = RETIRED_TOOLS;
+        delete response.open_items_total;
+        delete response.recently_closed_total;
 
         // Inject protocol enforcement.
         // The instruction text goes in ONE place. It used to be emitted twice --
         // inside active_protocols[].instructions and again here -- which on a
         // normal brain spent 1,407 of 2,713 tokens saying the same thing twice
-        // to the same reader.
+        // to the same reader. The headings below carry name and priority.
+        delete response.active_protocols;
         if (result.active_protocols && result.active_protocols.length > 0) {
           const protocolBlock = result.active_protocols.map((p: any) =>
             `## 📋 ${p.name} [priority: ${p.priority}]\n\n${p.instructions}`
           ).join('\n\n───────────────────\n\n');
-
-          response.active_protocols = result.active_protocols.map((p: any) => ({
-            id: p.id, name: p.name, priority: p.priority, source: p.source,
-          }));
 
           response.protocol_enforcement =
             '⚡ ACTIVE PROTOCOLS — These are MANDATORY behavioral directives. ' +
             'You MUST follow them in every interaction:\n\n' + protocolBlock;
         }
 
-        // Pending items: say plainly what is open and what was just closed, so a
-        // stale to-do list carried over in a conversation summary is not repeated
-        // back to the user as if it were still live.
-        if ((result.recently_closed || []).length > 0) {
-          response.pending_guidance =
-            'ℹ️ `recently_closed` lists items already resolved - do not report them as pending. ' +
-            'And treat `open_items` as a starting point, not gospel: an item can be finished without ' +
-            'anyone closing it here, so verify before repeating it back to the user.';
-        }
+        // One message, written after the scope is known, from the same counts.
+        response.message =
+          `CRBRO boot ${result.status === 'initialized' ? 'initialized a new brain' : 'complete'}. ${result.total_neurons} neurons, ` +
+          `${result.total_synapses} synapses, ${result.total_sessions} sessions. ${(result.active_protocols || []).length} active protocol(s). ` +
+          `${abiertos.length} open item(s), ${cerrados.length} recently closed` +
+          (sessionProject ? ' (this project plus global items).' : '.');
 
         if (equipos.length > 0) {
           response.shared_spaces = equipos.map(e => ({
@@ -433,10 +481,6 @@ export function createServer(shared?: Engines): McpServer {
           }));
         }
 
-        // How to use this memory well — said once here, at boot, instead of
-        // repeated inside every tool description. Measured with a real
-        // tools/list in 1.13: the definitions cost thousands of tokens on every
-        // request in clients that load all tools; this paragraph costs ~250, once.
         // Semantic recall is installed by init since 1.16; say so once when
         // it is missing, so the agent can offer the one command that fixes it.
         const sem = semanticStatus();
@@ -451,38 +495,46 @@ export function createServer(shared?: Engines): McpServer {
         const aviso = await modNotice();
         if (aviso) response.mod_notice = aviso;
 
+        // How to use this memory well — said once here, at boot, instead of
+        // repeated inside every tool description. 2.11: cut to what the server
+        // instructions and the tool descriptions do not already say.
         response.memory_discipline =
-          'Before crbro_learn, crbro_recall: what you are about to save may already exist — then pass ' +
-          'supersedes instead of adding a sibling (two versions of one fact compete on recall as equals). ' +
-          'Read what you need, not the neuron: crbro_recall finds the entry by content; crbro_inspect view=neuron ' +
-          'gives an index (id, kind, preview per entry) and entries=[ids] returns just those in full. Ask for a ' +
-          'whole neuron only when you truly need all of it. Recall also lists the day logs that mention the ' +
-          'question (sessions_matched); read one with crbro_inspect view=sessions session=<id>. ' +
-          'Structure — paths, what serves what, traps — goes in crbro_map, not in facts; anything derivable ' +
-          'from the repo or git history is not worth storing. Write facts dense and self-contained: they are ' +
-          'recalled without this conversation, and add keywords: the words a future question may use that ' +
-          'the text lacks. On recall, ask several ways (queries) before concluding a thing is not stored. ' +
-          'type:error keeps a mistake with its fix; type:debt keeps a ' +
-          'deliberate deferral with its ceiling and revisit trigger. Credentials never go in the brain: ' +
-          'crbro_secret, then record only the NAME. Recall results carry confidence — "weak" means the match ' +
-          'covers little of the question, verify before relying on it — and when two facts disagree, prefer ' +
-          'the more recent. possibly_stale in a recall = a last-known value that may have changed: check its ' +
-          'source before answering with it, or say it may be out of date (then crbro_revise status=verified if it ' +
-          'holds, crbro_learn supersedes if it changed). A value that can change (version, price, port, host, ' +
-          'setting, who holds a role) should say where it came from — the file, key, URL or person. Lifecycle: supersedes replaces, crbro_revise retires, crbro_forget removes what ' +
-          'must not exist on disk — each tool describes its own stage. ' +
-          'Call crbro_consolidate before the conversation ends; it logs the session too.';
+          'crbro_recall before crbro_learn: if it exists, pass supersedes, not a sibling. Read entries, not neurons ' +
+          '(crbro_inspect view=neuron, then entries=[ids]). Structure goes in crbro_map. One claim per fact, with keywords; ' +
+          'a value that can change should say where it came from (file, key, URL, person). Credentials: crbro_secret, store ' +
+          'only the NAME. weak = verify; the newer wins. possibly_stale = a last-known value that may have changed: check it ' +
+          'or say so. supersedes replaces, crbro_revise retires, crbro_forget removes. End with crbro_consolidate.';
+
+        // The door to everything that is not in this boot.
+        response.more =
+          'Elsewhere: open items whole → crbro_context; summaries → crbro_inspect view=sessions; neurons → view=neurons; ' +
+          '1.x tool names → view=status.';
 
         // A mature brain outgrew the boot payload: on a 1,145-neuron brain it
-        // reached 81,406 characters (~20,000 tokens), three quarters of it the
-        // full text of three session summaries, and the client dumped it to a
-        // file 154 times instead of showing it. The blocks that make a session
-        // start correctly are kept whole; what grows without bound is shortened
-        // and says so, with the call that reads it in full.
-        return jsonResult(fitToBudget(response, {
-          keep: ['protocol_enforcement', 'memory_discipline', 'retired_tools', 'pending_guidance', 'semantic_hint', 'mod_notice'],
-          howToGetMore: 'Session summaries were shortened. Read one in full with crbro_inspect view=sessions.',
-        }));
+        // reached 81,406 characters, and the client dumped it to a file 154
+        // times instead of showing it. The blocks that make a session start
+        // correctly are kept whole; over budget the least useful lists go
+        // first (S4) — session headlines, then hot topics — and open items
+        // last, and the notice names only the doors of what was cut.
+        const fitted: any = fitToBudget(response, {
+          keep: ['protocol_enforcement', 'memory_discipline', 'pending_guidance', 'semantic_hint', 'mod_notice', 'message', 'more', 'pending', 'project_context'],
+          dropFirst: ['recent_sessions', 'hot_topics', 'project_neurons', 'recently_closed', 'open_items'],
+          moreByKey: {
+            recent_sessions: 'Session summaries: crbro_inspect view=sessions.',
+            hot_topics: 'Neurons by heat: crbro_inspect view=neurons.',
+            project_neurons: 'Project neurons: crbro_recall with the project name.',
+            recently_closed: 'Recently closed: crbro_context.',
+            open_items: 'Every open item: crbro_context.',
+          },
+          howToGetMore: 'Every open item: crbro_context. Session summaries: crbro_inspect view=sessions.',
+        });
+        // The counts follow what actually left (S3): a list cut by the budget
+        // says so in pending, not only in truncated.
+        if (fitted.pending) {
+          fitted.pending.open_returned = Array.isArray(fitted.open_items) ? fitted.open_items.length : 0;
+          fitted.pending.closed_returned = Array.isArray(fitted.recently_closed) ? fitted.recently_closed.length : 0;
+        }
+        return jsonResult(fitted);
       } catch (err) {
         return errorResult('boot', err);
       }
@@ -496,65 +548,30 @@ export function createServer(shared?: Engines): McpServer {
     'crbro_inspect',
     {
       title: 'Inspect the brain',
-      description: 'Read-only views of the brain by id or name; to search by content use crbro_recall. Nothing is written by any view: every read leaves the brain untouched. view=status answers any question about CRBRO itself: version, brain path, totals, last boot/consolidation, whether semantic recall is installed and on, hot_topics_recalculated. view=neuron: an index of one neuron — header, counts, connections (min_strength filters) and every entry as id, kind, date and preview, paged with limit/offset; entries=[ids or exact text] reads those in full, detail=full returns the whole neuron, shortened and declared when large. view=neurons: rows hottest first (id, name, domain, type, heat, last_accessed, facts_count), filtered by domain, type, min_heat, paged with limit/offset. view=sessions: day logs newest first, the only place session summaries are read. view=global_map: one cluster per domain plus cross-domain bridges, computed live. Params of other views are ignored.',
+      description: 'Read-only views of the brain by id or name; nothing is written. Search by content is crbro_recall. view=status: CRBRO itself — version, brain path, totals, last boot, semantic recall, shelf-life windows, retired 1.x tool names. view=neuron: an index of one neuron (header, counts, connections, one line per entry: id, kind, date, preview), paged; entries=[ids] reads those whole; detail=full dumps it, shortened when large. Absent temporal, verification and freshness mean current_claim, none, unverified. view=neurons: rows hottest first. view=sessions: day logs newest first, where session summaries are read. view=global_map: domain clusters and bridges.',
       inputSchema: {
-        view: z.enum(INSPECT_VIEWS).describe('Which read to perform. Only the params listed for that view are honoured; the rest are ignored, never an error.'),
-        neuron: z.string().optional().describe('view=neuron only, required there: neuron id (e.g. "project_octochat") or name (e.g. "OctoChat").'),
-        detail: z.enum(['index', 'full']).optional().describe('view=neuron: "index" (default) returns the header, counts and every entry as id, kind, date and a short preview — cheap, then read what matters with `entries`. "full" returns the whole neuron with facts paged by limit/offset; large neurons are shortened and say so.'),
-        entries: z.array(z.string()).optional().describe('view=neuron: read these entries in full — their ids from the index or from crbro_recall, or their exact text. Any kind: fact, decision, pattern, preference, error, debt, or "map" for the system map. Ignores detail.'),
-        session: z.string().optional().describe('view=sessions: read one day log whole by its id, e.g. "session_2026-09-07" (from crbro_recall sessions_matched or the list). Ignores limit and offset.'),
-        domain: z.string().optional().describe('view=neurons: exact domain match, e.g. "proyectos-web".'),
-        type: z.enum(NEURON_TYPES).optional().describe('view=neurons: only this neuron type.'),
-        min_heat: z.number().min(0).max(1).optional().describe('view=neurons: minimum heat, 0.0-1.0. Heat blends access frequency, recency and connectivity.'),
-        min_strength: z.number().min(0).max(1).optional().describe('view=neuron: drop connections weaker than this (0.0-1.0). Omit or 0 = all.'),
-        limit: z.number().int().positive().optional().describe('Page size. view=neuron: index entries per page (default 25, max 200); view=neurons: rows (default 50, max 500); view=sessions: day logs (default 10, max 100). Other views ignore it.'),
-        offset: z.number().int().min(0).optional().describe('Items to skip. view=neuron: index entries; view=neurons: rows after the heat sort. Default 0.'),
-        include_superseded: z.boolean().optional().describe('view=neuron: also list superseded and retracted entries of every kind (default false; the index reports how many are hidden in entries_pagination.hidden_retired). detail=full always returns entry_status.'),
+        view: z.enum(INSPECT_VIEWS).describe('Which read. Parameters for other views are ignored, never an error.'),
+        neuron: z.string().optional().describe('view=neuron, required: id ("project_octochat") or name.'),
+        detail: z.enum(['index', 'full']).optional().describe('view=neuron: index (default, cheap) or full.'),
+        entries: z.array(z.string()).optional().describe('view=neuron: entry ids or exact text, any kind ("map" for the map); ignores detail.'),
+        session: z.string().optional().describe('view=sessions: one day log whole, e.g. "session_2026-09-07".'),
+        domain: z.string().optional().describe('view=neurons: exact domain.'),
+        type: z.enum(NEURON_TYPES).optional().describe('view=neurons: only this type.'),
+        min_heat: z.number().min(0).max(1).optional().describe('view=neurons: minimum heat.'),
+        min_strength: z.number().min(0).max(1).optional().describe('view=neuron: hide weaker connections.'),
+        limit: z.number().int().positive().optional().describe('Page size (neuron 25/200 max, neurons 50/500, sessions 10/100).'),
+        offset: z.number().int().min(0).optional().describe('Items to skip (neuron index, neurons).'),
+        include_superseded: z.boolean().optional().describe('view=neuron: list retired entries too (default false).'),
       },
+      // Loose on purpose: an oversized view comes back with a `truncated`
+      // block, and a strict schema would turn that honesty into an error.
       outputSchema: {
         view: z.enum(INSPECT_VIEWS),
-        status: z.object({
-          crbro_version: z.string(),
-          installed_version: z.string().optional(),
-          version_note: z.string().optional(),
-          brain_format: z.string().optional(),
-          total_neurons: z.number(),
-          total_synapses: z.number(),
-          total_sessions: z.number(),
-          brain_path: z.string().optional(),
-          last_boot: z.string().nullable().optional(),
-          last_consolidation: z.string().nullable().optional(),
-          semantic: z.object({ installed: z.boolean(), enabled: z.boolean(), mode: z.string(), model_downloaded: z.boolean(), home: z.string(), model: z.string() }).optional(),
-          hot_topics_recalculated: z.string().nullable(),
-        }).loose().optional(),
+        status: z.object({ crbro_version: z.string() }).loose().optional(),
         neuron: z.object({}).loose().optional(),
-        // Every wrapper is loose on purpose: an oversized view comes back with
-        // a `truncated` block describing what was shortened, and a strict
-        // schema here would turn that honesty into a validation error.
-        neurons: z.object({
-          total: z.number(),
-          offset: z.number(),
-          neurons: z.array(z.object({
-            id: z.string(), name: z.string(), domain: z.string(), type: z.string(),
-            heat: z.number(), last_accessed: z.string(), facts_count: z.number(),
-          }).loose()),
-        }).loose().optional(),
-        sessions: z.object({
-          total: z.number(),
-          session: z.string().optional(),
-          sessions: z.array(z.object({
-            session_id: z.string().optional(), date: z.string().optional(), summary: z.string().optional(),
-            topics_touched: z.array(z.string()).optional(),
-            key_facts_added: z.number().optional(), decisions_made: z.number().optional(),
-          }).loose()),
-        }).loose().optional(),
-        global_map: z.object({
-          total_clusters: z.number(),
-          total_bridges: z.number(),
-          computed_at: z.string(),
-          clusters: z.array(z.object({}).loose()),
-          bridges: z.array(z.object({}).loose()),
-        }).loose().optional(),
+        neurons: z.object({ total: z.number() }).loose().optional(),
+        sessions: z.object({ total: z.number() }).loose().optional(),
+        global_map: z.object({ total_clusters: z.number() }).loose().optional(),
       },
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
@@ -599,6 +616,8 @@ export function createServer(shared?: Engines): McpServer {
               windows: shelfWindows(),
               since: manifest.staleness_since ? dia(manifest.staleness_since) : null,
             },
+            // The 1.x tool names and their replacement: left boot in 2.11.
+            retired_tools: RETIRED_TOOLS,
           });
         }
 
@@ -677,8 +696,11 @@ export function createServer(shared?: Engines): McpServer {
           sidecar('error', neuron.errors);
           sidecar('debt', neuron.debts);
           if (neuron.map?.text) rows.push({ id: 'map', kind: 'map', text: neuron.map.text, added: neuron.map.updated || '' });
-          for (const row of rows) Object.assign(row, entryQuality(neuron, row.id, row.kind, row.text,
-            row.stale_days === undefined ? undefined : { stale: true, age_days: row.stale_days }));
+          // Quality labels only for the rows that leave (S14): computing them
+          // for every entry looked each one up in the facts list, quadratic on
+          // a 700-entry neuron, to return a page of 25. Defaults are left out.
+          const withQuality = (row: Row): Row => Object.assign(row, qualityDelta(entryQuality(neuron, row.id, row.kind, row.text,
+            row.stale_days === undefined ? undefined : { stale: true, age_days: row.stale_days })));
 
           const header = {
             id: neuron.id, name: neuron.name, domain: neuron.domain, type: neuron.type,
@@ -697,7 +719,7 @@ export function createServer(shared?: Engines): McpServer {
             }
             return done({
               ...header,
-              entries: found,
+              entries: found.map(withQuality),
               returned: found.length,
               ...(missing.length ? { not_found: missing, hint: 'Ids come from the index (view=neuron) or from crbro_recall as entry_id; exact text also works.' } : {}),
             });
@@ -748,7 +770,7 @@ export function createServer(shared?: Engines): McpServer {
             ...header,
             counts: { ...counts, connections: connections.length, retired: rows.filter(r => isRetired(r.status)).length },
             connections,
-            entries: page.map(r => ({
+            entries: page.map(withQuality).map(r => ({
               id: r.id, kind: r.kind, added: dia(r.added),
               preview: r.text.length > PREVIEW ? `${r.text.slice(0, PREVIEW).trimEnd()}…` : r.text,
               chars: r.text.length,
@@ -756,7 +778,9 @@ export function createServer(shared?: Engines): McpServer {
               ...(r.verified ? { verified: dia(r.verified) } : {}),
               ...(r.shelf_life ? { shelf_life: r.shelf_life } : {}),
               ...(r.stale_days !== undefined ? { stale_days: r.stale_days } : {}),
-              temporal: r.temporal, verification: r.verification, freshness: r.freshness,
+              ...(r.temporal ? { temporal: r.temporal } : {}),
+              ...(r.verification ? { verification: r.verification } : {}),
+              ...(r.freshness ? { freshness: r.freshness } : {}),
               ...(r.reference ? { reference: r.reference } : {}),
               ...(isRetired(r.status) ? { status: r.status, ...(r.revised ? { revised: dia(r.revised) } : {}), ...(r.revision_note ? { retired_note: r.revision_note } : {}) } : {}),
             })),
@@ -847,7 +871,7 @@ export function createServer(shared?: Engines): McpServer {
     'crbro_learn',
     {
       title: 'Learn something',
-      description: 'Write a fact, decision, pattern, preference, error or debt. Recall first: it may exist. A replacement uses supersedes; retire without replacement with crbro_revise; delete with crbro_forget. Repeating a fact merges metadata but NEVER verifies it; confirmations counts mentions, not truth. A value that can change names its source (file, key, URL, person). Explicit source/user checks use crbro_revise status=verified with evidence. reference names a file, URL or person; temporal distinguishes current claims from history. Retired duplicates are refused. Decisions append; preferences stay local. Credentials become markers: crbro_secret them, store only the name. Returns neuron_id, action, shelf_life, near_duplicates and supersedes_unmatched (still live).',
+      description: 'Write a fact, decision, pattern, preference, error or debt to a neuron (created when the topic matches none). Recall first: it may exist. A replacement passes supersedes; retiring without one is crbro_revise; deleting is crbro_forget. A value that can change names its source (file, key, URL, person). Repeating a fact merges metadata, never verifies it (crbro_revise status=verified does). One claim per fact: past ~600 characters the answer suggests splitting; a huge neuron, crbro_revise move_to. Credentials become markers: crbro_secret them, store only the name. Returns neuron_id, action, shelf_life, near_duplicates, supersedes_unmatched (still live).',
       inputSchema: {
         // Optional since 2.0.3, and the reason is measured: the description
         // told callers that neuron_id "skips name matching entirely", the
@@ -856,19 +880,19 @@ export function createServer(shared?: Engines): McpServer {
         // -32602 on a path the tool itself recommends. The engine never reads
         // topic when the id resolves. Missing both is caught below, with a
         // message that says what to pass.
-        topic: z.string().optional().describe('Topic name, e.g. "OctoChat", "Firebase", "SEO Strategy". Required UNLESS you pass neuron_id, in which case the topic is taken from that neuron.'),
-        type: z.enum(['fact', 'decision', 'pattern', 'preference', 'error', 'debt']).describe('error = a mistake plus its correction, in one entry. debt = a deliberate deferral: what was NOT done on purpose, its ceiling, and the revisit condition, e.g. "DEFERRED: protecting the PDFs. CEILING: anyone can download them without signing up. REVISIT WHEN: the signup flow works."'),
-        content: z.string().describe('The knowledge itself. Dense and self-contained: it is recalled without this conversation as context. For a value that can change (a version, price, port, host, setting, who holds a role), say where it came from — the file, config key, URL or person — so a later check knows where to look.'),
-        confidence: z.number().min(0).max(1).optional().describe('0.0-1.0, default 1.0. Facts only. On an exact-duplicate active fact the stored confidence is updated to this value (updated_in_place:true).'),
-        domain: z.string().optional().describe('Domain, e.g. "proyectos-web". Applied when the neuron is created; on an existing neuron it only replaces the default "general" (crbro_revise domain replaces it unconditionally).'),
-        rationale: z.string().optional().describe('Why the decision was taken. Stored and indexed with it; ignored for other types.'),
-        neuron_id: z.string().optional().describe('Exact neuron id from crbro_recall, e.g. "project_octochat". Skips name matching entirely, and then topic is not needed.'),
-        supersedes: z.array(z.string()).optional().describe('Facts this one replaces: their ids or exact text. They leave recall but stay in the file. Unmatched targets are reported and stay live.'),
-        keywords: z.array(z.string()).optional().describe('Facts only, and expected on every fact: 2-5 words a future question may use that the text does not contain — synonyms, the other language, the generic name of the product named. Indexed with the fact, never shown; the largest measured lever on recall. Without them the fact is stored and the answer carries keywords_missing. The same text again with new keywords merges them.'),
-        keywords_replace: z.boolean().optional().describe('When the exact fact text already exists, replace its stored keywords with `keywords` instead of merging (default false). Teammates in a shared space only ever receive the union.'),
-        shelf_life: z.enum(SHELF_LIVES).optional().describe('Facts only: how fast this value goes stale. volatile = versions, prices, ports, hosts, paths, config, who holds a role; durable = rarely moves; permanent = history that cannot change; normal otherwise. Omitted: inferred from the text, and returned.'),
-        reference: referenceSchema.optional().describe('Facts only: where to check this claim; a relative file, URL or person, optional field/project. Stored as data, never fetched or executed. No credentials.'),
-        temporal: z.enum(['current', 'historical']).optional().describe('Facts only: a claim about current state or a historical record. Historical does not establish what is true now.'),
+        topic: z.string().optional().describe('Topic name, e.g. "OctoChat"; or pass neuron_id.'),
+        type: z.enum(['fact', 'decision', 'pattern', 'preference', 'error', 'debt']).describe('error = a mistake with its fix; debt = a deliberate deferral with its ceiling and revisit trigger.'),
+        content: z.string().describe('Self-contained: recalled without this conversation. For a changeable value, say where it came from (file, key, URL, person).'),
+        confidence: z.number().min(0).max(1).optional().describe('Facts: 0-1, default 1.'),
+        domain: z.string().optional().describe('Set on a new neuron, or replacing "general".'),
+        rationale: z.string().optional().describe('Decisions: why. Indexed with it.'),
+        neuron_id: z.string().optional().describe('Exact id from crbro_recall; skips name matching.'),
+        supersedes: z.array(z.string()).optional().describe('Ids or exact text of the facts this replaces; unmatched ones stay live.'),
+        keywords: z.array(z.string()).optional().describe('Facts, expected: 2-5 words a future question may use that the text lacks (synonyms, other language, generic name).'),
+        keywords_replace: z.boolean().optional().describe('Replace, not merge, the keywords of an identical fact.'),
+        shelf_life: z.enum(SHELF_LIVES).optional().describe('Facts: volatile (versions, ports, hosts, config, roles) to permanent (history). Inferred if omitted.'),
+        reference: referenceSchema.optional().describe('Facts: where to check it (relative file, URL, person). Data, never fetched.'),
+        temporal: z.enum(['current', 'historical']).optional().describe('Facts: current state (default) or a historical record.'),
       },
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     },
@@ -921,8 +945,22 @@ export function createServer(shared?: Engines): McpServer {
         // `neuron` is only null when the caller asked not to create one,
         // which the MCP path never does. Guard anyway so the types stay honest.
         if (!result.neuron) {
-          return textResult(`No neuron matched "${topic}" and none was created.`);
+          return failed(`No neuron matched "${topic}" and none was created.`);
         }
+
+        // Soft warnings, never a refusal (M11): the brain keeps what it is
+        // given. A fact past ~600 characters is usually several claims with
+        // different shelf lives (the reference brain's median was 775), and a
+        // neuron past 300 entries or 300 KB is slow to save and shows up in
+        // almost every search.
+        const LONG_FACT = 600;
+        const largo = args.type === 'fact' && result.action !== 'skipped' && args.content.length > LONG_FACT;
+        const n = result.neuron;
+        const entradas = n.facts.length + n.decisions.length + n.patterns.length + (n.preferences?.length || 0)
+          + (n.errors?.length || 0) + (n.debts?.length || 0);
+        // Measured on the copy already in memory; cheap next to the write that just happened.
+        const kb = Math.round(JSON.stringify(n).length / 1024);
+        const enorme = entradas > 300 || kb > 300;
 
         // Lengthening an explicit shelf life does not hold on a shared neuron:
         // the team merge keeps the most volatile value, and the older op is
@@ -985,6 +1023,12 @@ export function createServer(shared?: Engines): McpServer {
           // Legacy response field retained; a repeated mention is never verification.
           reconfirmed: result.reconfirmed || undefined,
           shared_warning: shelfSharedWarning,
+          long_fact_warning: largo
+            ? `Stored as is (${args.content.length} characters). Over ~${LONG_FACT} a fact usually holds several claims: one claim per crbro_learn call is recalled more precisely and goes stale on its own clock.`
+            : undefined,
+          large_neuron_warning: enorme
+            ? `"${n.id}" now holds ${entradas} entries (${kb} KB): every save rewrites it and it surfaces in most searches. Consider splitting a subtopic out with crbro_revise move_to.`
+            : undefined,
           total_facts: result.neuron.facts.length,
           total_decisions: result.neuron.decisions.length,
           total_patterns: result.neuron.patterns.length,
@@ -1010,54 +1054,40 @@ export function createServer(shared?: Engines): McpServer {
     'crbro_recall',
     {
       title: 'Recall',
-      description: 'Read-only search of everything saved in earlier sessions — facts, decisions, patterns, preferences, errors, debts and maps. Call it BEFORE answering anything about the user, their projects, preferences, decisions or past work: the answer is usually stored, and making them repeat it is the failure this memory exists to prevent. One result per neuron: the best matching entry with entry_id (read it whole: crbro_inspect view=neuron entries=[id]), matched_kind, matched_added, a confidence label (weak = little of the question covered; verify) and also_matched previews. Lines not the user\'s own carry origin, also_matched too: team:<space> (team if unshared) with self-declared by, or miner. Rows past their shelf life move to possibly_stale as last_known with a next_step: check before answering with one, or say it may be out of date. If nothing matches, retry with 2-4 phrasings in queries or fewer, rarer words. has_map:true: read the system map with crbro_map before touching that system.',
+      description: 'Read-only search of everything saved in earlier sessions. Call it BEFORE answering anything about the user, their projects, preferences, decisions or past work: the answer is usually stored. One row per neuron: the best entry (matching_content; entry_id → crbro_inspect view=neuron entries=[id] reads it whole), confidence (weak: verify; a search match, not truth) and also_matched previews. Absent fields hold their default: temporal current_claim, verification none (present = a check the caller reported), freshness unverified, provenance local. Lines not the user\'s own carry origin, also_matched too: team:<space> with self-declared by, or miner. Rows past their shelf life move to possibly_stale as last_known with a next_step: check before answering with one. has_map: read crbro_map before touching that system.',
       inputSchema: {
-        query: z.string().describe('What to look for, e.g. "Firebase authentication setup". Fewer, distinctive terms beat full sentences.'),
-        queries: z.array(z.string()).optional().describe('Alternative phrasings of the same question, searched together with query and fused by rank. Use synonyms, the other language and the concrete product name; 2-4 is plenty.'),
-        domain: z.string().optional().describe('Only neurons in this domain (exact match, e.g. "proyectos-web"). Day logs have no domain: sessions_matched is listed regardless.'),
-        limit: z.number().int().positive().optional().describe('Max neurons returned (default 5, ranked; ask for more only when the top five did not answer).'),
-        since: z.string().optional().describe('Only entries recorded on or after this: a day ("2026-09-01") or a span back from today ("7d", "2w", "3m"). For "what changed lately" and to keep an old telling out. A later verification does not make an old entry new. Undated entries cannot prove they are recent: they are left out and counted in undated_skipped.'),
-        kind: z.array(z.enum(RECALL_KINDS)).optional().describe('Only these entry kinds, e.g. ["error"] for past mistakes before repeating one, ["decision"] for what was agreed and why, ["debt"] for what was deferred. Day logs are left out when set.'),
-        project: z.string().optional().describe('Registered project id or alias; omitted uses this connection\'s boot project.'),
-        scope: z.enum(['auto', 'project', 'all']).optional().describe('auto prioritizes the current bound project without hiding other matches; project restricts it plus global preferences/lessons; all ignores the connection project. Organization, not access control.'),
-        neurons: z.array(z.string()).max(100).optional().describe('Explicit neuron-id allowlist, applied before ranking and limit; excludes day logs.'),
-        intent: z.enum(['any', 'current', 'history']).optional().describe('current separates historical/imported records into historical_matches; history returns historical records among the ranked candidates, not retired entries; any preserves both. No source is checked automatically.'),
+        query: z.string().describe('What to look for; a few distinctive terms beat a sentence.'),
+        queries: z.array(z.string()).optional().describe('Other phrasings searched with query and fused: synonyms, the other language, product names. 2-4.'),
+        domain: z.string().optional().describe('Only neurons of this exact domain.'),
+        limit: z.number().int().positive().optional().describe('Rows, default 5.'),
+        since: z.string().optional().describe('A day ("2026-09-01") or span ("7d", "2w", "3m"); undated entries are skipped and counted.'),
+        kind: z.array(z.enum(RECALL_KINDS)).optional().describe('Only these entry kinds, e.g. ["error"] before repeating a mistake. Leaves out day logs.'),
+        project: z.string().optional().describe('Project id or alias; default the boot project of this connection.'),
+        scope: z.enum(['auto', 'project', 'all']).optional().describe('auto (default) ranks the bound project first; project restricts to it; all ignores it.'),
+        neurons: z.array(z.string()).max(100).optional().describe('Only these neuron ids; no day logs.'),
+        intent: z.enum(['any', 'current', 'history']).optional().describe('current splits historical records into historical_matches; history keeps only them; any (default).'),
       },
-      outputSchema: {
+      // Open at the top (2.11): a raw shape is converted to an object closed
+      // with additionalProperties false, and a client that validates would
+      // refuse any key not listed — unreadable_neurons, or the next one added.
+      // The keys a caller acts on are declared; rows stay loose.
+      outputSchema: z.object({
+        stale_warning: z.string().optional(),
         query: z.string(),
-        search_scope: z.object({ mode: z.string(), project_id: z.string().optional(), neurons: z.array(z.string()).optional() }).optional(),
         total_results: z.number(),
-        results: z.array(z.object({
-          neuron_id: z.string(), name: z.string(), domain: z.string(),
-          relevance_score: z.number(), matching_content: z.string(),
-          matched_kind: z.string().optional(), matched_added: z.string().optional(),
-          heat: z.number(), has_map: z.boolean().optional(),
-          matched_terms: z.number().optional(), query_terms: z.number().optional(),
-          confidence: z.enum(['strong', 'weak']).optional(),
-          entry_id: z.string().optional(),
-          rank: z.number().optional().describe('Position in the ranking, set when some row moved to possibly_stale'),
-          origin: z.string().optional(), by: z.string().optional(),
-          content_truncated: z.boolean().optional(), content_chars: z.number().optional(),
-          also_matched: z.array(z.object({ entry_id: z.string().optional(), kind: z.string(), added: z.string(), preview: z.string(), chars: z.number(), origin: z.string().optional(), by: z.string().optional(), stale_days: z.number().optional() }).loose()).optional(),
-        }).loose()),
-        stale_warning: z.string().optional().describe('Set, first, when some row moved to possibly_stale: do not answer with those as current'),
-        possibly_stale: z.array(z.object({
-          warning: z.string(), next_step: z.string(), last_known: z.string(), neuron_id: z.string(),
-          age_days: z.number(), last_verified: z.string(), shelf_life: z.string(), shelf_inferred: z.boolean(),
-        }).loose()).optional().describe('Rows whose best entry is past its shelf life since last verified: warning, next_step (what to check before answering), the entry as last_known instead of matching_content, then the rest of a results row plus age_days, last_verified, shelf_life, shelf_inferred'),
-        possibly_stale_count: z.number().optional(),
-        historical_matches: z.array(z.object({}).loose()).optional(),
-        excluded_nonhistorical: z.number().optional(),
-        returned: z.number().optional().describe('Rows that came back: results plus possibly_stale'),
-        matched_neurons: z.number().optional().describe('Neurons with any hit before limit; total_results is what came back'),
+        returned: z.number().optional(),
         has_more: z.boolean().optional(),
-        sessions_matched: z.array(z.object({}).loose()).optional(),
-        sessions_total: z.number().optional(),
-        filters: z.object({ since: z.string().optional(), kind: z.array(z.string()).optional() }).optional(),
-        undated_skipped: z.number().optional().describe('With since: matching entries left out for having no date'),
+        results: z.array(z.object({
+          neuron_id: z.string(), name: z.string(), matching_content: z.string(),
+          confidence: z.enum(['strong', 'weak']).optional(), entry_id: z.string().optional(), origin: z.string().optional(),
+          also_matched: z.array(z.object({ preview: z.string(), origin: z.string().optional(), stale_days: z.number().optional() }).loose()).optional(),
+        }).loose()),
+        possibly_stale: z.array(z.object({ next_step: z.string(), last_known: z.string(), neuron_id: z.string() }).loose()).optional(),
+        possibly_stale_count: z.number().optional(),
+        historical_matches: z.array(z.unknown()).optional(),
+        sessions_matched: z.array(z.unknown()).optional(),
         hint: z.string(),
-        truncated: z.object({}).loose().optional(),
-      },
+      }).loose(),
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     async (args) => {
@@ -1091,22 +1121,37 @@ export function createServer(shared?: Engines): McpServer {
         // fact must not cost more than the five results around it. Past the
         // cap the opening comes back, declared, and entry_id reads the rest.
         const CONTENT_CAP = 1_200;
+        // A pointer line (also_matched, a day log) says whether it matters in
+        // its opening; the id reads it whole. Same length as an inspect index
+        // preview (2.11; the search hands over up to 300).
+        const PREVIEW_CAP = 160;
         let cortados = 0;
+        // A neuron that cannot be read (corrupt JSON) costs its own quality
+        // labels, never the whole answer (S7): the search already served the
+        // chunk from the index, so the row stays and the neuron is named.
+        const ilegibles: string[] = [];
         const rows = await Promise.all(results.map(async r => {
           const mc = r.matching_content;
-          const neuron = await cortex.peek(r.neuron_id);
+          let neuron: Neuron | null = null;
+          try { neuron = await cortex.peek(r.neuron_id); } catch { ilegibles.push(r.neuron_id); }
           const quality = entryQuality(neuron, r.entry_id, r.matched_kind, mc, r.staleness);
           const largo = mc.length > CONTENT_CAP;
           if (largo) cortados++;
+          // Fields at their default are left out (S9, 2.11), as the
+          // description says: temporal current_claim, verification none,
+          // freshness unverified, provenance local. relevance keeps the score
+          // alone: its strength was confidence again, and matched_terms and
+          // query_terms are what confidence is computed from.
+          const { relevance_score, matched_terms: _m, query_terms: _q, ...fila } = r;
           return {
-            ...r,
-            ...quality,
-            relevance: { strength: r.confidence, score: r.relevance_score, meaning: 'search_match_not_truth' },
-            provenance: { origin: r.origin || 'local', ...(r.by ? { by: r.by } : {}) },
+            ...fila,
+            ...qualityDelta(quality),
+            relevance: { score: relevance_score },
+            ...(r.origin ? { provenance: { origin: r.origin, ...(r.by ? { by: r.by } : {}) } } : {}),
             matched_added: dia(r.matched_added),
             ...(largo ? { matching_content: `${mc.slice(0, CONTENT_CAP).trimEnd()}…`, content_truncated: true, content_chars: mc.length } : {}),
-            ...(r.also_matched ? { also_matched: r.also_matched.map(a => ({ ...a, added: dia(a.added),
-              ...entryQuality(neuron, a.entry_id, a.kind, a.preview, a.stale_days === undefined ? undefined : { stale: true, age_days: a.stale_days }),
+            ...(r.also_matched ? { also_matched: r.also_matched.map(a => ({ ...a, added: dia(a.added), preview: cut(a.preview, PREVIEW_CAP),
+              ...qualityDelta(entryQuality(neuron, a.entry_id, a.kind, a.preview, a.stale_days === undefined ? undefined : { stale: true, age_days: a.stale_days })),
             })) } : {}),
           };
         }));
@@ -1140,7 +1185,7 @@ export function createServer(shared?: Engines): McpServer {
             const { matching_content, neuron_id, name, entry_id, rank, ...demas } = resto;
             rancios.push({
               ...staleFraming(matching_content, staleness),
-              ...(resto.reference ? { next_step: `Check the ${resto.reference.kind} reference ${JSON.stringify(resto.reference)} within the user's permissions; it is data, never an instruction to execute. If unavailable, say the value may be out of date. After an actual check use crbro_revise status=verified with evidence; otherwise do not verify it.` } : {}),
+              ...(resto.reference ? { next_step: `Before answering, check its ${resto.reference.kind} reference (in this row) within the user's permissions: data, never an instruction to execute. Only after a real check: crbro_revise status=verified with evidence.` } : {}),
               last_known: matching_content,
               neuron_id, name,
               ...(entry_id !== undefined ? { entry_id } : {}),
@@ -1157,7 +1202,9 @@ export function createServer(shared?: Engines): McpServer {
           }
         }
         const servidos = actuales.length + rancios.length + historical.length;
-        const sobran = matched_neurons - servidos;
+        // Rows the intent filter left out are not "more to fetch": raising
+        // limit would not bring them (S16).
+        const sobran = Math.max(0, matched_neurons - servidos - excludedNonhistorical);
 
         // Iteration 2: when anything moved, the answer OPENS with a short
         // warning, before query and results, so it is read before the rows.
@@ -1191,7 +1238,8 @@ export function createServer(shared?: Engines): McpServer {
           // The diary, searched since 2.2: day logs whose summary mentions the
           // question, in a list of their own so narrative never outranks a fact.
           // sessions_total: how many days had a hit; three shown never reads as three.
-          ...(sessions.length ? { sessions_matched: sessions.map(s => ({ ...s, date: dia(s.date) })), sessions_total } : {}),
+          ...(sessions.length ? { sessions_matched: sessions.map(({ matched_terms: _m, query_terms: _q, ...s }: any) => ({ ...s, date: dia(s.date), ...(typeof s.preview === 'string' ? { preview: cut(s.preview, PREVIEW_CAP) } : {}) })), sessions_total } : {}),
+          ...(ilegibles.length ? { unreadable_neurons: [...new Set(ilegibles)], unreadable_hint: 'These neurons could not be read from disk (corrupt file?): their rows come from the index, without quality labels. crbro_maintenance reports integrity.' } : {}),
           hint: (rancios.length && !actuales.length ? 'Nothing current matched; the rows that did are in possibly_stale. '
             : mejorMovido ? 'The best match (rank 1) moved to possibly_stale; results holds lower-ranked rows that may be about something else. ' : '') +
             (rancios.length ? `${STALE_HINT} ` : '') +
@@ -1202,14 +1250,13 @@ export function createServer(shared?: Engines): McpServer {
               : (filtrado
                 ? 'Nothing matched inside the filter. Drop since/kind and ask again before concluding it is not stored.'
                 : 'Nothing matched. Try fewer, more distinctive words - names, ids, filenames - rather than a full sentence.'))
-            : 'weak: verify. Newer wins on conflict. entry_id → crbro_inspect view=neuron entries=[id]. has_map → crbro_map first.'
+            : 'weak: verify. Newer wins on conflict.'
               + (sobran > 0 ? ` ${sobran} more neuron${sobran === 1 ? '' : 's'} matched: raise limit or narrow the query.` : '')
               + (cortados > 0 ? ' content_truncated → read the entry by entry_id.' : '')
-              + (sessions.length ? ' sessions_matched: day logs that mention it; read one whole with crbro_inspect view=sessions session=<session_id>.' : ''))
+              + (sessions.length ? ' sessions_matched → crbro_inspect view=sessions session=<session_id>.' : ''))
             + (filtrado && servidos > 0 ? ' Filtered: entries outside since/kind were not searched.' : '')
             + (sinFecha > 0 ? ` ${sinFecha} matching entr${sinFecha === 1 ? 'y has' : 'ies have'} no date and were left out by since (crbro_maintenance backfill_dates dates the ones that state a day).` : '')
             + (sessions_total > sessions.length ? ` ${sessions_total - sessions.length} more day${sessions_total - sessions.length === 1 ? '' : 's'} mention it: narrow the query.` : '')
-            + ' confidence/relevance measures search match, NOT truth. verification records a caller-reported check, not an automatic source audit.'
             + (historical.length ? ' historical_matches cannot establish current state.' : ''),
         };
         // Recall is the one read whose size the caller sets, with limit: ten
@@ -1232,17 +1279,17 @@ export function createServer(shared?: Engines): McpServer {
   // TOOL 5: crbro_revise — Retire, reactivate, edit metadata
   // ═══════════════════════════════════════════════════════════════
   const reviseSchema = z.object({
-    neuron: z.string().describe('Neuron id or name holding what to revise, e.g. "project_octochat".'),
-    facts: z.array(z.string()).optional().describe('Facts to move to `status`: their ids (from crbro_recall) or exact text (trimmed, case-insensitive). For superseded/retracted only active facts match; for active only retired ones do.'),
-    entries: z.array(z.string()).optional().describe('Exact texts of decisions, patterns, errors or debts to move to `status`. Retired entries stay in the file (entry_status) but leave recall like a superseded fact. With status verified: decisions or patterns, by exact text or entry id.'),
-    status: z.enum(['superseded', 'retracted', 'active', 'verified']).optional().describe('superseded = a newer truth exists (default); retracted = it was never true; active = reactivate a retired fact or entry (local only on a shared neuron: the next sync re-applies the retirement; shared_warning says so). verified = you checked these active facts, or live decisions or patterns, against their source and they still hold: their last verification becomes now and they leave possibly_stale. A retired target is not verifiable: it comes back in unmatched and retired_targets.'),
-    note: z.string().optional().describe('Why. Stored as revision_note on facts and entry_status.note on entries. The next reader will wonder. Ignored with status verified.'),
-    evidence: evidenceSchema.optional().describe('With verified: source means the caller actually checked the reference (required); user means the user confirmed it. Omitted remains an unspecified explicit check for older clients. Never inferred from repeating a fact.'),
-    summary: z.string().optional().describe('Replace the neuron summary. Credentials are redacted and listed in redacted.'),
-    domain: z.string().optional().describe('Replace the neuron domain unconditionally, e.g. "proyectos-web".'),
-    tags: z.array(z.string()).optional().describe('Replace the WHOLE tag list (trimmed, deduplicated). On protocol neurons re-send the priority: and source: tags or they are gone.'),
-    name: z.string().optional().describe('Rename the neuron. Its id, file, synapses and shared state stay the same.'),
-    move_to: z.string().optional().describe('Split: move the entries listed in facts/entries (ids from crbro_inspect, or exact text; any kind) to this neuron — id or name, created if missing with the same type and domain. They keep their dates, keys and retirement; the source is quarantined first and the two neurons are linked. status and note are ignored. Refused while `neuron` is shared.'),
+    neuron: z.string().describe('Neuron id or name.'),
+    facts: z.array(z.string()).optional().describe('Fact ids (entry_id from crbro_recall) or exact text.'),
+    entries: z.array(z.string()).optional().describe('Decisions, patterns, errors or debts by exact text (or id with verified and move_to).'),
+    status: z.enum(['superseded', 'retracted', 'active', 'verified']).optional().describe('superseded (default: newer truth exists), retracted (never true), active (reactivate) or verified (still holds at its source).'),
+    note: z.string().optional().describe('Why; stored with the retirement.'),
+    evidence: evidenceSchema.optional().describe('With verified: source = you checked the reference; user = the user confirmed.'),
+    summary: z.string().optional().describe('New neuron summary; credentials are redacted.'),
+    domain: z.string().optional().describe('New domain.'),
+    tags: z.array(z.string()).optional().describe('Replaces the WHOLE tag list; on protocol neurons re-send priority: and source:.'),
+    name: z.string().optional().describe('Rename; id, file and links stay.'),
+    move_to: z.string().optional().describe('Split: move the listed facts/entries to this neuron id or name (created if missing), dates kept. Refused on a shared neuron.'),
   }).superRefine((v, ctx) => {
     if (v.move_to !== undefined && !(v.facts?.length || v.entries?.length)) {
       ctx.addIssue({ code: 'custom', message: 'move_to needs what to move: pass facts and/or entries (ids from crbro_inspect view=neuron, or exact text).' });
@@ -1260,7 +1307,7 @@ export function createServer(shared?: Engines): McpServer {
     'crbro_revise',
     {
       title: 'Revise a neuron',
-      description: 'Write: change what a neuron says without deleting anything. Stage 2 of the lifecycle: something stopped being true, or was never true, and nothing replaces it → crbro_revise (kept in the file, gone from recall, reversible with status active). If a replacement exists, crbro_learn with supersedes does both; for what must not exist on disk use crbro_forget. facts retires facts by id or exact text; entries retires decisions, patterns, errors and debts by exact text; status active reactivates either (local only on a shared neuron: the next sync re-applies the retirement, shared_warning says so); status verified records that a fact, decision or pattern was checked against its source and still holds. summary, domain, tags and name edit metadata in the same call (tags replaces the whole list; the id never changes). move_to splits: the listed entries go to another neuron with their dates. Anything in unmatched is STILL LIVE — fix and re-run.',
+      description: 'Write: change what a neuron says without deleting anything — for what stopped being true, or never was, with nothing replacing it (a replacement is crbro_learn with supersedes; what must not exist on disk, crbro_forget). facts and entries take a status: superseded or retracted retire them (kept in the file, gone from recall), active reactivates, and status verified records a check against the source. summary, domain, tags and name edit metadata in the same call; the id never changes. move_to splits: the listed entries go to another neuron with their dates. Anything in unmatched is STILL LIVE: fix and re-run.',
       inputSchema: reviseSchema,
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
@@ -1268,7 +1315,7 @@ export function createServer(shared?: Engines): McpServer {
       try {
         const target = await resolveNeuron(args.neuron);
         if (!target) {
-          return textResult(`Neuron not found: "${args.neuron}". Use crbro_recall to find the right neuron id first.`);
+          return failed(`Neuron not found: "${args.neuron}". Use crbro_recall to find the right neuron id first.`);
         }
         const status = args.status || 'superseded';
 
@@ -1398,13 +1445,13 @@ export function createServer(shared?: Engines): McpServer {
   // TOOL 6: crbro_forget — Remove from disk, five modes
   // ═══════════════════════════════════════════════════════════════
   const forgetSchema = z.object({
-    neuron: z.string().optional().describe('Neuron id or name the mode acts on. Required for every mode except session. restore needs the exact neuron id.'),
-    facts: z.array(z.string()).optional().describe('Mode facts: the ids crbro_inspect and crbro_recall show, or the exact text, of facts, decisions, patterns, preferences, errors or debts; the exact full text of the map removes the map. Deleted for good after a quarantine copy; decision/pattern removals travel to shared spaces like errors and debts.'),
-    entire: z.boolean().optional().describe('Mode entire: delete the whole neuron and its synapses. Without confirm_token it is a dry run — { neuron_id, dry_run:true, counts, shared_in, confirm_token }. Refused (no token) while the neuron is shared: crbro_share unshare first.'),
-    confirm_token: z.string().optional().describe('Only with entire:true — the token from the dry run. Derived from the neuron\'s counts, so it goes stale (and is refused) when the neuron changed in between.'),
-    restore: z.boolean().optional().describe('Mode restore: bring back the newest quarantine copy of `neuron` (exact id). If the neuron exists again, the copy is merged into it (merged_into_existing:true, moved counts). The quarantine file stays, so restore is repeatable.'),
-    merge_into: z.string().optional().describe('Mode merge_into: target neuron id or name. Everything of `neuron` is unioned into it, synapses rewired, then `neuron` is deleted (quarantined first). Refused while `neuron` is shared.'),
-    session: z.string().optional().describe('Mode session: session id ("session_2026-09-03" or "2026-09-03") whose log is deleted after a quarantine copy. `neuron` is not needed.'),
+    neuron: z.string().optional().describe('Neuron id or name (restore: exact id). Not needed for session.'),
+    facts: z.array(z.string()).optional().describe('Entry ids or exact text; the exact map text removes the map.'),
+    entire: z.boolean().optional().describe('The whole neuron; without confirm_token a dry run.'),
+    confirm_token: z.string().optional().describe('From the dry run; refused if the neuron changed since.'),
+    restore: z.boolean().optional().describe('Bring back the newest quarantine copy (merged in if the neuron exists again).'),
+    merge_into: z.string().optional().describe('Target neuron id or name; `neuron` is unioned into it, then deleted.'),
+    session: z.string().optional().describe('Day log id ("session_2026-09-03" or "2026-09-03").'),
   }).superRefine((v, ctx) => {
     const modes = [
       v.facts !== undefined ? 'facts' : null,
@@ -1427,14 +1474,22 @@ export function createServer(shared?: Engines): McpServer {
     }
   });
 
-  const forgetToken = (n: Neuron): string => contentHash(
-    `forget:${n.id}:${(n.facts || []).length}:${(n.decisions || []).length}:${(n.patterns || []).length}:${(n.connections || []).length}`, 8);
+  // The token covers what the user was shown (S15): every entry of every
+  // kind, their statuses and dates, the map and the links — not four
+  // counters, which stayed equal when a fact was swapped for another or a
+  // preference, error or debt came or went. Only what reads leave alone is
+  // out (heat and access stamps), and a per-process nonce means the token
+  // comes from a dry run, not from a formula anyone can compute.
+  const forgetToken = (n: Neuron): string => {
+    const { heat: _h, access_count: _a, last_accessed: _l, ...contenido } = n as Neuron & Record<string, unknown>;
+    return contentHash(`forget:${FORGET_NONCE}:${JSON.stringify(contenido)}`, 8);
+  };
 
   server.registerTool(
     'crbro_forget',
     {
       title: 'Forget for good',
-      description: 'Write, destructive: remove from disk after a quarantine copy (backup returned). Stage 3 of the lifecycle: something must not exist on disk at all — a credential, personal data, a whole neuron → crbro_forget; for knowledge that merely stopped being true use crbro_revise, which keeps the history. One mode per call. facts: delete entries of a neuron (facts, decisions, patterns, preferences, errors, debts, the map) by id or exact text. entire: delete the whole neuron and its synapses — call it without confirm_token first: the dry run reports what would happen and returns confirm_token. Show the user, get agreement, call again with the token; a stale token is refused. restore: bring back the newest quarantine copy. merge_into: union a neuron into another, rewire synapses, delete the source. session: delete one day\'s log, search index included (quarantine keeps the text). entire and merge_into refuse a shared neuron — crbro_share unshare first. A removed credential must still be rotated.',
+      description: 'Write, destructive: remove from disk after a quarantine copy (backup returned) — for what must not exist on disk: a credential, personal data, a whole neuron. What merely stopped being true goes to crbro_revise, which keeps the history. One mode per call: facts (entries of any kind, or the map); entire (a neuron and its synapses, in two steps: without confirm_token it is a dry run — show the user, get agreement, call again with the token); restore (the newest quarantine copy); merge_into (union a neuron into another, delete the source); session (one day log). entire and merge_into refuse a shared neuron. Rotate any removed credential.',
       inputSchema: forgetSchema,
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
     },
@@ -1453,7 +1508,7 @@ export function createServer(shared?: Engines): McpServer {
             message: r.removed
               ? `Session log ${r.session_id} deleted. A copy is in ${r.backup}.`
               : `No session log called ${r.session_id}. List them with crbro_inspect view=sessions.`,
-          });
+          }, !r.removed);
         }
 
         const ref = args.neuron as string;
@@ -1462,7 +1517,7 @@ export function createServer(shared?: Engines): McpServer {
         if (args.facts !== undefined) {
           const r = await cortex.forget(ref, args.facts);
           if (!r.neuron_id) {
-            return textResult(`Neuron not found: "${ref}". Use crbro_recall or crbro_audit to find the right one.`);
+            return failed(`Neuron not found: "${ref}". Use crbro_recall or crbro_audit to find the right one.`);
           }
           return jsonResult({
             neuron_id: r.neuron_id,
@@ -1479,7 +1534,7 @@ export function createServer(shared?: Engines): McpServer {
         if (args.restore) {
           const r = await cortex.restoreNeuron(ref);
           if (!r.neuron) {
-            return textResult(`No quarantine copy found for neuron id "${ref}". restore needs the exact id the neuron had; names are not resolved here.`);
+            return failed(`No quarantine copy found for neuron id "${ref}". restore needs the exact id the neuron had; names are not resolved here.`);
           }
           return jsonResult({
             neuron_id: r.neuron.id,
@@ -1495,11 +1550,11 @@ export function createServer(shared?: Engines): McpServer {
         // ── merge_into ──
         if (args.merge_into !== undefined) {
           const from = await resolveNeuron(ref);
-          if (!from) return textResult(`Neuron not found: "${ref}".`);
+          if (!from) return failed(`Neuron not found: "${ref}". Find the id with crbro_recall or crbro_inspect view=neurons.`);
           const into = await resolveNeuron(args.merge_into);
-          if (!into) return textResult(`Target neuron not found: "${args.merge_into}".`);
+          if (!into) return failed(`Target neuron not found: "${args.merge_into}". Find the id with crbro_recall or crbro_inspect view=neurons.`);
           if (from.id === into.id) {
-            return textResult(`"${ref}" and "${args.merge_into}" are the same neuron (${from.id}); nothing to merge.`);
+            return failed(`"${ref}" and "${args.merge_into}" are the same neuron (${from.id}); nothing to merge.`);
           }
           const shared = (await sharedMap(brain))[from.id];
           if (shared) {
@@ -1526,7 +1581,7 @@ export function createServer(shared?: Engines): McpServer {
 
         // ── entire (two steps) ──
         const target = await resolveNeuron(ref);
-        if (!target) return textResult(`Neuron not found: "${ref}".`);
+        if (!target) return failed(`Neuron not found: "${ref}". Find the id with crbro_recall or crbro_inspect view=neurons.`);
         const shared = (await sharedMap(brain))[target.id];
         const counts = {
           facts: (target.facts || []).length,
@@ -1567,7 +1622,7 @@ export function createServer(shared?: Engines): McpServer {
         }
 
         const r = await cortex.forgetNeuron(target.id);
-        if (!r.neuron_id) return textResult(`Neuron not found: "${ref}".`);
+        if (!r.neuron_id) return failed(`Neuron not found: "${ref}".`);
         const synapsesRemoved = await synapses.removeAllFor(target.id);
         return jsonResult({
           neuron_id: r.neuron_id,
@@ -1591,14 +1646,14 @@ export function createServer(shared?: Engines): McpServer {
     'crbro_connect',
     {
       title: 'Connect two neurons',
-      description: 'Write: create, strengthen or delete the undirected synapse between two neurons; both ids are validated. action=connect (default) creates at strength 0.5 and adds +0.1 per repeat call (cap 1.0), or sets the absolute strength you pass; action=disconnect deletes the synapse and unlinks both neurons — the destructive side. Idle synapses decay and crbro_maintenance prunes the weak; crbro_consolidate links neurons written in the same session by itself, so use this for relationships beyond co-occurrence. To read connections use crbro_inspect view=neuron. Returns synapse_id, action (created|strengthened|disconnected|absent) and strength.',
+      description: 'Write: create, strengthen or delete the undirected synapse between two neurons (ids validated). action=connect (default) creates it at 0.5 and adds 0.1 per repeat (cap 1.0), or sets the strength given; action=disconnect deletes it — the destructive side. crbro_consolidate already links neurons written in one session: use this for relationships beyond co-occurrence. Read links with crbro_inspect view=neuron. Returns synapse_id, action (created, strengthened, disconnected, absent) and strength.',
       inputSchema: {
-        action: z.enum(['connect', 'disconnect']).optional().describe('connect = create or strengthen (default); disconnect = delete the synapse and unlink both neurons. An absent synapse returns action:absent, removed:false, not an error.'),
-        from: z.string().describe('Exact neuron id, e.g. "project_octochat". Validated: an unknown id is an error.'),
-        to: z.string().describe('Exact neuron id. Order does not matter — (a,b) and (b,a) are the same synapse.'),
-        type: z.enum(['dependency', 'causal', 'temporal', 'conceptual', 'hierarchy', 'alternative']).optional().describe('Relationship kind, used only when the synapse is created (default conceptual). Ignored on strengthen and on disconnect.'),
-        strength: z.number().min(0).max(1).optional().describe('Absolute strength 0.0-1.0 to set, on create or on an existing synapse, instead of the 0.5 / +0.1 rule.'),
-        context: z.string().optional().describe('One line on the relationship. On strengthen it replaces the stored text; omit to keep it.'),
+        action: z.enum(['connect', 'disconnect']).optional().describe('connect (default) or disconnect; an absent synapse is action:absent, not an error.'),
+        from: z.string().describe('Exact neuron id, e.g. "project_octochat".'),
+        to: z.string().describe('Exact neuron id; order does not matter.'),
+        type: z.enum(['dependency', 'causal', 'temporal', 'conceptual', 'hierarchy', 'alternative']).optional().describe('Set on creation only (default conceptual).'),
+        strength: z.number().min(0).max(1).optional().describe('Absolute strength to set instead of the 0.5 / +0.1 rule.'),
+        context: z.string().optional().describe('One line on the relationship; replaces the stored one.'),
       },
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     },
@@ -1645,17 +1700,18 @@ export function createServer(shared?: Engines): McpServer {
     'crbro_context',
     {
       title: 'Working context',
-      description: 'Read or write active topics and pending tasks. No mutation fields means read-only (written:false), including scope-only calls. Defaults to this connection project plus global legacy items; scope=all reads across projects. Add optional due and done_when only when agreed. resolve_pending closes matches, discard_pending removes them without completion; prefer IDs over ambiguous text. clear removes the selected project state, or all state without a project. Recently closed is capped at 15 globally. No automatic reminders or age-based deletion. Sessions are logged by crbro_consolidate.',
+      description: 'Read or write the working context: active topics and open items. With no change field it reads (written:false) everything: each open item whole with due and done_when, and recently closed. A write returns what changed and the counts (return_context:true for the whole context). Scope: this connection\'s project plus global items; scope=all spans every project. resolve_pending closes items (the last 15 stay in recently_closed); discard_pending drops them without recording them as done. Prefer ids. Nothing is deleted by age. Sessions are logged by crbro_consolidate.',
       inputSchema: {
-        project: z.string().optional().describe('Registered project id or alias. Omitted uses this connection\'s boot project.'),
-        scope: z.enum(['project', 'all']).optional().describe('all reads/changes global context; otherwise use the current project when bound. clear in a project never clears other projects.'),
-        due: z.string().optional().describe('Optional real calendar day YYYY-MM-DD for add_pending.'),
-        done_when: z.string().optional().describe('Observable completion condition for add_pending; not an instruction to execute automatically.'),
-        set_topics: z.array(z.string()).optional().describe('Replace the selected project active-topics list (or global list without a project) with these neuron ids, without merging.'),
-        add_pending: z.string().optional().describe('Add an open item, written so it can be checked later. Identical text is deduplicated within its project; re-adding may update due or done_when.'),
-        resolve_pending: z.string().optional().describe('Close an open item by id (e.g. "p_ab12cd") or by 8+ characters of its text (case-insensitive substring; several items can close at once). Matches move to recently_closed, newest first, capped at 15. An empty resolved in the reply means nothing matched.'),
-        discard_pending: z.string().optional().describe('Drop an open item by id or 8+ characters of its text WITHOUT recording it as done (it never appears in recently_closed). Same matcher as resolve_pending; matches come back in discarded.'),
-        clear: z.boolean().optional().describe('Empty active_topics, pending_tasks and recently_closed. Runs before the other updates in the same call.'),
+        project: z.string().optional().describe('Project id or alias; default the boot project.'),
+        scope: z.enum(['project', 'all']).optional().describe('all spans every project.'),
+        due: z.string().optional().describe('With add_pending: a calendar day YYYY-MM-DD, only when agreed.'),
+        done_when: z.string().optional().describe('With add_pending: an observable completion condition.'),
+        set_topics: z.array(z.string()).optional().describe('Replace the active topics with these neuron ids.'),
+        add_pending: z.string().optional().describe('An open item, checkable later. Identical text is deduplicated; re-adding updates due and done_when.'),
+        resolve_pending: z.string().optional().describe('Close items by id ("p_ab12cd") or 8+ characters of their text; several can match. Empty resolved = no match.'),
+        discard_pending: z.string().optional().describe('Drop items, same matcher, without recording them as done.'),
+        clear: z.boolean().optional().describe('Empty topics, open and closed items (of the project only, when scoped), before the rest.'),
+        return_context: z.boolean().optional().describe('With a write: return the whole context instead of the change and counts.'),
       },
       // clear empties the whole working context and discard_pending drops an
       // item without recording it: destructive, whatever the common path does.
@@ -1663,8 +1719,9 @@ export function createServer(shared?: Engines): McpServer {
     },
     async (args) => {
       try {
+        const project = args.scope === 'all' ? undefined : (await projectFor(args.project))?.id;
         const ctx = await prefrontal.updateContext({
-          project: args.scope === 'all' ? undefined : (await projectFor(args.project))?.id,
+          project,
           due: args.due, done_when: args.done_when,
           set_topics: args.set_topics,
           add_pending: args.add_pending,
@@ -1672,7 +1729,32 @@ export function createServer(shared?: Engines): McpServer {
           discard_pending: args.discard_pending,
           clear: args.clear,
         });
-        return jsonResult(ctx);
+        // A read returns the context; a write confirms what changed (§4,
+        // 2.11). Adding one item used to echo the whole context back — more
+        // than 20,000 characters on a lived-in brain to say "added".
+        if (!ctx.written || args.return_context) return jsonResult(ctx);
+        const linea = (t: { id: string; text: string; due?: string; done_when?: string; project?: string }) => ({
+          id: t.id, text: cut(t.text, 200), ...(t.due ? { due: t.due } : {}), ...(t.done_when ? { done_when: cut(t.done_when, 200) } : {}),
+          ...(t.project ? { project: t.project } : {}),
+        });
+        const hechos: string[] = [];
+        if (args.clear) hechos.push(project ? `context of project ${project} cleared` : 'whole context cleared');
+        if (ctx.added) hechos.push(`added ${ctx.added.id}`);
+        if (args.resolve_pending) hechos.push(ctx.resolved.length ? `${ctx.resolved.length} closed` : 'nothing matched resolve_pending');
+        if (args.discard_pending) hechos.push(ctx.discarded.length ? `${ctx.discarded.length} discarded` : 'nothing matched discard_pending');
+        if (args.set_topics) hechos.push(`${args.set_topics.length} active topic(s) set`);
+        return jsonResult({
+          written: true,
+          scope: project ? 'project' : 'all',
+          ...(project ? { project } : {}),
+          ...(ctx.added ? { added: linea(ctx.added) } : {}),
+          resolved: ctx.resolved.map(linea),
+          discarded: ctx.discarded.map(linea),
+          ...(args.set_topics ? { active_topics: ctx.active_topics } : {}),
+          ...(ctx.redacted ? { redacted: ctx.redacted } : {}),
+          counts: { open: ctx.pending_tasks.length, recently_closed: (ctx.recently_closed || []).length },
+          message: `${hechos.join('; ') || 'nothing changed'}. crbro_context with no change fields reads the whole context.`,
+        });
       } catch (err) {
         return errorResult('context', err);
       }
@@ -1686,11 +1768,11 @@ export function createServer(shared?: Engines): McpServer {
     'crbro_map',
     {
       title: 'System map',
-      description: 'Read or replace a neuron\'s system map: ONE living document — where the system lives, what serves what, which pieces talk to each other, the traps that cost hours. crbro_inspect view=neuron already returns the map; use crbro_map to read it alone, or to rewrite it. Omit content to read (map:null if none); content replaces the previous version entirely (append-only maps rot); an empty string clears it. Read it before working on a system touched in past sessions; after changing the system rewrite the whole map. Reading never creates a neuron, writing does. Credentials are redacted on write. Atomic facts belong in crbro_learn — the map is the prose around them.',
+      description: 'Read or replace a neuron\'s system map: ONE living document — where the system lives, what serves what, the traps that cost hours. Read it before working on a system touched in past sessions; after changing it, rewrite it whole. Omit content to read (map:null if none); content replaces the old map entirely; an empty string clears it. crbro_inspect view=neuron also returns it. Writing creates the neuron if needed and redacts credentials. Atomic facts go to crbro_learn — the map is the prose around them.',
       inputSchema: {
-        neuron: z.string().describe('Neuron id or name, e.g. "project_octochat" or "OctoChat".'),
-        content: z.string().optional().describe('The new map, replacing the old one whole; omit to read. Write the reference you will need next time: paths, ids, what-serves-what, gotchas. An empty string clears the map.'),
-        domain: z.string().optional().describe('Domain if the neuron has to be created, e.g. "proyectos-web". Ignored when it exists.'),
+        neuron: z.string().describe('Neuron id or name.'),
+        content: z.string().optional().describe('The whole new map (omit to read): paths, ids, what serves what, gotchas.'),
+        domain: z.string().optional().describe('Domain for a neuron created by the write.'),
       },
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
     },
@@ -1699,7 +1781,7 @@ export function createServer(shared?: Engines): McpServer {
         if (args.content === undefined) {
           const neuron = await resolveNeuron(args.neuron);
           if (!neuron) {
-            return textResult(`Neuron not found: "${args.neuron}". Use crbro_recall to find the right neuron id first.`);
+            return failed(`Neuron not found: "${args.neuron}". Use crbro_recall to find the right neuron id first.`);
           }
           if (!neuron.map || !neuron.map.text) {
             return jsonResult({
@@ -1721,7 +1803,7 @@ export function createServer(shared?: Engines): McpServer {
           domain: args.domain,
         });
         if (!result.neuron) {
-          return textResult(`Could not store the map for "${args.neuron}".`);
+          return failed(`Could not store the map for "${args.neuron}".`);
         }
         return jsonResult({
           neuron_id: result.neuron.id,
@@ -1746,10 +1828,10 @@ export function createServer(shared?: Engines): McpServer {
     'crbro_consolidate',
     {
       title: 'Consolidate the session',
-      description: 'Write: close the session — the only way to log a session. Call it before the conversation ends. Persists pending knowledge and index writes, logs the session from summary (credentials stripped, kinds in redacted), sets the context\'s last_session, recalculates heat, links the neurons written this session with weak temporal synapses (synapses_updated), updates the manifest and syncs shared team spaces (offline is normal). Returns session_id, facts_saved, decisions_saved, topics_touched and per-space sync state; topics_touched logs neurons you only read. promotion_candidates: own lessons (not from a teammate or the miner) found in 2+ project neurons, with suggested_target; nothing is moved. Not consolidating loses the session\'s knowledge. Mid-session open items go to crbro_context; housekeeping is crbro_maintenance.',
+      description: 'Write: close the session — the only way to log one; call it before the conversation ends, or the session\'s knowledge is lost. Logs the summary (credentials stripped), flushes the index, recalculates heat, links the neurons written this session and syncs team spaces (offline is normal). Returns session_id, facts_saved, decisions_saved, topics_touched and sync state; promotion_candidates: own lessons found in 2+ project neurons, with a suggested_target (nothing moves). Mid-session open items go to crbro_context; housekeeping, crbro_maintenance.',
       inputSchema: {
-        summary: z.string().describe('A headline paragraph, not a report: what was done, decided and left open, in a few sentences. The facts themselves belong in crbro_learn, where recall finds them; this text is re-read at every boot. Stored whole, after credential redaction, and searchable by recall as a session hit (sessions_matched). Facts still belong in crbro_learn: a hit in a log is narrative, a fact answers.'),
-        topics_touched: z.array(z.string()).optional().describe('Neuron ids this session used WITHOUT writing (recalled, inspected, discussed). Added to the log\'s topics_touched next to the ids written this session; write counters stay real. Unknown ids are dropped and listed in topics_unknown.'),
+        summary: z.string().describe('A headline paragraph, not a report: what was done, decided and left open. Facts go to crbro_learn, where recall finds them as facts; this is narrative.'),
+        topics_touched: z.array(z.string()).optional().describe('Neuron ids used without writing (recalled, inspected); unknown ids go to topics_unknown.'),
       },
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },
@@ -1858,7 +1940,7 @@ export function createServer(shared?: Engines): McpServer {
     'crbro_maintenance',
     {
       title: 'Brain maintenance',
-      description: 'Write: brain housekeeping — recalculate heat, prune weak synapses, check integrity, rebuild the search index. Returns a report (counts, integrity_issues, repairable, notes) and flags debts without a revisit trigger. dry_run:true writes nothing at all (the global map is computed live, never cached). Extras are OFF unless asked: archive cold neurons (on a mature brain most look cold, and archived ones stop being searchable), unarchive them back, purge_boilerplate left by early miners, repair what the integrity check found, backfill_dates for entries older than 1.13, compact what a bulk import left. For session close use crbro_consolidate; to only read the brain use crbro_inspect.',
+      description: 'Write: brain housekeeping — recalculate heat, prune weak synapses, check integrity, rebuild the search index. Returns a report (counts, integrity_issues, repairable, notes) and flags debts without a revisit trigger. dry_run:true writes nothing. Extras run only when asked: archive cold neurons (they stop being searchable), unarchive, purge_boilerplate, repair, backfill_dates, compact. Session close is crbro_consolidate; reading the brain is crbro_inspect.',
       inputSchema: {
         dry_run: z.boolean().optional().describe('true = report only: no heat recalc, archiving, unarchiving, purge, repair, lock sweep, pruning or index rebuild, and no file written. Counts, debts and integrity checks still run.'),
         archive: z.boolean().optional().describe('Also move cold neurons (heat < 0.05, untouched 90+ days) out of the cortex into archives/. Off by default; run dry_run first and read archivable_neurons. Undo with unarchive.'),
@@ -1901,19 +1983,17 @@ export function createServer(shared?: Engines): McpServer {
     'crbro_audit',
     {
       title: 'Audit for credentials',
-      description: 'Read-only scan of every field of every neuron (facts, decisions, patterns, preferences, errors, debts, system map) and of every session log for credentials stored before the filter caught them — API keys, tokens, passwords. Reports where they sit and what kind, never the values. Findings are in the search index too, so recall can return them: remove with crbro_forget (facts for entries, session for a day log), then rotate the credential. Run it after upgrading and whenever a secret may have been pasted into a conversation. crbro_inspect shows content; this only judges it.',
+      description: 'Read-only scan of every neuron (all entry kinds and the map) and every session log for credentials stored before the filter caught them: API keys, tokens, passwords. Reports where and what kind, never the values. Findings are also in the search index, so recall can return them: remove them with crbro_forget (facts for entries, session for a day log), then rotate them. Run it after upgrading or when a secret may have been pasted. crbro_inspect shows content; this judges it.',
       inputSchema: {},
       outputSchema: {
         neurons_affected: z.number(),
         facts_affected: z.number(),
         findings: z.array(z.object({
-          neuron_id: z.string(), name: z.string(), kinds: z.array(z.string()),
-          facts: z.number(), decisions: z.number(), patterns: z.number(), preferences: z.number(),
-          errors: z.number(), debts: z.number(), map: z.number(),
+          neuron_id: z.string(), kinds: z.array(z.string()),
         }).loose()),
         sessions_affected: z.number().optional(),
         session_findings: z.array(z.object({
-          session_id: z.string(), date: z.string(), kinds: z.array(z.string()),
+          session_id: z.string(), kinds: z.array(z.string()),
         }).loose()).optional(),
         message: z.string(),
         note: z.string().optional(),
@@ -2049,13 +2129,13 @@ export function createServer(shared?: Engines): McpServer {
     'crbro_space',
     {
       title: 'Team space',
-      description: 'Read or write team spaces — shared memory with teammates: a private git repository holding notes about the projects you choose to share; nothing else from your brain goes near it. create starts one (name, remote, author); join clones one a teammate created; status reads your identity and spaces; sync exchanges notes now — the manual form of what crbro_boot and crbro_consolidate do alone, useful right after crbro_share (offline is a normal answer, not a failure); leave pushes pending notes, deletes the local copy and stops following its neurons (neurons untouched). Joining shares nothing: put each project in with crbro_share. create and join reply ok:false with the reason on failure.',
+      description: 'Read or write team spaces: shared memory in a private git repository holding only the projects you choose to share. create starts one; join clones a teammate\'s; status shows your identity and spaces; sync exchanges notes now (boot and consolidate do it on their own; offline is a normal answer); leave pushes pending notes and deletes the local copy, keeping your neurons. Joining shares nothing: each project goes in with crbro_share. create and join reply ok:false with the reason on failure.',
       inputSchema: {
-        action: z.enum(['create', 'join', 'status', 'sync', 'leave']).describe('create = start a new space and push it; join = clone one a teammate created; status = your identity and spaces; sync = exchange notes now; leave = sync, then forget the space locally.'),
-        name: z.string().optional().describe('Short name, e.g. "equipo" — the same on everyone\'s machine. Required for create, join and leave; optional for sync (omit = every space); ignored for status.'),
-        remote: z.string().optional().describe('Git URL of a private repository — EMPTY for create, the same URL the creator used for join. E.g. git@github.com:acme/team-memory.git.'),
-        author: z.string().optional().describe('How your notes are signed, e.g. "ana". Lowercase, no spaces. Required for create and join.'),
-        branch: z.string().optional().describe('Branch to use (default "main"). create and join only.'),
+        action: z.enum(['create', 'join', 'status', 'sync', 'leave']).describe('leave = sync, then forget the space locally.'),
+        name: z.string().optional().describe('Short name, the same on every machine, e.g. "equipo". Required for create, join, leave; sync without it syncs all.'),
+        remote: z.string().optional().describe('Git URL of an EMPTY private repository for create; the creator\'s URL for join.'),
+        author: z.string().optional().describe('How your notes are signed, lowercase, e.g. "ana". Required for create and join.'),
+        branch: z.string().optional().describe('create and join: branch (default "main").'),
       },
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     },
@@ -2105,7 +2185,7 @@ export function createServer(shared?: Engines): McpServer {
 
         if (args.action === 'leave') {
           if (!args.name) {
-            return textResult('name is required for leave: which space to leave.');
+            return failed('name is required for leave: which space to leave.');
           }
           const r = await leaveSpace(brain, cortex, args.name);
           return jsonResult({
@@ -2117,10 +2197,10 @@ export function createServer(shared?: Engines): McpServer {
         }
 
         if (!args.name || !args.remote) {
-          return textResult('Both name and remote are required for create and join.');
+          return failed('Both name and remote are required for create and join.');
         }
         if (!args.author) {
-          return textResult('Pass author so your notes carry your name, e.g. author: "ana".');
+          return failed('Pass author so your notes carry your name, e.g. author: "ana".');
         }
 
         const r = args.action === 'create'
@@ -2147,10 +2227,10 @@ export function createServer(shared?: Engines): McpServer {
   // TOOL 15: crbro_share — Put one project into a space, or take it out
   // ═══════════════════════════════════════════════════════════════
   const shareSchema = z.object({
-    neuron: z.string().describe('Neuron id or name to share or unshare.'),
-    space: z.string().optional().describe('Space name, as created or joined with crbro_space. Required unless unshare:true.'),
-    confirm: z.string().optional().describe('The confirm_token from the dry run — returned only when no credential was found. Omit the first time. Ignored with unshare.'),
-    unshare: z.boolean().optional().describe('Stop following `neuron` in its space: no more notes go out, the next sync ignores it, and the neuron can then be forgotten. Already-sent notes stay in the remote and in teammates\' brains. space and confirm are ignored in this mode.'),
+    neuron: z.string().describe('Neuron id or name.'),
+    space: z.string().optional().describe('Space name from crbro_space; required unless unshare.'),
+    confirm: z.string().optional().describe('The dry run\'s confirm_token (given only when no credential was found).'),
+    unshare: z.boolean().optional().describe('Stop sending notes for `neuron`; what was sent stays with the team. space and confirm are ignored.'),
   }).superRefine((v, ctx) => {
     if (!v.unshare && !v.space) {
       ctx.addIssue({ code: 'custom', path: ['space'], message: 'space is required unless unshare:true.' });
@@ -2161,7 +2241,7 @@ export function createServer(shared?: Engines): McpServer {
     'crbro_share',
     {
       title: 'Share a project',
-      description: 'Write: put one neuron into a team space, or take it out with unshare. Call it without confirm first: the dry run reports what would be sent — ops_to_emit, skipped_preferences (preferences never leave this machine) — and refuses outright if it finds a credential (crbro_forget it and rotate it). Show the user, get agreement, call again with the confirm token; a stale token is refused. Entries go out on the next crbro_space action=sync or consolidate, and from then on everything learned about that project flows to the team. unshare stops future notes; what was already sent stays in the remote and in teammates\' brains. Spaces are managed with crbro_space.',
+      description: 'Write: put one neuron into a team space, or take it out with unshare. Without confirm it is a dry run: it reports what would be sent (ops_to_emit; preferences never leave this machine) and refuses outright if it finds a credential (crbro_forget it, rotate it). Show the user, get agreement, call again with the confirm token; a stale token is refused. From then on what is learned about that project reaches the team on each crbro_space sync or consolidate. unshare stops future notes; what was sent stays with the team.',
       inputSchema: shareSchema,
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     },
@@ -2181,7 +2261,7 @@ export function createServer(shared?: Engines): McpServer {
         if (!args.confirm) {
           const prep = await prepareShare(brain, cortex, args.neuron, space);
           if ('error' in prep) {
-            return textResult(prep.error);
+            return failed(prep.error);
           }
           return jsonResult({
             ...prep,
