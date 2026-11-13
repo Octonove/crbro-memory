@@ -179,6 +179,23 @@ function preDispatch() {
   return false;
 }
 
+/**
+ * Every install command also brings the hook copies CRBRO installed earlier up
+ * to this version when nobody edited them (hookrefresh.ts); an edited copy is
+ * named and left alone. A courtesy: it never fails the command.
+ */
+function refreshInstalledHooks() {
+  import('../dist/engine/hookrefresh.js').then(hr => {
+    const here = dirname(fileURLToPath(import.meta.url));
+    for (const c of hr.refreshHooks({ home: homedir(), env: process.env, pkgHooks: join(here, '..', 'hooks') })) {
+      const file = join(c.dir, c.name);
+      if (c.refreshed) console.log(`  ✅ ${file} refreshed to this version (it was an unmodified older copy).`);
+      else if (c.error) console.log(`  ⚠️  ${file} could not be refreshed: ${c.error}`);
+      else if (c.state === 'modified') console.log(`  ⚠️  ${file} was edited by hand: left as it is.`);
+    }
+  }).catch(() => { /* never fails the command */ });
+}
+
 /** What install, uninstall and install-boot need: the installer modules and the context they run in. */
 async function installContext(extra = {}) {
   const [inst, io, { BOOT_NOTICE }] = await Promise.all([
@@ -432,12 +449,16 @@ if (preDispatch()) {
       console.log('');
 
       // Show detected IDEs
+      // A config file is not a connection: say whether CRBRO is in it.
       const ides = detectIDEs();
       if (ides.length > 0) {
-        console.log('  📡 Connected IDEs:');
+        console.log('  📡 Clients found:');
         for (const ide of ides) {
-          console.log(`     ${ide.exists ? '✅' : '⚠️ '} ${ide.name}`);
+          let registered = false;
+          try { registered = ide.exists && /crbro/i.test(readFileSync(ide.configPath, 'utf8')); } catch { /* unreadable */ }
+          console.log(`     ${registered ? '✅' : '⚪'} ${ide.name}${registered ? ' — CRBRO registered' : ide.exists ? ' — CRBRO not registered' : ' — no config yet'}`);
         }
+        console.log('     npx crbro-memory install registers it everywhere; npx crbro-memory doctor checks each registration.');
         console.log('');
       }
     } catch {
@@ -989,6 +1010,7 @@ if (preDispatch()) {
     // Copied with a manifest entry, so later releases refresh it on their own while it is unmodified.
     const source = join(here, '..', 'hooks', 'crbro-lifecycle.mjs');
     hr.installHookFile(dirname(source), basename(source), hookDir);
+    refreshInstalledHooks();   // the other copies CRBRO installed, when unmodified
     settings = settings || {};
     settings.hooks = settings.hooks || {};
     const node = `node "${hookScript.split('\\').join('/')}"`;
@@ -1060,6 +1082,7 @@ if (preDispatch()) {
     const hookDir = join(claudeHome, 'crbro-hooks');
     const source = join(here, '..', 'hooks', 'crbro-guard.mjs');
     const hookScript = hr.installHookFile(dirname(source), basename(source), hookDir);
+    refreshInstalledHooks();   // the other copies CRBRO installed, when unmodified
 
     let installed = false;
     const r0 = io.updateJsonFile(settingsPath, settings => {
@@ -1114,6 +1137,7 @@ if (preDispatch()) {
     // is refreshed on its own by later releases (hookrefresh.ts).
     const hookDir = join(claudeHome, 'crbro-hooks');
     const hookScript = hr.installHookFile(dirname(source), basename(source), hookDir);
+    refreshInstalledHooks();   // the other copies CRBRO installed, when unmodified
     // Injection is OPT-IN since 1.12 (pre-registered consequence of three
     // clean-control benchmark runs: no measured benefit in any model, harm
     // and fabricated compliance in small ones — see the benchmarks in the
@@ -1262,6 +1286,7 @@ if (preDispatch()) {
     const steps = inst.wireBoot(ctx, ['claude-code', 'codex'], wiring);
     if (ctx.dryRun) console.log('  Dry run: nothing is written.\n');
     for (const line of inst.formatSteps(steps)) console.log(line);
+    if (!ctx.dryRun) refreshInstalledHooks();
     console.log('');
     const wired = steps.filter(s => s.status !== 'skipped');
     if (!wired.length) console.log(`  ⚠️  Neither ${io.claudeDir(homedir(), process.env)} nor ${io.codexHome(homedir(), process.env)} was found, so nothing was wired.`);
