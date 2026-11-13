@@ -34,10 +34,14 @@ async function main() {
   }
 
   const { StdioServerTransport } = await import('@modelcontextprotocol/sdk/server/stdio.js');
-  const { createServer } = await import('./server.js');
-  const server = createServer();
+  const { createServer, createEngines } = await import('./server.js');
+  const engines = createEngines();
+  const server = createServer(engines);
   const transport = new StdioServerTransport();
   await server.connect(transport);
+  // Classic mode only: write a dirty index before leaving (search parcel, 2.11).
+  const { flushOnExit } = await import('./search/index.js');
+  flushOnExit(engines.searchEngine);
 }
 
 main().catch((err) => {

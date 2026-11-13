@@ -1,7 +1,7 @@
 import { it, expect } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { retrievalFailures, securityFailures } from '../benchmarks/gates.mjs';
-const baseline = { queries: 48, at1: 37, at3: 40, mrr: 0.806, distractors: 14, confidentDistractors: 2 };
+const baseline = { queries: 48, at1: 40, at3: 41, mrr: 0.844, distractors: 14, confidentDistractors: 2 };
 it('el gate hace fallar realmente el proceso de CI', () => {
   const script = `import { enforceGate } from './benchmarks/gates.mjs'; enforceGate(['synthetic regression']);`;
   const result = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8' });
@@ -10,7 +10,7 @@ it('el gate hace fallar realmente el proceso de CI', () => {
 });
 it('el gate de recuperación rechaza cada regresión y las métricas ausentes', () => {
   expect(retrievalFailures(baseline)).toEqual([]);
-  for (const change of [{ at1: 36 }, { at3: 39 }, { mrr: 0.79 }, { confidentDistractors: 3 }, { queries: 47 }, { mrr: NaN }]) {
+  for (const change of [{ at1: 39 }, { at3: 40 }, { mrr: 0.83 }, { confidentDistractors: 3 }, { queries: 47 }, { mrr: NaN }]) {
     expect(retrievalFailures({ ...baseline, ...change }).length).toBeGreaterThan(0);
   }
 });

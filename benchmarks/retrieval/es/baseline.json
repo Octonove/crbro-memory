@@ -1,0 +1,11 @@
+{
+  "nota": "Medido el 13-11-2026 sobre 2.11 (brazo léxico, el que corre en CI). El gate admite una consulta de tolerancia en recall@1 y recall@3; el resto no puede empeorar. Antes, en 2.10.0: recall@1 18, recall@3 21, tildes 11/17, compuestos 3/4, largas con el tramo 0/3, no_answer 0/8, neurona gorda primera sin serlo 4.",
+  "at1": 25,
+  "at3": 25,
+  "acento_at1": 17,
+  "compuesto_at1": 4,
+  "long_part_shown": 3,
+  "no_answer": 5,
+  "unanswerable_strong": 0,
+  "fat_neuron_top1_wrong": 0
+}

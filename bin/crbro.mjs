@@ -139,14 +139,14 @@ async function semanticInstall(sem) {
   }
   if (!sem.resolveRuntime()) {
     console.log(`  ⬇️  Installing transformers.js into ${home} (~380 MB with onnxruntime)...`);
-    const r = spawnSync('npm', ['install', '--no-audit', '--no-fund', '--loglevel=error', '@huggingface/transformers@3'],
+    const r = spawnSync('npm', ['install', '--no-audit', '--no-fund', '--loglevel=error', '--save-exact', sem.SEMANTIC_RUNTIME],
       { cwd: home, stdio: 'inherit', shell: true });
     if (r.status !== 0) return false;
   }
   const st = sem.semanticStatus();
   if (!st.model_downloaded) {
     console.log(`  ⬇️  Downloading the model (${st.model}, ~118 MB)...`);
-    const idx = new sem.SemanticIndex(fs.mkdtempSync(join(os.tmpdir(), 'crbro-warm-')));
+    const idx = new sem.SemanticIndex(fs.mkdtempSync(join(os.tmpdir(), 'crbro-warm-')), { allowDownload: true });
     await idx.upsert([{ id: 'warm', text: 'hello' }]);   // the first use downloads and caches it
   }
   return true;

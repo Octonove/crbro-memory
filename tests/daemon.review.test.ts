@@ -104,6 +104,10 @@ describe('`crbro daemon off` sticks', () => {
 
     enabled = false;                                      // what `daemon off` does, then it stops the daemon
     await daemon.stop();
+    // Let the proxy notice the loss first: a call sent before it does is, by
+    // design, answered "restarted, call again". The daemon's stop used to take
+    // long enough (a needless index write) to hide that race.
+    while (c.proxy.reconnects() === 0) await new Promise(r => setTimeout(r, 10));
     c.send(call(3, 'crbro_boot'));
     expect((await c.answer(3)).result).toBeTruthy();
     expect(c.proxy.backendKind()).toBe('local');

@@ -343,6 +343,14 @@ export interface SearchResult {
   neuron_id: string;
   name: string;
   domain: string;
+  /**
+   * The ranking score on one 0–1 scale in every mode (2.11): 1 is the best
+   * this query can score — keyword engine: every term matched at its best
+   * hit (rarity-weighted); with the semantic layer: first in both rankings;
+   * with several phrasings: 0.7 x the best phrasing + 0.3 x the mean. Recency
+   * and breadth may lift it a few percent above 1. It orders the list; it is
+   * not a truth value — `confidence` is the label.
+   */
   relevance_score: number;
   /** The chunk that actually matched — not the neuron summary. */
   matching_content: string;
@@ -365,13 +373,20 @@ export interface SearchResult {
   query_terms?: number;
   /**
    * strong = the chunk covers at least half the query (two terms or more when
-   * the query has several); weak = a thin overlap that may well be unrelated.
-   * A keyword memory returns *something* for most questions; this says how
-   * much to trust it.
+   * the query has several), or its semantic cosine clears this brain's
+   * calibrated noise line (2.11); weak = a thin overlap that may well be
+   * unrelated. A keyword memory returns *something* for most questions; this
+   * says how much to trust it. Always the shown row's own label.
    */
   confidence?: 'strong' | 'weak';
   /** Cosine similarity from the opt-in semantic layer, when it saw this chunk. */
   semantic_score?: number;
+  /**
+   * Set when matching_content is one part of a long entry (2.11): which part
+   * (1-based) of how many, where it starts in the entry and the entry's full
+   * length. entry_id reads the whole entry.
+   */
+  matched_part?: { part: number; parts: number; offset: number; entry_chars: number };
   /**
    * The next best live chunks of the same neuron, for the top results only —
    * one neuron can answer with more than one line, and the line you need is

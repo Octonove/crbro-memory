@@ -499,8 +499,8 @@ describe('SearchEngine: retired entries leave recall, removeNeuron drops a neuro
     });
   });
 
-  it('the index format is version 7, so an index without the diary is rebuilt', () => {
-    expect(INDEX_VERSION).toBe(7);
+  it('the index format is version 8, so an index without the diary (7) or with the old tokenizer (8) is rebuilt', () => {
+    expect(INDEX_VERSION).toBe(8);
   });
 });
 

@@ -190,6 +190,14 @@ const out = {
 if (CHECK) enforceGate(retrievalFailures({ queries: N, at1: res.motor.at1, at3: res.motor.at3,
   mrr: res.motor.mrr / N, distractors: D, confidentDistractors: distConfiados }));
 
+// The Spanish set (2.11) is part of the same gate: accents, compounds, long
+// entries, unanswerable questions and a fat same-domain neuron.
+if (CHECK) {
+  const { spawnSync } = await import('node:child_process');
+  const es = spawnSync(process.execPath, [join(HERE, 'es', 'run.mjs'), '--check'], { stdio: 'inherit' });
+  if (es.status !== 0) process.exitCode = 1;
+}
+
 if (process.argv.includes('--json')) {
   console.log(JSON.stringify(out, null, 2));
 } else {

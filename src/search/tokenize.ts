@@ -56,6 +56,46 @@ export function tokenize(text: string): string[] {
 }
 
 /**
+ * The terms a stored text is indexed under (2.11). Exactly the query side's
+ * fold and split — until 2.10 the index used Orama's English splitter, which
+ * cuts BEFORE folding and keeps only à è é ì ò ó ù inside a word, so
+ * "página" was stored as "p" + "gina" and "diseño" as "dise" + "o" while the
+ * query asked for "pagina" and "diseno": 72 % of the entries of a real
+ * Spanish brain were unreachable by any word with á, í, ú, ñ or ü. The same
+ * splitter kept "crbro-memory" as one token, so "memory" found nothing; the
+ * hyphen now splits on both sides. A snake_case identifier is kept whole (a
+ * query keeps it whole too) and its parts are added, so "lista" also finds
+ * "ocultar_de_lista".
+ */
+export function indexTokens(text: string): string[] {
+  const out: string[] = [];
+  for (const t of tokenize(text)) {
+    out.push(t);
+    if (t.includes('_')) for (const p of t.split('_')) if (p) out.push(p);
+  }
+  return out;
+}
+
+/**
+ * An Orama tokenizer component built on the functions above. Orama calls it
+ * with the property name when it indexes a document and without one when it
+ * tokenizes a search term: documents get indexTokens(), terms tokenize(), so
+ * both sides share one normalisation by construction. Tokens are
+ * de-duplicated per text, like Orama's own tokenizer does by default, so
+ * BM25 sees the same term frequencies it always saw.
+ */
+export function createIndexTokenizer(): { language: string; normalizationCache: Map<string, string>; tokenize: (raw: string, language?: string, prop?: string, withCache?: boolean) => string[] } {
+  return {
+    language: 'english',
+    normalizationCache: new Map<string, string>(),
+    tokenize(raw: string, _language?: string, prop?: string): string[] {
+      if (typeof raw !== 'string') return [raw as unknown as string];
+      return [...new Set(prop ? indexTokens(raw) : tokenize(raw))];
+    },
+  };
+}
+
+/**
  * Tokenize a search query: drop stopwords and 1-char noise, dedupe,
  * and keep the original order. If everything was a stopword, fall back
  * to the raw tokens — an empty term list would return nothing at all.

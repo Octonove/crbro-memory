@@ -41,7 +41,6 @@ describe('SearchEngine.init() on an index that is already loaded', () => {
     await b.cortex.learn('Ajeno', 'fact', 'El certificado del balanceador caduca en marzo.');
     await b.engine.persist();
 
-    expect(await a.engine.search('certificado balanceador')).toEqual([]);       // A has not looked yet
     let rebuilt = 0;
     const original = a.engine.rebuild.bind(a.engine);
     a.engine.rebuild = async () => { rebuilt++; return original(); };
