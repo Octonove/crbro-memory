@@ -9,7 +9,7 @@
     "crbro-memory": "bin/crbro.mjs"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && node scripts/build-id.mjs",
     "dev": "tsc --watch",
     "start": "node dist/index.js",
     "test": "vitest run",

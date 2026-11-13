@@ -15,11 +15,13 @@
 // and collecting what clients send.
 
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
-import { promises as fs, statSync } from 'node:fs';
+import { promises as fs, readFileSync, statSync } from 'node:fs';
+import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { stalenessEnabled, shelfWindows, DEFAULT_SHELF_DAYS } from '../engine/shelf.js';
-import { readPackageVersion } from '../version.js';
+import { RUNNING_VERSION } from '../version.js';
+import { LineReader } from './lines.js';
 
 export const DAEMON_PROTOCOL = 1;
 const DAEMON_DIR = '.daemon';
@@ -36,27 +38,64 @@ export interface DaemonState {
   brain: string;
 }
 
-/** The package version, read from disk on each call (the same lookup as view=status), '0.0.0' when unreadable. */
+/**
+ * The version of the code this process runs, '0.0.0' when unreadable. Read
+ * once, when the process loaded (version.ts): npx refreshes its cache in
+ * place, and a proxy that re-read package.json at every reconnection computed
+ * the NEXT release's build and launched its daemon — served by code it never
+ * started.
+ */
 export function packageVersion(): string {
-  const v = readPackageVersion();
-  return v === 'unknown' ? '0.0.0' : v;
+  return RUNNING_VERSION === 'unknown' ? '0.0.0' : RUNNING_VERSION;
 }
 
+/** Written next to the compiled code by `npm run build` (scripts/build-id.mjs). */
+export const BUILD_ID_FILE = 'build-id.json';
+
 /**
- * Version plus the build's own timestamp. The version alone would let a
- * developer's half-built dist serve the clients that launched the published
- * package; the timestamp alone would not survive a reinstall of the same
- * release on another path. Together: you are served by the code you launched.
+ * The build id a compiled tree declares for itself: the version plus a hash
+ * of every compiled .js file, computed when it was built. Two installs of the
+ * same release hold the same bytes and so the same id — one daemon between
+ * them, where the old id (version + the mtime of server.js) gave each copy its
+ * own ~630 MB daemon. Null when the file is missing, malformed, or no longer
+ * describes the code beside it (`tsc --watch` rewrites the code, not the file).
+ */
+export function readBuildId(distDir: string): string | null {
+  try {
+    const meta = JSON.parse(readFileSync(path.join(distDir, BUILD_ID_FILE), 'utf8'));
+    if (typeof meta?.build !== 'string' || !/^[\w.+-]{1,96}$/.test(meta.build)) return null;
+    const check = meta.check;
+    if (typeof check?.file !== 'string' || typeof check?.sha256 !== 'string' || check.file.includes('..')) return null;
+    const sha = createHash('sha256').update(readFileSync(path.join(distDir, check.file))).digest('hex');
+    return sha === check.sha256 ? meta.build : null;
+  } catch {
+    return null;
+  }
+}
+
+/** A tree with no build-id.json (a developer's src under the test runner, or a dist built by bare tsc): version plus the timestamp of server.js. */
+function devBuildId(here: string): string {
+  let stamp = '0';
+  for (const f of ['../server.js', '../server.ts']) {
+    try { stamp = Math.floor(statSync(path.join(here, f)).mtimeMs).toString(36); break; } catch { /* next */ }
+  }
+  return `${packageVersion()}-${stamp}`;
+}
+
+let ownBuild: string | null = null;
+
+/**
+ * Which build this process is, decided once (the first time it is asked) and
+ * never re-read: you are served by the code you launched. In a published or
+ * built tree it is dist/build-id.json; only a tree without one falls back to
+ * version plus the mtime of server.js.
  */
 export function buildId(): string {
-  let stamp = '0';
-  try {
+  if (ownBuild === null) {
     const here = __dirname;   // CommonJS output: dist/daemon, or src/daemon under the test runner
-    for (const f of ['../server.js', '../server.ts']) {
-      try { stamp = Math.floor(statSync(path.join(here, f)).mtimeMs).toString(36); break; } catch { /* next */ }
-    }
-  } catch { /* keep 0 */ }
-  return `${packageVersion()}-${stamp}`;
+    ownBuild = readBuildId(path.join(here, '..')) ?? devBuildId(here);
+  }
+  return ownBuild;
 }
 
 export function daemonDir(brainRoot: string): string {
@@ -206,13 +245,28 @@ export function newToken(): string {
   return randomBytes(32).toString('hex');
 }
 
-export async function writeState(brainRoot: string, state: DaemonState): Promise<void> {
+/**
+ * Write the descriptor atomically. On Windows the rename can fail for a moment
+ * (EPERM/EBUSY while an antivirus or a reading client holds the target), so it
+ * is tried a few times; a temporary that could not become the descriptor is
+ * removed, never left behind with a token in it.
+ */
+export async function writeState(brainRoot: string, state: DaemonState, attempts = 3): Promise<void> {
   const dir = daemonDir(brainRoot);
   await fs.mkdir(dir, { recursive: true, mode: 0o700 });
   const file = stateFile(brainRoot, state.build);
   const tmp = `${file}.${process.pid}.tmp`;
-  await fs.writeFile(tmp, JSON.stringify(state), { mode: 0o600 });
-  await fs.rename(tmp, file);
+  for (let i = 0; ; i++) {
+    try {
+      await fs.writeFile(tmp, JSON.stringify(state), { mode: 0o600 });
+      await fs.rename(tmp, file);
+      return;
+    } catch (err) {
+      await fs.rm(tmp, { force: true }).catch(() => undefined);
+      if (i + 1 >= attempts) throw err;
+      await new Promise(r => setTimeout(r, 100 * (i + 1)));
+    }
+  }
 }
 
 export async function readState(brainRoot: string, build: string = buildId()): Promise<DaemonState | null> {
@@ -243,6 +297,125 @@ export async function listStates(brainRoot: string): Promise<DaemonState[]> {
       } catch { /* a half-written file is not a daemon */ }
     }
   } catch { /* no folder, no daemons */ }
+  return out;
+}
+
+/**
+ * Is the daemon a descriptor names really there? Asked of the endpoint, with
+ * the descriptor's own token — never of the pid: Windows hands pids out again
+ * quickly, and a descriptor weeks old whose pid now belongs to a cmd.exe was
+ * reported "alive" for ever.
+ *
+ *   alive    it answered and proved it holds the token
+ *   refused  nobody listens there (connection refused / no such pipe)
+ *   dead     something answers, but not the daemon this descriptor names
+ *   unknown  no verdict in time (busy, or closed on us): leave it alone
+ */
+export function verifyDaemon(state: DaemonState, timeoutMs = 1_500): Promise<'alive' | 'refused' | 'dead' | 'unknown'> {
+  return new Promise(resolve => {
+    let done = false;
+    const nonce = newNonce();
+    const s = net.connect(state.endpoint);
+    const finish = (v: 'alive' | 'refused' | 'dead' | 'unknown') => {
+      if (done) return;
+      done = true;
+      clearTimeout(t);
+      s.destroy();
+      resolve(v);
+    };
+    // A late answer that arrived while the loop was busy is read before the verdict.
+    const t = setTimeout(() => setImmediate(() => finish('unknown')), timeoutMs);
+    const reader = new LineReader(line => {
+      let m: any = null;
+      try { m = JSON.parse(line); } catch { /* not a daemon */ }
+      finish(m?.crbro === 'hello' && sameProof(String(m.proof || ''), proof(state.token, 'daemon', nonce)) ? 'alive' : 'dead');
+    }, () => finish('dead'), 64 * 1024);
+    s.on('connect', () => s.write(`${JSON.stringify({ crbro: 'hello', protocol: DAEMON_PROTOCOL, nonce })}\n`));
+    s.on('data', chunk => reader.push(typeof chunk === 'string' ? Buffer.from(chunk, 'utf8') : chunk));
+    s.on('error', err => {
+      const code = (err as NodeJS.ErrnoException).code;
+      finish(code === 'ECONNREFUSED' || code === 'ENOENT' ? 'refused' : 'unknown');
+    });
+    s.on('close', () => finish('unknown'));
+  });
+}
+
+/** A *.tmp this old was left by a writer that died or failed: nobody will rename it any more. */
+const TMP_STALE_MS = 5 * 60_000;
+/** A start lock is held for the seconds a start takes. */
+const LOCK_STALE_MS = 5 * 60_000;
+/** A blocked marker matters to the proxy waiting right now, not tomorrow. */
+const BLOCKED_STALE_MS = 24 * 3_600_000;
+
+export interface PruneResult {
+  /** File names removed from .daemon. */
+  removed: string[];
+  /** Descriptors whose daemon answered and proved itself. */
+  alive: DaemonState[];
+  /** Descriptors with no verdict (a busy daemon): kept. */
+  unknown: DaemonState[];
+}
+
+/**
+ * Sweep .daemon: descriptors whose daemon is not there (checked at the
+ * endpoint, with the token), temporaries, start locks and blocked markers that
+ * nobody will ever come back for. Before 2.11 only `daemon status|stop|off`
+ * removed anything, by pid, and nobody runs those: twelve dead descriptors and
+ * five token-bearing temporaries were found in one brain. `keep` names a build
+ * whose descriptor is not probed (the caller's own).
+ */
+export async function pruneDaemonDir(
+  brainRoot: string,
+  opts: { keep?: string; now?: number; verify?: typeof verifyDaemon } = {},
+): Promise<PruneResult> {
+  const dir = daemonDir(brainRoot);
+  const now = opts.now ?? Date.now();
+  const verify = opts.verify ?? verifyDaemon;
+  const out: PruneResult = { removed: [], alive: [], unknown: [] };
+  let names: string[];
+  try { names = await fs.readdir(dir); } catch { return out; }
+  const keepFile = opts.keep ? path.basename(stateFile(brainRoot, opts.keep)) : null;
+
+  const rmIfOlder = async (name: string, maxAgeMs: number) => {
+    try {
+      const st = await fs.stat(path.join(dir, name));
+      if (now - st.mtimeMs <= maxAgeMs) return;
+      await fs.rm(path.join(dir, name), { force: true });
+      out.removed.push(name);
+    } catch { /* gone already */ }
+  };
+
+  const checks: Promise<void>[] = [];
+  for (const name of names) {
+    if (/\.json\.\d+\.tmp$/.test(name)) { checks.push(rmIfOlder(name, TMP_STALE_MS)); continue; }
+    if (/^[0-9a-f]{16}\.lock$/.test(name)) { checks.push(rmIfOlder(name, LOCK_STALE_MS)); continue; }
+    if (/^[0-9a-f]{16}\.blocked$/.test(name)) { checks.push(rmIfOlder(name, BLOCKED_STALE_MS)); continue; }
+    if (!/^[0-9a-f]{16}\.json$/.test(name) || name === keepFile) continue;
+    checks.push((async () => {
+      const file = path.join(dir, name);
+      let s: DaemonState;
+      try { s = JSON.parse(await fs.readFile(file, 'utf8')) as DaemonState; } catch { return; }
+      // Only descriptors that are what their name says: this brain, this build's own endpoint.
+      // Anything else is not ours to judge — nor a place to connect to.
+      if (s?.protocol !== DAEMON_PROTOCOL || typeof s.build !== 'string' || typeof s.token !== 'string') return;
+      if (path.basename(stateFile(brainRoot, s.build)) !== name || s.endpoint !== endpointFor(brainRoot, s.build)) return;
+      const v = await verify(s);
+      if (v === 'alive') { out.alive.push(s); return; }
+      if (v === 'unknown') { out.unknown.push(s); return; }
+      // Removed only if it is still the same descriptor: a replacement may have been written meanwhile.
+      try {
+        const again = JSON.parse(await fs.readFile(file, 'utf8')) as DaemonState;
+        if (again?.token !== s.token) return;
+        await fs.rm(file, { force: true });
+        out.removed.push(name);
+      } catch { return; }
+      // A socket file nobody listens on (never a pipe, never one somebody answers on).
+      if (v === 'refused' && process.platform !== 'win32' && path.dirname(s.endpoint) === dir) {
+        try { await fs.rm(s.endpoint, { force: true }); out.removed.push(path.basename(s.endpoint)); } catch { /* best effort */ }
+      }
+    })());
+  }
+  await Promise.all(checks);
   return out;
 }
 
