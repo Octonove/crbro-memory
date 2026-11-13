@@ -1595,7 +1595,7 @@ function printHelp() {
     '    npx crbro-memory remove-miner     Remove auto-miner',
     '',
     '  Backup (one gzipped file per copy; consolidate makes one a day on its own):',
-    '    npx crbro-memory backup           Back the brain up now (keeps the newest 7)',
+    '    npx crbro-memory backup           Back the brain up now (keeps the newest 7, plus daily, weekly and monthly copies)',
     '    npx crbro-memory backup list      What there is, newest first',
     '    npx crbro-memory backup restore FILE   Unpack into a NEW folder, never over the live brain',
     '    CRBRO_BACKUP_DIR=<synced folder>  Put them somewhere that survives the disk',

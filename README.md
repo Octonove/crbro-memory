@@ -31,9 +31,7 @@ Download the `.mcpb` bundle from the [latest release](https://github.com/Octonov
 npx crbro-memory install
 ```
 
-It finds the MCP clients on this machine (Claude Code, Claude Desktop, Cursor, Codex), registers CRBRO in each with the timeouts that client needs, and makes the memory load itself at the start of every conversation. It keeps its engine in one stable folder instead of re-resolving `npx` on every start, and it merges into your config files — it never rewrites them. See what it would do first with `--dry-run`; remove everything it did with `npx crbro-memory uninstall` ([complete uninstall](#complete-uninstall)).
-
-<!-- TODO-INTEGRATOR: confirm the exact behaviour and flags of `crbro-memory install` / `uninstall` (client selection, --dry-run, --yes, --purge) against parcel E's final code and fix this paragraph. -->
+It finds the MCP clients on this machine (Claude Code, Claude Desktop, Cursor, Codex), copies the engine to one stable folder (`~/.crbro-engine/<version>`, or `--engine-dir DIR`), registers `node <that folder>/crbro.mjs` in each client with the timeouts that client needs, and makes the memory load itself at the start of every conversation. No `npx` at client start, so every client runs the same build and shares one daemon. It merges into your config files and never rewrites them: every file it touches keeps a timestamped backup beside it (`<file>.crbro-bak-<stamp>`). Pick clients with `--clients claude-code,codex` (default `auto`), see what it would do first with `--dry-run`, and get the report as JSON with `--json`. `npx crbro-memory uninstall` takes the same flags and removes only what CRBRO added — never the brain ([complete uninstall](#complete-uninstall)).
 
 Then **restart the client, open a new conversation, and check that `crbro_boot` actually ran** and returned a neuron count. `npx crbro-memory doctor` is a read-only check of what is installed where.
 
@@ -48,7 +46,7 @@ Prefer to edit config yourself? Register CRBRO at the **user level, not per-proj
 claude mcp add --scope user crbro -- npx -y crbro-memory
 ```
 
-**Claude Desktop** — `%APPDATA%\Claude\claude_desktop_config.json` on Windows, `~/Library/Application Support/Claude/claude_desktop_config.json` on macOS:
+**Claude Desktop** — `%APPDATA%\Claude\claude_desktop_config.json` on Windows, `~/Library/Application Support/Claude/claude_desktop_config.json` on macOS, `~/.config/Claude/claude_desktop_config.json` on Linux:
 ```json
 {
   "mcpServers": {
@@ -59,7 +57,6 @@ claude mcp add --scope user crbro -- npx -y crbro-memory
   }
 }
 ```
-<!-- TODO-INTEGRATOR: add the Linux path of Claude Desktop's config only if parcel E's client detection supports it. -->
 
 **Cursor** — `~/.cursor/mcp.json` (the one in your home folder, not a project's `.cursor/`): same JSON as above.
 
@@ -71,7 +68,7 @@ args = ["-y", "crbro-memory"]
 startup_timeout_sec = 60
 tool_timeout_sec = 120
 ```
-<!-- TODO-INTEGRATOR: confirm that 60 / 120 are the values `crbro-memory install` writes for Codex. -->
+`install` and `install-boot` add these two lines only when they are missing; values you set yourself are kept.
 
 **Docker** (the brain lives in `/root/.crbro`; mount a volume to keep it. The image carries no semantic runtime, so recall is keyword-only there):
 ```bash
@@ -332,7 +329,7 @@ npx crbro-memory uninstall --dry-run     # what it would remove
 npx crbro-memory uninstall
 ```
 
-<!-- TODO-INTEGRATOR: confirm what `uninstall` covers and whether a `--purge` flag exists for the brain, backups and keychain; adjust the first lines of this list. -->
+It removes the registrations that run CRBRO in every client it finds, its hooks and boot wiring, the Claude Code mod and the engine folder `install` created. It keeps the backup of every file it edits, and it never touches the brain, your backups or the keychain: it prints where they are, and there is no flag that deletes them. That last step is yours (item 7 below).
 
 By hand, or to check that nothing is left, in this order:
 
@@ -342,7 +339,7 @@ By hand, or to check that nothing is left, in this order:
 4. **Remove the Claude Code mod:** `npx crbro-memory uninstall-mod`.
 5. **Remove the scheduled miner**, if you set it up: `npx crbro-memory remove-miner`.
 6. **Remove credentials** you stored: `npx crbro-memory secret list`, then `secret remove NAME --yes` for each. Deleting the brain does *not* delete keychain entries.
-7. **Delete the data**, only if you want the memory gone for good: `~/.crbro` (brain, quarantine and semantic model), `~/.crbro-backups`, `~/.crbro-keys`,, and the engine folder that `install` created, if any (`uninstall --dry-run` names it).
+7. **Delete the data**, only if you want the memory gone for good: `~/.crbro` (brain, quarantine and semantic model), `~/.crbro-backups`, `~/.crbro-keys`, and the engine folder that `install` created, if any (`uninstall --dry-run` names it).
 8. Copies you shared with a team space stay on your teammates' disks and in the git remote.
 
 ### What does it send over the network?
