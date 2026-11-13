@@ -546,24 +546,20 @@ if (command === 'doctor') {
     const { resolveBrainDir } = await import('../dist/engine/brain.js');
     const ep = await import('../dist/daemon/endpoint.js');
     const { controlDaemon } = await import('../dist/daemon/proxy.js');
-    const fs = await import('fs');
     const root = resolveBrainDir();
     const sub = args[1] || 'status';
 
+    let cleaned = 0;
     const running = async () => {
+      // Each descriptor is asked at its own endpoint, with its own token — not
+      // by pid: Windows hands pids out again, and a descriptor whose pid had
+      // become a cmd.exe was listed as alive for ever. Nobody there: the file
+      // goes (with stale temporaries and locks). No verdict in time (a daemon
+      // busy rebuilding): it stays, and is listed as not answering.
+      const swept = await ep.pruneDaemonDir(root);
+      cleaned += swept.removed.length;
       const out = [];
-      for (const st of await ep.listStates(root)) {
-        const reply = await controlDaemon(root, 'status', st.build);
-        if (reply) { out.push({ st, reply }); continue; }
-        // No answer is not proof of death: a daemon in the middle of a rebuild
-        // answers late, and deleting its state file would orphan it — alive,
-        // holding the brain, and unreachable by every client. Only a pid the
-        // system says is gone loses its file.
-        let alive = true;
-        try { process.kill(st.pid, 0); } catch (e) { alive = e.code === 'EPERM'; }
-        if (alive) out.push({ st, reply: null });
-        else { try { fs.rmSync(ep.stateFile(root, st.build), { force: true }); } catch { /* stale file, best effort */ } }
-      }
+      for (const st of [...swept.alive, ...swept.unknown]) out.push({ st, reply: await controlDaemon(root, 'status', st.build) });
       return out;
     };
 
@@ -598,6 +594,7 @@ if (command === 'doctor') {
         console.log(`  Running:  pid ${reply.pid} · ${reply.version} (${reply.build}) · ${reply.connections} conversation(s) · ${reply.rss_mb} MB · up ${Math.round(reply.uptime_s / 60)} min · idle exit ${reply.idle_minutes} min`);
       }
       if (list.length > 1) console.log('  ⚠️  More than one build is serving this brain. Point every client at the same install to share one.');
+      if (cleaned > 0) console.log(`  Cleaned:  ${cleaned} file(s) left in .daemon by daemons that are gone`);
       console.log(`  Log:      ${root}${root.includes('\\') ? '\\' : '/'}.daemon${root.includes('\\') ? '\\' : '/'}daemon.log`);
       console.log('');
     }
