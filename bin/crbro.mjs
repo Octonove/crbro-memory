@@ -1330,7 +1330,8 @@ if (command === 'doctor') {
     const kb = (n) => `${(n / 1024).toFixed(0)} KB`;
     try {
       if (sub === 'create') {
-        const keep = flag('--keep') ? Number(flag('--keep')) : undefined;
+        // --keep present means a whole number ≥ 1; anything else ("siete", a missing value) is refused, never "keep none".
+        const keep = args.includes('--keep') ? bk.validateKeep(/^\d+$/.test(flag('--keep') ?? '') ? Number(flag('--keep')) : flag('--keep')) : undefined;
         const r = await bk.createBackup(paths, { dir, keep });
         console.log('');
         console.log(`  ✅ Backup written: ${r.path}`);
