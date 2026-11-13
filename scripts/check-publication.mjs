@@ -26,6 +26,8 @@ const add = (file, label) => {
 const listed = execFileSync('git', ['-C', root, 'ls-files', '--cached', '--others', '--exclude-standard', '-z'], { encoding: 'utf8' });
 for (const file of listed.split('\0').filter(Boolean)) add(path.join(root, file), 'git-candidate');
 let npmCount = null, bundleCount = null;
+// Topes con holgura sobre el paquete actual (61 ficheros, ~320 KB). Subirlos es una decision, no un descuido.
+const MAX_NPM_FILES = 120, MAX_NPM_BYTES = 600 * 1024;
 if (gitOnly < 0) {
   const raw = execFileSync(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['pack', '--dry-run', '--json', '--ignore-scripts'],
     { cwd: root, encoding: 'utf8', shell: process.platform === 'win32', stdio: ['ignore', 'pipe', 'pipe'] });
@@ -34,8 +36,14 @@ if (gitOnly < 0) {
     if (!/^(?:(?:dist|bin|hooks|mods)\/|(?:README\.md|SECURITY\.md|LICENSE|package\.json)$)/.test(f.path)) {
       blocked.push({ file: f.path, reason: 'outside-npm-allowlist', surface: 'npm' });
     }
+    if (/^dist\/.*(?:\.map|\.d\.ts)$/.test(f.path)) {
+      blocked.push({ file: f.path, reason: 'unpublished-artifact (sourcemap or declaration)', surface: 'npm' });
+    }
     add(path.join(root, f.path), 'npm');
   }
+  // Tope de tamano: si el tarball crece de golpe, alguien ha metido algo que no debia.
+  if (npmCount > MAX_NPM_FILES) blocked.push({ file: `(${npmCount} files)`, reason: `npm-file-count-over-${MAX_NPM_FILES}`, surface: 'npm' });
+  if (pack.size > MAX_NPM_BYTES) blocked.push({ file: `(${pack.size} bytes)`, reason: `npm-tarball-over-${MAX_NPM_BYTES}-bytes`, surface: 'npm' });
   const staging = path.join(root, 'build', 'mcpb');
   if (existsSync(staging)) {
     bundleCount = 0;

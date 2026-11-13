@@ -14,9 +14,11 @@
     "start": "node dist/index.js",
     "test": "vitest run",
     "test:watch": "vitest",
-    "prepublishOnly": "npm run build && node scripts/check-publication.mjs",
+    "prepublishOnly": "npm run build && npm test && node scripts/check-publication.mjs",
     "mcpb": "node scripts/build-mcpb.mjs",
     "mcpb:verify": "node scripts/verify-mcpb.mjs",
+    "typecheck": "tsc -p tsconfig.check.json",
+    "smoke": "node scripts/smoke-stdio.mjs",
     "bench": "node benchmarks/retrieval/run.mjs --check && node benchmarks/security/run.mjs --check"
   },
   "keywords": [
@@ -40,10 +42,12 @@
     "url": "git+https://github.com/Octonove/crbro-memory.git"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=20.0.0"
   },
   "files": [
     "dist/",
+    "!dist/**/*.map",
+    "!dist/**/*.d.ts",
     "bin/",
     "hooks/",
     "mods/",
