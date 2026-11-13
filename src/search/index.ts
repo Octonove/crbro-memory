@@ -19,7 +19,7 @@ import type { AnyOrama, RawData } from '@orama/orama';
 import path from 'node:path';
 import { readJSON, writeJSON, listJSONFiles, fileExists, deleteJSON, fileMtime, newestMtime } from '../utils/fs.js';
 import { chunkId, factId } from '../utils/hash.js';
-import { queryTerms, variants } from './tokenize.js';
+import { queryTerms, variants, createIndexTokenizer } from './tokenize.js';
 import { SemanticIndex, semanticEnabled, type SemanticHit } from './semantic.js';
 import { entryId } from '../sync/ops.js';
 import { stalenessContextOf, factStaleness, entryStaleness, type StalenessContext, type StaleInfo } from '../engine/shelf.js';
@@ -36,7 +36,7 @@ import type { Neuron, SearchResult, Fact } from '../types/index.js';
  * 2.0) are no longer chunked, so an index built before it must be rebuilt or
  * it would keep serving entries that were retired.
  */
-export const INDEX_VERSION = 7;   // 4: keys field (1.15) · 5: entry_status (2.0) · 6: eid per chunk (2.1) · 7: session logs indexed (2.2)
+export const INDEX_VERSION = 8;   // 4: keys field (1.15) · 5: entry_status (2.0) · 6: eid per chunk (2.1) · 7: session logs indexed (2.2) · 8: own tokenizer, 4 indexed fields, long entries in parts (2.11)
 
 /** Weight given to a neuron for each *additional* chunk that matches. */
 const BREADTH_BONUS = 0.05;
@@ -167,19 +167,30 @@ function staleView(s: StaleInfo | null): SearchResult['staleness'] | undefined {
   };
 }
 
+/**
+ * What Orama INDEXES: only the four fields a search reads. Every document
+ * also carries, stored but not indexed (2.11), its `id` ("<neuron_id>#<hash>",
+ * Orama's own key), `neuron`, `kind` (header | fact | decision | pattern |
+ * preference | error | debt | map | session), `eid` (the entry's own id:
+ * factId for facts, entryId otherwise, 'map', '' for the header), `domain`,
+ * `added`, `heat` and, for a part of a long entry, `part`/`parts`/`offset`/
+ * `entry_chars`. Until 2.10 all of them were searchable and sortable
+ * strings: on a 7,386-entry brain the index file was 77.7 MB for 9.25 MB of
+ * neurons, most of it term frequencies, radix trees and sort structures for
+ * ids and dates nobody searched. They are filtered in JS (see searchTerm),
+ * never with an Orama `where`.
+ */
 const SCHEMA = {
-  id: 'string' as const,       // "<neuron_id>#<hash>"  — must be `id` for Orama
-  neuron: 'string' as const,
   name: 'string' as const,
   text: 'string' as const,
   keys: 'string' as const,     // aliases a future question may use — facts only (1.15)
-  kind: 'string' as const,     // header | fact | decision | pattern | preference
-  eid: 'string' as const,      // the entry's own id: factId for facts, entryId otherwise, 'map', '' for the header (2.1)
-  domain: 'string' as const,
   tags: 'string' as const,
-  added: 'string' as const,
-  heat: 'number' as const,
 };
+
+/** A fresh Orama database with CRBRO's tokenizer and no sort structures (nothing sorts by a field). */
+function newDb(): AnyOrama {
+  return create({ schema: SCHEMA, components: { tokenizer: createIndexTokenizer() }, sort: { enabled: false } } as any) as AnyOrama;
+}
 
 interface StoredIndex {
   v: number;
@@ -392,7 +403,7 @@ export class SearchEngine {
       try {
         const stored = await readJSON<StoredIndex>(indexPath);
         if (stored && stored.v === INDEX_VERSION && stored.data && !(await this.isStale())) {
-          this.db = create({ schema: SCHEMA });
+          this.db = newDb();
           load(this.db, stored.data);
           this.docCount = this.countDocs(stored.data);
           if (this.recoverChunkMap(stored.data)) return 'loaded';
@@ -515,7 +526,7 @@ export class SearchEngine {
 
   private async doRebuild(): Promise<number> {
     this.syncedAt = Date.now();
-    this.db = create({ schema: SCHEMA });
+    this.db = newDb();
     this.docCount = 0;
     this.chunksByNeuron.clear();
 
