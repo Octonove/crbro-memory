@@ -810,9 +810,11 @@ if (preDispatch()) {
       process.exitCode = 1;
       return;
     }
-    const lessons = lessonsFor(index, texto, 10);
-    if (lessons.length === 0) { console.log('  Nothing stored mentions that command.'); return; }
-    for (const l of lessons) console.log(`  • [${l.k}${l.d ? ' · ' + l.d : ''} · ${l.n}] ${l.t}\n`);
+    // As the hook would answer here: this folder's project, lessons of other origins only with CRBRO_GUARD_ORIGINS=all.
+    const allOrigins = String(process.env.CRBRO_GUARD_ORIGINS || '').toLowerCase() === 'all';
+    const lessons = lessonsFor(index, texto, 10, { cwd: process.cwd(), allOrigins });
+    if (lessons.length === 0) { console.log('  Nothing stored mentions that command (for this folder\'s project).'); return; }
+    for (const l of lessons) console.log(`  • [${l.o ? `from ${l.o} · ` : ''}${l.k}${l.d ? ' · ' + l.d : ''} · ${l.n}] ${l.t}\n`);
   })().catch(e => { console.error(e.message); process.exit(1); });
 
 } else if (command === 'usage' || command === 'postmortem') {

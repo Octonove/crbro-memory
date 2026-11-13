@@ -15,12 +15,16 @@
 // looks keys up, so the two cannot drift apart.
 
 import path from 'node:path';
+import { existsSync } from 'node:fs';
 import { readJSON, writeJSON, listJSONFiles, now } from '../utils/fs.js';
 import { entryId } from '../sync/ops.js';
 import type { Brain } from './brain.js';
 import type { Neuron } from '../types/index.js';
 
-export const TRIGGER_INDEX_VERSION = 2;   // 2: path: keys, so exploring a project wakes its lessons
+// 2: path: keys, so exploring a project wakes its lessons. 3 (2.11): each entry
+// says which projects it belongs to (p) and, when it is not the user's own,
+// where it came from (o); `projects` maps a folder or alias to its project.
+export const TRIGGER_INDEX_VERSION = 3;
 export const TRIGGER_FILE = 'triggers.json';
 const PREVIEW = 320;
 /** Lessons handed over per command. More than this is a lecture, and lectures get skimmed. */
@@ -29,6 +33,10 @@ export const MAX_LESSONS = 3;
 export interface TriggerEntry {
   /** neuron id · neuron name · entry id · kind · day recorded ('' when undated) · opening of the text */
   n: string; name: string; e: string; k: 'error' | 'debt' | 'pattern'; d: string; t: string;
+  /** The projects its neuron belongs to (ids of projects.json); absent = no project, it may speak anywhere. */
+  p?: string[];
+  /** Where it came from when it is not the user's own: 'team:<author>' or 'miner' (entry_source). */
+  o?: string;
 }
 export interface TriggerIndex {
   v: number;
@@ -36,7 +44,26 @@ export interface TriggerIndex {
   /** "firebase deploy" → positions in `entries`. */
   keys: Record<string, number[]>;
   entries: TriggerEntry[];
+  /** A folder name or alias (lower-cased) → its project id, from projects.json. */
+  projects?: Record<string, string>;
 }
+
+/** What the guard reads from the brain's project registry (projects.json). */
+export interface ProjectsFile {
+  projects?: Record<string, { id?: string; aliases?: string[]; neurons?: string[] }>;
+}
+
+/**
+ * Subcommands that only look: `git status`, `gh repo view`… A lesson that
+ * mentions one in passing ("after git status showed…") is not about running it,
+ * so prose never makes a key of these — only a command in backticks does. They
+ * were most of the guard's noise: `git status` in one repo woke three lessons
+ * about another project because each said "git status" somewhere.
+ */
+const READ_ONLY = new Set(('git status|git log|git branch|git diff|git show|git remote|git config|git rev-parse|git ls-files|git blame|'
+  + 'gh repo view|gh pr view|gh pr list|gh pr status|gh pr checks|gh issue view|gh issue list|gh run list|gh run view|gh release view|gh release list|gh api|'
+  + 'npm ls|npm view|npm list|npm outdated|docker ps|docker images|docker logs|kubectl get|kubectl describe|kubectl logs|'
+  + 'gcloud config|aws sts|node --version|npm --version|python --version').split('|'));
 
 /** Programs whose next word names the action. Anything else needs backticks or a script name to count. */
 const HEADS = new Set(('git npm npx pnpm yarn bun bunx node deno python python3 py pip pipx uv firebase gcloud gsutil gh docker '
@@ -153,16 +180,66 @@ export function keysOfEntry(text: string): string[] {
     const next = word(words[i + 1] || '');
     if (!next || !SUBCOMMAND.test(next) || PROSE.has(next)) continue;
     const third = word(words[i + 2] || '');
-    keys.add(DEEP.has(`${w} ${next}`) && third && SUBCOMMAND.test(third) && !third.startsWith('-') && !PROSE.has(third) ? `${w} ${next} ${third}` : `${w} ${next}`);
+    const key = DEEP.has(`${w} ${next}`) && third && SUBCOMMAND.test(third) && !third.startsWith('-') && !PROSE.has(third) ? `${w} ${next} ${third}` : `${w} ${next}`;
+    if (READ_ONLY.has(key)) continue;   // from backticks only
+    keys.add(key);
   }
   // A script is only a trigger as the thing that runs; a program pair needs a known program.
   return [...keys].filter(k => k.startsWith('path:') || (k.includes(' ') ? HEADS.has(k.split(' ')[0]) || WRAPPERS.has(k.split(' ')[0]) : SCRIPT.test(k)));
 }
 
-export function buildTriggerIndex(neurons: Neuron[], builtAt: string = now()): TriggerIndex {
+/** "C:\\Work\\Shop-Site" and "shop_site" alike: lower case, every run of other characters one dash. */
+function slug(s: string): string {
+  return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+}
+
+/**
+ * Alias → project id, and neuron id → its projects. A neuron belongs to a
+ * project when the registry binds it (crbro_boot project_neurons), or when
+ * its id or name spells the project's folder name as whole words
+ * (`project_shop_site` and the alias `shop-site`). Aliases shorter than four
+ * characters name too much to count by name.
+ */
+export function projectMaps(registry: ProjectsFile | null | undefined, neurons: Neuron[]) {
+  const aliases: Record<string, string> = {};
+  const byNeuron = new Map<string, Set<string>>();
+  const named: Array<{ id: string; token: string }> = [];
+  for (const [key, p] of Object.entries(registry?.projects ?? {})) {
+    const id = typeof p?.id === 'string' ? p.id : key;
+    for (const a of [id, ...(Array.isArray(p?.aliases) ? p.aliases : [])]) {
+      if (typeof a !== 'string' || !a) continue;
+      const lower = a.toLowerCase().replace(/\\/g, '/').replace(/\/+$/, '');
+      aliases[lower] = id;
+      const base = lower.split('/').pop() || lower;
+      aliases[base] ??= id;
+      const token = slug(base);
+      if (token.length >= 4 && !token.startsWith('project-')) named.push({ id, token });
+    }
+    for (const n of Array.isArray(p?.neurons) ? p.neurons : []) {
+      if (!byNeuron.has(n)) byNeuron.set(n, new Set());
+      byNeuron.get(n)!.add(id);
+    }
+  }
+  for (const n of neurons) {
+    if (!n?.id) continue;
+    const words = `-${slug(n.id)}-${slug(n.name || '')}-`;
+    for (const { id, token } of named) {
+      if (words.includes(`-${token}-`)) {
+        if (!byNeuron.has(n.id)) byNeuron.set(n.id, new Set());
+        byNeuron.get(n.id)!.add(id);
+      }
+    }
+  }
+  return { aliases, byNeuron };
+}
+
+export function buildTriggerIndex(neurons: Neuron[], builtAt: string = now(), registry?: ProjectsFile | null): TriggerIndex {
   const index: TriggerIndex = { v: TRIGGER_INDEX_VERSION, built: builtAt, keys: {}, entries: [] };
+  const { aliases, byNeuron } = projectMaps(registry, neurons);
+  if (Object.keys(aliases).length) index.projects = aliases;
   for (const n of neurons) {
     if (!n || n.type === 'protocol') continue;
+    const projects = [...(byNeuron.get(n.id) ?? [])].sort();
     const lists: Array<[TriggerEntry['k'], string[] | undefined]> = [['error', n.errors], ['debt', n.debts], ['pattern', n.patterns]];
     for (const [k, list] of lists) {
       for (const text of list || []) {
@@ -170,10 +247,13 @@ export function buildTriggerIndex(neurons: Neuron[], builtAt: string = now()): T
         const keys = keysOfEntry(text);
         if (keys.length === 0) continue;
         const at = index.entries.length;
+        const origin = n.entry_source?.[entryId(text)];
         index.entries.push({
           n: n.id, name: n.name, e: entryId(text), k,
           d: (n.entry_dates?.[entryId(text)] || '').slice(0, 10),
           t: text.length > PREVIEW ? `${text.slice(0, PREVIEW).trimEnd()}…` : text,
+          ...(projects.length ? { p: projects } : {}),
+          ...(origin ? { o: origin } : {}),
         });
         for (const key of keys) (index.keys[key] ||= []).push(at);
       }
@@ -182,13 +262,66 @@ export function buildTriggerIndex(neurons: Neuron[], builtAt: string = now()): T
   return index;
 }
 
-/** What the hook would say for this command: errors first, then newest first, capped. */
-export function lessonsFor(index: TriggerIndex, command: string, max: number = MAX_LESSONS): TriggerEntry[] {
-  const hits = new Set<number>();
-  for (const k of keysOfCommand(command)) for (const i of index.keys[k] || []) hits.add(i);
+/**
+ * The project a working folder belongs to, by the index's alias map: the
+ * folder itself, the repository root it is in, or their names. Mirrored in
+ * hooks/crbro-guard.mjs (tested).
+ */
+export function projectOf(index: Pick<TriggerIndex, 'projects'>, cwd: string | undefined): string | null {
+  const map = index.projects;
+  if (!map || !cwd) return null;
+  const candidates: string[] = [];
+  let dir = path.resolve(cwd);
+  for (let i = 0; i < 12; i++) {
+    candidates.push(dir);
+    if (existsSync(path.join(dir, '.git'))) break;
+    const up = path.dirname(dir);
+    if (up === dir) break;
+    dir = up;
+  }
+  // The folder and the repository root, by full path first, then by name.
+  const firstAndRoot = candidates.length > 1 ? [candidates[0], candidates[candidates.length - 1]] : candidates;
+  for (const c of firstAndRoot) {
+    const full = c.toLowerCase().replace(/\\/g, '/').replace(/\/+$/, '');
+    if (map[full]) return map[full];
+  }
+  for (const c of firstAndRoot) {
+    const name = path.basename(c).toLowerCase();
+    if (map[name]) return map[name];
+  }
+  return null;
+}
+
+export interface LessonOptions {
+  /** The working folder the command runs in: lessons of other projects stay quiet there. */
+  cwd?: string;
+  /** Show lessons that came from a team space or the miner, labelled. Off by default. */
+  allOrigins?: boolean;
+}
+
+/**
+ * What the hook would say for this command: the lessons whose keys it hits,
+ * from this project or from no project — another project's lesson speaks only
+ * when the command walks into that project's folder (a path: key) — never a
+ * teammate's or the miner's unless asked; this project's first, then errors,
+ * debts, patterns, newest first, capped.
+ */
+export function lessonsFor(index: TriggerIndex, command: string, max: number = MAX_LESSONS, opts: LessonOptions = {}): TriggerEntry[] {
+  const hits = new Map<number, boolean>();   // entry → reached through a path: key
+  const walked = new Set<string>();           // projects whose folder the command walks into
+  for (const k of keysOfCommand(command)) {
+    if (k.startsWith('path:') && index.projects?.[k.slice(5)]) walked.add(index.projects[k.slice(5)]);
+    for (const i of index.keys[k] || []) hits.set(i, hits.get(i) || k.startsWith('path:'));
+  }
+  const here = projectOf(index, opts.cwd);
   const rank = { error: 0, debt: 1, pattern: 2 } as const;
-  return [...hits].map(i => index.entries[i])
-    .sort((a, b) => rank[a.k] - rank[b.k] || (a.d < b.d ? 1 : a.d > b.d ? -1 : a.e < b.e ? -1 : 1))
+  const mine = (l: TriggerEntry) => (here && l.p?.includes(here) ? 0 : 1);
+  return [...hits].map(([i, viaPath]) => ({ l: index.entries[i], viaPath }))
+    .filter(({ l, viaPath }) => !!l
+      && (!l.o || !!opts.allOrigins)
+      && (!l.p?.length || (here !== null && l.p.includes(here)) || viaPath || l.p.some(x => walked.has(x))))
+    .map(({ l }) => l)
+    .sort((a, b) => mine(a) - mine(b) || rank[a.k] - rank[b.k] || (a.d < b.d ? 1 : a.d > b.d ? -1 : a.e < b.e ? -1 : 1))
     .slice(0, max);
 }
 
@@ -216,7 +349,9 @@ export async function loadAllNeurons(brain: Brain): Promise<Neuron[]> {
 export async function writeTriggerIndex(brain: Brain, preloaded?: Neuron[]): Promise<{ entries: number; keys: number } | { error: string }> {
   try {
     const neurons = preloaded ?? await loadAllNeurons(brain);
-    const index = buildTriggerIndex(neurons);
+    let registry: ProjectsFile | null = null;
+    try { registry = await readJSON<ProjectsFile>(path.join(brain.paths.root, 'projects.json')); } catch { /* no projects yet */ }
+    const index = buildTriggerIndex(neurons, now(), registry);
     await writeJSON(triggerIndexPath(brain), index, { pretty: false });
     return { entries: index.entries.length, keys: Object.keys(index.keys).length };
   } catch (err) {
