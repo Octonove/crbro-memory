@@ -28,10 +28,19 @@ import { connectDaemon } from './proxy.js';
 import {
   DAEMON_PROTOCOL, buildId, packageVersion, endpointFor, daemonDir, newToken, newNonce,
   proof, sameProof, writeState, removeState, configFingerprint, secureSocketDir,
-  acquireStartLock, markBlocked, clearBlocked, type DaemonState,
+  acquireStartLock, markBlocked, clearBlocked, pruneDaemonDir, type DaemonState,
 } from './endpoint.js';
+import { resolveBrainDir } from '../engine/brain.js';
+import { trace, traceStart } from './trace.js';
 
+/** Until a connection has proved itself. After that a quiet connection costs nothing and is never cut for being quiet. */
 const HANDSHAKE_TIMEOUT_MS = 5_000;
+/** With nobody arriving, the index warms up this long after listening; the first handshake through starts it sooner. */
+const WARMUP_DELAY_MS = 1_000;
+/** Stopping: how long calls already running may take to finish before their connections are cut anyway. */
+const STOP_DRAIN_MS = 10_000;
+/** A conversation that comes back after its backend was lost: how long its first message may wait for the index to catch up with the disk. */
+const RESUME_REFRESH_MS = 3_000;
 const DEFAULT_IDLE_MIN = 20;
 /** setTimeout takes a 32-bit delay: past this it fires at once, and a daemon asked to wait a month exited in a millisecond. */
 const MAX_TIMER_MS = 2_147_000_000;
@@ -119,7 +128,7 @@ export async function startDaemon(options: DaemonOptions = {}): Promise<DaemonHa
 
   await fs.mkdir(daemonDir(brainRoot), { recursive: true, mode: 0o700 });
 
-  type Entry = { socket: net.Socket; server: McpServer | null };
+  type Entry = { socket: net.Socket; server: McpServer | null; transport: SocketServerTransport | null };
   const clients = new Set<Entry>();
   const conversations = () => [...clients].filter(c => c.server !== null).length;
   let idleTimer: NodeJS.Timeout | null = null;
@@ -151,10 +160,30 @@ export async function startDaemon(options: DaemonOptions = {}): Promise<DaemonHa
     if (++refusals <= REFUSALS_PER_MINUTE) log(`connection refused: ${why}`);
   };
 
+  // ── The index warms up off every handshake's path (A7) ──
+  // Loading it parses tens of MB synchronously, and a handshake that arrives
+  // meanwhile waits for the parse. So it starts only when no handshake is under
+  // way: as soon as the first one is through, or a moment after listening if
+  // nobody comes.
+  let handshakes = 0;
+  let warmDue = false;
+  let warmStarted = false;
+  let warmDone = false;
+  const warmUp = () => {
+    if (!warmDue || warmStarted || handshakes > 0 || stopping) return;
+    warmStarted = true;
+    trace('index warm-up started');
+    // The index and the model warm up now, off anybody's critical path: the
+    // first client to boot finds them ready, the second never waits at all.
+    void engines.searchEngine.init()
+      .then(() => { warmDone = true; trace('engine ready', 'index loaded', true); })
+      .catch(err => log(`index warm-up failed: ${(err as Error).message}`));
+  };
+
   const listener = net.createServer({ allowHalfOpen: false }, socket => { accept(socket); });
 
   function accept(socket: net.Socket): void {
-    const entry: Entry = { socket, server: null };
+    const entry: Entry = { socket, server: null, transport: null };
     clients.add(entry);
     socket.setNoDelay(true);
 
@@ -162,13 +191,29 @@ export async function startDaemon(options: DaemonOptions = {}): Promise<DaemonHa
     let nonce = '';
     let resumed = false;
     let transport: SocketServerTransport | null = null;
+    handshakes++;
+    let counted = true;
+    const handshakeOver = () => {
+      if (!counted) return;
+      counted = false;
+      handshakes--;
+      warmUp();
+    };
     const kill = (why: string) => {
       if (stage === 'dead') return;
       stage = 'dead';
+      handshakeOver();
       logRefusal(why);
       socket.destroy();
     };
-    const timer = setTimeout(() => { if (stage !== 'mcp') kill('handshake timeout'); }, HANDSHAKE_TIMEOUT_MS);
+    // Only until the connection proves itself (stage 'auth' passed): a proxy
+    // whose client took 17 s to send initialize was cut every 5 s, three times,
+    // and then served itself in-process for good. The verdict waits one turn of
+    // the loop, so bytes that arrived while the loop was busy are read before
+    // "too slow" is believed.
+    const timer = setTimeout(() => setImmediate(() => {
+      if (stage === 'hello' || stage === 'auth') kill('handshake timeout');
+    }), HANDSHAKE_TIMEOUT_MS);
     timer.unref();
     const say = (o: unknown) => { if (!socket.destroyed) socket.write(`${JSON.stringify(o)}\n`); };
 
@@ -190,8 +235,12 @@ export async function startDaemon(options: DaemonOptions = {}): Promise<DaemonHa
       if (stage === 'auth') {
         if (m?.crbro !== 'auth' || !sameProof(String(m.proof || ''), proof(token, 'client', nonce))) return kill('bad proof');
         resumed = m.resumed === true;
+        clearTimeout(timer);
         say({ crbro: 'ready' });
         stage = 'first';
+        warmDue = true;
+        handshakeOver();
+        trace('first client authenticated', '', true);
         return;
       }
       // stage === 'first': a control message, or the first MCP message.
@@ -221,16 +270,28 @@ export async function startDaemon(options: DaemonOptions = {}): Promise<DaemonHa
       transport = new SocketServerTransport(socket, fn => sessionScope.run(scope, fn));
       const server = createServer(engines);
       entry.server = server;
+      entry.transport = transport;
       stage = 'mcp';
       armIdle();
       transport.receive(line);   // queued: an `initialized` arriving in the same chunk must not overtake `initialize`
-      server.connect(transport).then(() => transport!.open()).catch(err => kill(`server.connect failed: ${(err as Error).message}`));
+      // A resumed conversation was served elsewhere meanwhile (an in-process
+      // fallback, a daemon that died): what it wrote there is on disk, maybe not
+      // in this index. Catch up before its first message — briefly, and only
+      // when the index is loaded (a load still under way reads the disk anyway).
+      const catchUp = resumed && warmDone
+        ? Promise.race([engines.searchEngine.refresh().catch(() => undefined), new Promise(r => setTimeout(r, RESUME_REFRESH_MS))])
+        : null;
+      server.connect(transport)
+        .then(() => catchUp)
+        .then(() => transport!.open())
+        .catch(err => kill(`server.connect failed: ${(err as Error).message}`));
     }, () => kill('line too long'));
 
     socket.on('data', chunk => reader.push(typeof chunk === 'string' ? Buffer.from(chunk, 'utf8') : chunk));
     socket.on('error', () => { /* 'close' follows */ });
     socket.on('close', () => {
       clearTimeout(timer);
+      handshakeOver();
       const wasConversation = entry.server !== null;
       clients.delete(entry);
       if (entry.server) void entry.server.close().catch(() => undefined);
@@ -292,15 +353,28 @@ export async function startDaemon(options: DaemonOptions = {}): Promise<DaemonHa
       protocol: DAEMON_PROTOCOL, pid: process.pid, version, build, endpoint, token,
       started: new Date().toISOString(), brain: brainRoot,
     };
-    await writeState(brainRoot, state);
+    try {
+      await writeState(brainRoot, state);
+    } catch (err) {
+      // Without its descriptor nobody can reach this daemon. Say so where it
+      // will be read — the log, and the marker the waiting proxy checks — and
+      // give the endpoint back, instead of leaving the proxy 12 s of silence.
+      listener.close();
+      await blocked(`could not write its descriptor: ${(err as Error).message}`);
+    }
   } finally {
     await release();
   }
   log(`listening on ${endpoint} · ${state.version} (${build}) · brain ${brainRoot} · config ${config} · idle exit ${Math.round(idleMs / 60_000)} min`);
+  trace('daemon listening', build, true);
 
-  // The index and the model warm up now, off anybody's critical path: the
-  // first client to boot finds them ready, the second never waits at all.
-  void engines.searchEngine.init().catch(err => log(`index warm-up failed: ${(err as Error).message}`));
+  const warmTimer = setTimeout(() => { warmDue = true; warmUp(); }, WARMUP_DELAY_MS);
+  warmTimer.unref();
+
+  // What dead daemons left behind: descriptors nobody answers for, temporaries, stale locks.
+  void pruneDaemonDir(brainRoot, { keep: build })
+    .then(r => { if (r.removed.length) log(`removed from .daemon: ${r.removed.join(', ')}`); })
+    .catch(() => undefined);
 
   listener.on('error', err => log(`listener error: ${err.message}`));
   armIdle();
@@ -310,9 +384,26 @@ export async function startDaemon(options: DaemonOptions = {}): Promise<DaemonHa
     stopping = (async () => {
       log(`stopping: ${reason} · ${conversations()} conversation(s)`);
       if (idleTimer) clearTimeout(idleTimer);
+      clearTimeout(warmTimer);
       // The state file goes first: a client that arrives now must not find a token for a door that is closing.
       await removeState(brainRoot, build, process.pid);
-      await new Promise<void>(resolve => { listener.close(() => resolve()); for (const c of clients) c.socket.destroy(); });
+      const listenerClosed = new Promise<void>(resolve => listener.close(() => resolve()));
+      // Connections that are not conversations owe nobody anything.
+      for (const c of clients) if (!c.transport) c.socket.destroy();
+      // Calls already running finish (a crbro_learn writes neuron, synapses and
+      // manifest: cutting it between them is a half-made write). New calls are
+      // refused as never started, and the proxy sends them to whoever is next.
+      const running = [...clients].reduce((n, c) => n + (c.transport?.inFlight() ?? 0), 0);
+      if (running > 0) log(`stopping: waiting for ${running} call(s) to finish`);
+      let drainTimer: NodeJS.Timeout | undefined;
+      const outcome = await Promise.race([
+        Promise.all([...clients].map(c => c.transport?.drain() ?? Promise.resolve())).then(() => 'drained'),
+        new Promise<string>(r => { drainTimer = setTimeout(() => r('timeout'), STOP_DRAIN_MS); }),
+      ]);
+      clearTimeout(drainTimer);
+      if (outcome === 'timeout') log(`stopping: calls still running after ${STOP_DRAIN_MS / 1000} s were cut`);
+      for (const c of clients) c.socket.destroy();
+      await listenerClosed;
       try { await engines.searchEngine.flush(); } catch (err) { log(`flush failed: ${(err as Error).message}`); }
       // Unlink only the socket we made. By now a replacement may be listening
       // on the same path, and removing ITS file would strand it: alive,
@@ -338,6 +429,8 @@ export async function runDaemon(): Promise<void> {
   // be renamed or deleted for as long as the daemon lived.
   try { process.chdir(path.parse(process.cwd()).root); } catch { /* stay where we are */ }
 
+  const brainRoot = resolveBrainDir();
+  traceStart(brainRoot, 'daemon');
   let handle: DaemonHandle;
   try {
     handle = await startDaemon();
@@ -346,7 +439,15 @@ export async function runDaemon(): Promise<void> {
     // Somebody else won the race to be the daemon: exactly what should happen.
     if (msg === 'DAEMON_ALREADY_RUNNING') process.exit(0);
     if (msg.startsWith('DAEMON_ENDPOINT_BLOCKED')) process.exit(3);
-    throw err;
+    // Anything else: this process has no stderr anybody reads. Leave the
+    // reason in daemon.log, and the marker that ends the proxy's wait at once.
+    try {
+      const log = await fileLogger(brainRoot);
+      log(`could not start: ${(err as Error).stack || msg}`);
+      await markBlocked(brainRoot, buildId(), `the daemon could not start: ${msg}`);
+      await new Promise(r => setTimeout(r, 100));   // the log line is queued: let it land
+    } catch { /* nothing more we can do */ }
+    process.exit(1);
   }
   const bye = (reason: string) => { void handle.stop(reason).then(() => process.exit(0)); };
   process.on('SIGINT', () => bye('SIGINT'));
