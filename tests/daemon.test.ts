@@ -52,6 +52,12 @@ class ProxiedClient {
     await this.client.connect(transport);
     return this;
   }
+  /** Which backend serves it, once it has one: initialize no longer waits for a backend, so `open` returns before there is one. */
+  async backend(ms = 8_000) {
+    const until = Date.now() + ms;
+    while (this.proxy.backendKind() === 'none' && Date.now() < until) await new Promise(r => setTimeout(r, 10));
+    return this.proxy.backendKind();
+  }
   call(name: string, args: Record<string, unknown> = {}) {
     return this.client.callTool({ name, arguments: args }) as Promise<any>;
   }
@@ -167,7 +173,7 @@ describe('who gets in', () => {
 describe('the memory never depends on the daemon', () => {
   it('no daemon and none to be had: the proxy serves from its own process', async () => {
     const c = await new ProxiedClient().open({ build: newBuild(), spawnDaemon: null });
-    expect(c.proxy.backendKind()).toBe('local');
+    expect(await c.backend()).toBe('local');
     await c.call('crbro_boot');
     await c.call('crbro_learn', { topic: 'Sin demonio', type: 'fact', content: 'Esto se guardó sin ningún demonio en marcha.' });
     expect(body(await c.call('crbro_recall', { query: 'guardó sin demonio' })).results[0].matching_content).toContain('sin ningún demonio');
@@ -179,9 +185,9 @@ describe('the memory never depends on the daemon', () => {
     let started: DaemonHandle | null = null;
     const spawnDaemon = async () => { started = await startDaemon({ build, idleMinutes: 0, log: () => undefined }); };
     const first = await new ProxiedClient().open({ build, spawnDaemon });
-    expect(first.proxy.backendKind()).toBe('daemon');
+    expect(await first.backend()).toBe('daemon');
     const second = await new ProxiedClient().open({ build, spawnDaemon: () => { throw new Error('must not spawn a second one'); } });
-    expect(second.proxy.backendKind()).toBe('daemon');
+    expect(await second.backend()).toBe('daemon');
     expect(started!.connections()).toBe(2);
     await first.close();
     await second.close();
@@ -235,7 +241,7 @@ describe('the memory never depends on the daemon', () => {
     await writeState(root, { protocol: DAEMON_PROTOCOL, pid: 1, version: 'x', build, endpoint, token, started: '', brain: root });
 
     const c = await new ProxiedClient().open({ build, spawnDaemon: null });
-    expect(c.proxy.backendKind()).toBe('daemon');
+    expect(await c.backend()).toBe('daemon');
     await expect(c.call('crbro_boot')).rejects.toThrow(/restarted while this call was running/);
     // No daemon left and none to start: the proxy is now CRBRO itself, handshake replayed.
     const boot = body(await c.call('crbro_boot'));

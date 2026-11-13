@@ -120,7 +120,9 @@ describe('when nothing can serve', () => {
     c.send(INIT, call(2, 'crbro_boot'));
     await expect(c.proxy.closed).rejects.toThrow('would not load');
     expect(c.got.map(m => m.id).sort()).toEqual([1, 2]);
-    expect(c.got.every(m => /could not start/.test(m.error?.message))).toBe(true);
+    // initialize is the proxy's to answer (2.11): it says who CRBRO is, whatever the backend does.
+    expect(c.got.find(m => m.id === 1)?.result?.serverInfo?.name).toBe('crbro-memory');
+    expect(/could not start/.test(c.got.find(m => m.id === 2)?.error?.message)).toBe(true);
   });
 });
 
