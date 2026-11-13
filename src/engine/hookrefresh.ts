@@ -55,7 +55,7 @@ export function readManifest(dir: string): HookManifest | null {
   try {
     const m = JSON.parse(readFileSync(path.join(dir, HOOK_MANIFEST), 'utf8'));
     if (m && typeof m === 'object' && m.files && typeof m.files === 'object') {
-      return { version: String(m.version ?? ''), files: m.files, noticed: Array.isArray(m.noticed) ? m.noticed : [] };
+      return { version: String(m.version ?? ''), files: m.files, ...(Array.isArray(m.noticed) ? { noticed: m.noticed } : {}) };
     }
   } catch { /* none yet */ }
   return null;
@@ -107,15 +107,21 @@ export function installHookFile(pkgHooks: string, name: string, targetDir: strin
     const known = readManifest(targetDir)?.files[name] === mine || (shippedHashes(pkgHooks)[name] ?? []).includes(mine);
     if (mine !== lfSha(src) && !known) backupFile(target);
   } catch { /* not there yet */ }
-  const tmp = `${target}.${process.pid}.tmp`;
-  try {
-    writeFileSync(tmp, src);
-    renameSync(tmp, target);
-  } catch (e) {
-    rmSync(tmp, { force: true });
-    throw e;
+  const before = readManifest(targetDir);
+  let same = false;
+  try { same = readFileSync(target).equals(src); } catch { /* not there */ }
+  if (same && before?.files[name] === lfSha(src) && before.version === pkgVersion(pkgHooks)) return target;   // idempotent
+  if (!same) {
+    const tmp = `${target}.${process.pid}.tmp`;
+    try {
+      writeFileSync(tmp, src);
+      renameSync(tmp, target);
+    } catch (e) {
+      rmSync(tmp, { force: true });
+      throw e;
+    }
   }
-  const m = readManifest(targetDir) ?? { version: pkgVersion(pkgHooks), files: {} };
+  const m = before ?? { version: pkgVersion(pkgHooks), files: {} };
   m.version = pkgVersion(pkgHooks);
   m.files[name] = lfSha(src);
   writeManifest(targetDir, m);
