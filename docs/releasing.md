@@ -25,6 +25,15 @@ What `release.yml` then does, in order, stopping at the first failure:
 
 If a job fails, fix the cause and **re-run the failed jobs** from the Actions tab. Never move a tag that has published something.
 
+**Then republish the GitHub release under your own account.** Glama's Auto-Release builds a new Glama version only for releases published by a person: it ignored v2.11.0 and v2.12.0, which `github-release` created as `github-actions[bot]`, and picked up v2.12.0 within minutes once it was republished by hand on 14-11-2026. From your machine:
+
+```bash
+gh release edit vX.Y.Z --repo Octonove/crbro-memory --draft=true
+gh release edit vX.Y.Z --repo Octonove/crbro-memory --draft=false --latest
+```
+
+Do not use Glama's own *Build & Release* button for this: it labels the build with Glama's next patch number (it called 2.12.0 "2.10.1"), not the package's version.
+
 ## Publishing npm by hand (still possible)
 
 If you publish from your own machine, do it *before* pushing the tag: the workflow sees that `crbro-memory@X.Y.Z` is already on npm, skips its `npm` job and carries on with the registry and the GitHub release. A hand publish has no provenance attestation and runs `prepublishOnly` (build, tests, `check-publication`) on your machine; prefer the workflow.
@@ -40,6 +49,7 @@ The `npm` job authenticates with **npm trusted publishing** (OIDC): npm trusts a
    - Workflow filename: `release.yml`
    - Environment: leave empty (the workflow does not use one; if you add an environment to the job later, put its name here too).
 3. Save. Trusted publishing needs npm 11.5.1 or newer on the runner; the job uses Node 24, which ships it.
+   Set up for this package on 14-11-2026 (permissions: `npm publish` and `npm stage publish`). npm lists a new trusted publisher as *pending validation* until the workflow publishes once; it asked for that publish before 16-11-2026.
 4. Optional hardening: in the package's **Publishing access**, require two-factor authentication and disallow tokens, so that the workflow is the only way to publish.
 
 ### Fallback: an npm token
