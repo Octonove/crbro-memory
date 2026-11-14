@@ -26,8 +26,12 @@ const transcript = (lines: unknown[]) => {
 const ctx = (r: any) => r?.hookSpecificOutput?.additionalContext as string | undefined;
 
 beforeAll(() => { dir = mkdtempSync(join(tmpdir(), 'crbro-codexhook-')); });
-// Windows may still hold a file a spawned hook wrote: retry before giving up.
-afterAll(() => rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }));
+// A server the hook started writes its index as it exits (up to 2 s), and
+// Windows keeps the folder busy meanwhile: retry past that, and never fail
+// the suite over a temporary folder the OS cleans anyway.
+afterAll(() => {
+  try { rmSync(dir, { recursive: true, force: true, maxRetries: 30, retryDelay: 250 }); } catch { /* left to the OS */ }
+});
 
 describe('crbro-codex.mjs', () => {
   it('SessionStart boots and hands over the receipt, the protocols and the memory', async () => {
