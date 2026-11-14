@@ -10,7 +10,12 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { detectBackend } from '../src/engine/keychain.js';
 
 vi.setConfig({ testTimeout: 120_000, hookTimeout: 60_000 });
-const hasStore = detectBackend().backend !== null;
+// GitHub's macOS runners have no unlocked login keychain: `security` waits
+// for a password prompt nobody answers, and every call runs to its 30 s
+// timeout. The macOS code paths are covered with a stubbed runner in
+// keychain.211.test.ts; on a real Mac (or CRBRO_TEST_REAL_KEYCHAIN=1) these run.
+const lockedCiKeychain = os.platform() === 'darwin' && !!process.env.CI && process.env.CRBRO_TEST_REAL_KEYCHAIN !== '1';
+const hasStore = !lockedCiKeychain && detectBackend().backend !== null;
 let root: string; let keys: string; let c: Client;
 const raw = async (args: any) => (await c.callTool({ name: 'crbro_secret', arguments: args })) as any;
 const call = async (args: any) => {

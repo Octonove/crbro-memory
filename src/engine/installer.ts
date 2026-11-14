@@ -31,7 +31,7 @@
 import { spawnSync, type SpawnSyncReturns } from 'child_process';
 import { createHash } from 'crypto';
 import {
-  cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync,
+  copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync,
 } from 'fs';
 import path from 'path';
 import {
@@ -447,6 +447,24 @@ export function runtimeDependencies(root: string): { deps: Dependency[]; missing
   return { deps: [...seen.values()], missing };
 }
 
+/**
+ * Copy a file or folder, following links, leaving out every path that holds a
+ * node_modules below `base` (the rule the fs.cpSync filter had). Written out
+ * instead of fs.cpSync (2.11): in CI the engine copy came out without its
+ * dependencies on Node 20 under Windows, while Node 22 and 24 copied them.
+ */
+function copyTree(src: string, dest: string, base: string): void {
+  if (/[\\/]node_modules([\\/]|$)/.test(path.relative(base, src))) return;
+  const st = statSync(src);
+  if (st.isDirectory()) {
+    mkdirSync(dest, { recursive: true });
+    for (const name of readdirSync(src)) copyTree(path.join(src, name), path.join(dest, name), base);
+  } else if (st.isFile()) {
+    mkdirSync(path.dirname(dest), { recursive: true });
+    copyFileSync(src, dest);
+  }
+}
+
 function walkFiles(dir: string, rel = '', skipNodeModules = true): string[] {
   const out: string[] = [];
   let names: string[];
@@ -541,16 +559,10 @@ export function installEngine(ctx: InstallContext, steps: Step[]): EngineResult 
       rmSync(staging, { recursive: true, force: true });
       mkdirSync(staging, { recursive: true });
       for (const entry of ['package.json', ...shippedEntries(ctx.packageRoot)]) {
-        cpSync(path.join(ctx.packageRoot, entry), path.join(staging, entry), {
-          recursive: true, dereference: true,
-          filter: src => !/[\\/]node_modules([\\/]|$)/.test(path.relative(ctx.packageRoot, src)),
-        });
+        copyTree(path.join(ctx.packageRoot, entry), path.join(staging, entry), ctx.packageRoot);
       }
       for (const d of deps) {
-        cpSync(d.dir, path.join(staging, 'node_modules', d.rel), {
-          recursive: true, dereference: true,
-          filter: src => !/[\\/]node_modules([\\/]|$)/.test(path.relative(d.dir, src)),
-        });
+        copyTree(d.dir, path.join(staging, 'node_modules', d.rel), d.dir);
       }
       writeFileSync(path.join(staging, ENGINE_STAMP), JSON.stringify({ version, hash, installed: new Date().toISOString(), from: ctx.packageRoot }, null, 2) + '\n');
       let setAside = false;

@@ -23,7 +23,12 @@ import {
 // A CI runner reports Windows and then cannot reach DPAPI at all, so keying
 // the round-trip tests on the platform turned an unavailable keychain into a
 // red build. detectBackend already answers the real question.
-const hasStore = detectBackend().backend !== null;
+// GitHub's macOS runners have no unlocked login keychain: `security` waits
+// for a password prompt nobody answers, and every call runs to its 30 s
+// timeout. The macOS code paths are covered with a stubbed runner in
+// keychain.211.test.ts; on a real Mac (or CRBRO_TEST_REAL_KEYCHAIN=1) these run.
+const lockedCiKeychain = os.platform() === 'darwin' && !!process.env.CI && process.env.CRBRO_TEST_REAL_KEYCHAIN !== '1';
+const hasStore = !lockedCiKeychain && detectBackend().backend !== null;
 
 // Every operation here starts a real process against the real credential
 // store — around a second each on this machine and slower on a CI runner, so
