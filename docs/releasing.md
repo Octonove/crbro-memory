@@ -32,6 +32,8 @@ gh release edit vX.Y.Z --repo Octonove/crbro-memory --draft=true
 gh release edit vX.Y.Z --repo Octonove/crbro-memory --draft=false --latest
 ```
 
+If no new build shows up under Glama's *Admin → Dockerfile → Recent Tests* within a few minutes, run the two commands again or press *Sync Server* under *Admin → Repository*: with 2.12.1 the first republish, a minute after the workflow created the release, was not picked up, and the second one was.
+
 Do not use Glama's own *Build & Release* button for this: it labels the build with Glama's next patch number (it called 2.12.0 "2.10.1"), not the package's version.
 
 ## Publishing npm by hand (still possible)
