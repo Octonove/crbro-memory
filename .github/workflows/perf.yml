@@ -35,7 +35,7 @@ jobs:
 
       # The model is ~500 MB: downloaded once, then restored. The key follows
       # the file that pins its hashes, so a new pin fetches it again.
-      - uses: actions/cache@v5
+      - uses: actions/cache@v6
         with:
           path: ${{ env.CRBRO_SEMANTIC_HOME }}
           key: semantic-${{ hashFiles('src/search/semantic.ts') }}
