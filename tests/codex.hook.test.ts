@@ -26,11 +26,11 @@ const transcript = (lines: unknown[]) => {
 const ctx = (r: any) => r?.hookSpecificOutput?.additionalContext as string | undefined;
 
 beforeAll(() => { dir = mkdtempSync(join(tmpdir(), 'crbro-codexhook-')); });
-// A server the hook started writes its index as it exits (up to 2 s), and
-// Windows keeps the folder busy meanwhile: retry past that, and never fail
-// the suite over a temporary folder the OS cleans anyway.
+// One attempt, never a failure: on Windows a file just written can stay busy
+// for seconds (pending delete, antivirus), and a temporary folder is the OS's
+// to clean. Retrying here only ran the hook past its own timeout.
 afterAll(() => {
-  try { rmSync(dir, { recursive: true, force: true, maxRetries: 30, retryDelay: 250 }); } catch { /* left to the OS */ }
+  try { rmSync(dir, { recursive: true, force: true }); } catch { /* left to the OS */ }
 });
 
 describe('crbro-codex.mjs', () => {
