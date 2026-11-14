@@ -2,11 +2,11 @@
 
 All notable changes to CRBRO.
 
-## [Unreleased]
+## [2.12.0] — 2026-11-14
 
 ### Search
 - A recall spends a third less CPU on a real brain: the full text of the entry a part of a long entry came from is now found in a table built once per neuron, not by hashing every entry on each lookup. Steady-state recall with the semantic layer on a 563-neuron brain: p50 94 → 57 ms, p90 164 → 76 ms.
-- The search index (tens of MB, serialised with the event loop held for ~0.4 s) is written after 30 s of quiet and at the latest 5 minutes after the first unsaved change, instead of 5 s after every change. `crbro_consolidate` and exit still write at once. (A binary index format was measured and not adopted: it is bigger on disk than gzip and loads 3-4 times slower than JSON.)
+- The search index (tens of MB, serialised with the event loop held for ~0.4 s) is written after 30 s of quiet and at the latest 5 minutes after the first unsaved change, instead of 5 s after every change. `crbro_consolidate` and exit still write at once. (A binary index format was measured and not adopted: 51 MB against 63 MB of JSON, but it loads 3-4 times slower.)
 - `crbro_inspect view=status` shows `semantic.coverage` (`vectors` against `chunks`): after an upgrade the layer fills in the background and recall answers keyword-only (`semantic: "warming"`) until they match.
 
 ### `crbro-memory view`
