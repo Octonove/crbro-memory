@@ -10,5 +10,9 @@ export default defineConfig({
   test: {
     setupFiles: ['tests/setup.env.ts'],
     exclude: [...configDefaults.exclude, 'mods/**'],
+    // CI runners (macOS above all: three cores, slower disks) run the same
+    // tests several times slower than a workstation; the 5 s default turned
+    // slow into red there. Locally the default stays.
+    ...(process.env.CI ? { testTimeout: 20_000 } : {}),
   },
 });
