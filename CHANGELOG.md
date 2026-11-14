@@ -2,6 +2,23 @@
 
 All notable changes to CRBRO.
 
+## [Unreleased]
+
+### Search
+- A recall spends a third less CPU on a real brain: the full text of the entry a part of a long entry came from is now found in a table built once per neuron, not by hashing every entry on each lookup. Steady-state recall with the semantic layer on a 563-neuron brain: p50 94 → 57 ms, p90 164 → 76 ms.
+- The search index (tens of MB, serialised with the event loop held for ~0.4 s) is written after 30 s of quiet and at the latest 5 minutes after the first unsaved change, instead of 5 s after every change. `crbro_consolidate` and exit still write at once. (A binary index format was measured and not adopted: it is bigger on disk than gzip and loads 3-4 times slower than JSON.)
+- `crbro_inspect view=status` shows `semantic.coverage` (`vectors` against `chunks`): after an upgrade the layer fills in the background and recall answers keyword-only (`semantic: "warming"`) until they match.
+
+### `crbro-memory view`
+- Edit the text of an entry from the page. A fact is replaced with `supersedes` (the old one is retired in the same call, its keywords kept); a pattern, preference, error, debt or decision is written new and the old text retired after (a decision keeps its rationale). Nothing is deleted: the old text stays in the file and leaves recall.
+- Merge one neuron into another from the page: it previews what moves, then runs `crbro_forget merge_into`; the source's copy stays in quarantine and the page says how to undo it.
+
+### Performance gate
+- `benchmarks/perf/nightly.mjs` (`npm run perf`) and `.github/workflows/perf.yml` (every night and on demand): the real server over stdio on a synthetic brain of realistic size (~500 neurons, ~7,000 entries), semantic layer included, with budgets for sizes, boot and recall latency and for the upgrade case (recall while the vectors fill in). It is the test that would have caught the 2 s recalls of the first minutes after upgrading to 2.11.0.
+
+### Tests
+- A daemon test that rebuilds a 151-neuron brain gets a 30 s timeout instead of the 5 s default, which it broke when the suite ran under load.
+
 ## [2.11.0] — 2026-11-14
 
 One release for the whole 13-11-2026 audit: faster and steadier startup, search

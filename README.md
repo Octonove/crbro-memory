@@ -148,7 +148,7 @@ Every command is run as `npx crbro-memory <command>` (there is no separate `crbr
 
 | Command | What it does |
 |---|---|
-| `view [--port N] [--no-open]` | A local page in your browser (127.0.0.1 only, one-time token in the link): neurons, every entry with its date, status, verification and freshness, search, open items to resolve or discard, stale entries to verify or retire |
+| `view [--port N] [--no-open]` | A local page in your browser (127.0.0.1 only, one-time token in the link): neurons, every entry with its date, status, verification and freshness, search, open items to resolve or discard, stale entries to verify or retire, and the text of any entry to edit and any neuron to merge into another |
 | `export [--out DIR] [--format md\|json] [--include-retired]` | Write the brain as an Obsidian-compatible Markdown vault or one JSON file. Read-only, safe while a client runs, credentials redacted |
 | `import PATH [--apply] [--topic NAME] [--type fact\|preference\|pattern]` | Bring memory in from `CLAUDE.md` / `AGENTS.md`, a Claude Code memory folder or a CRBRO export. A dry run unless `--apply`; importing twice adds nothing |
 | `serve --http [--port 8787] [--host 127.0.0.1] [--allow-remote] [--new-token] [--allow-secrets]` | MCP over Streamable HTTP at `/mcp` with a bearer token (`CRBRO_HTTP_TOKEN` or the keychain). Loopback unless `--allow-remote`; no TLS, no OAuth; `crbro_secret` is left out unless `--allow-secrets`. Some antivirus web shields (Avast's, for one) rewrite MCP traffic on loopback: exclude the port if requests fail |
