@@ -1,6 +1,6 @@
 {
   "name": "crbro-memory",
-  "version": "2.12.0",
+  "version": "2.12.1",
   "mcpName": "io.github.Octonove/crbro-memory",
   "description": "Local, persistent memory for AI agents (MCP server): plain JSON on your disk, search with an optional local semantic layer, corrections that replace old facts, stale-value warnings, a browser view to edit it. Claude Code, Claude Desktop, Codex, Cursor.",
   "main": "dist/index.js",

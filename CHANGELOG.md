@@ -2,6 +2,18 @@
 
 All notable changes to CRBRO.
 
+## [2.12.1] — 2026-11-14
+
+### Dependencies
+- `@modelcontextprotocol/sdk` 1.32.1 → 1.32.2.
+
+### Documentation and listings
+- A new README tour (`docs/crbro-tour.gif`, also as an MP4): memory across sessions, corrections that replace old facts, warnings on values that may be out of date, `no_answer`, secrets kept out, open items above the prompt, editing in `crbro-memory view`, and `npx crbro-memory install`. It is drawn by code; its sources are in `docs/media/tour`, so it can be redrawn when a feature changes.
+- README: Codex in the client badge, a clearer opening paragraph, `view`, `export` and `import` under *Using it*, the nightly performance gate and the 2.12 test count under *Measurements*. `docs/features.md` lists what 2.11 and 2.12 added.
+- The npm description and keywords and the MCP Registry description now say what CRBRO does today.
+- The desktop bundle's privacy link pointed at a README anchor that no longer exists; it now points at `docs/privacy.md`.
+- `docs/releasing.md`: npm trusted publishing is set up for the release workflow, and after each release the GitHub release is republished under the maintainer's account, because Glama only builds releases published by a person.
+
 ## [2.12.0] — 2026-11-14
 
 ### Search
