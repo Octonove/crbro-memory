@@ -625,7 +625,9 @@ export function createServer(shared?: Engines, options: CreateServerOptions = {}
             total_neurons: manifest.total_neurons,
             total_synapses: manifest.total_synapses,
             total_sessions: manifest.total_sessions,
-            brain_path: manifest.brain_path,
+            // The folder this process reads, not the path the manifest recorded
+            // when the brain was created: a copied or moved brain kept the old one.
+            brain_path: brain.paths.root,
             last_boot: manifest.last_boot,
             last_consolidation: manifest.last_consolidation,
             semantic: semanticStatus(),

@@ -439,6 +439,17 @@ function rankPerNeuron(list: Array<{ id: string; neuron: string }>): Map<string,
   return out;
 }
 
+/** File dates for many paths, a bounded number at a time; 0 for a file that is gone. */
+async function mtimesOf(files: string[], width = 64): Promise<number[]> {
+  const out = new Array<number>(files.length).fill(0);
+  let next = 0;
+  const worker = async () => {
+    while (next < files.length) { const i = next++; out[i] = await fileMtime(files[i]); }
+  };
+  await Promise.all(Array.from({ length: Math.min(width, files.length) }, worker));
+  return out;
+}
+
 /** One chunk per entry, the best-scoring part of a long one; order kept. Header chunks pass through. */
 function unaPorEntrada(chunks: ChunkHit[]): ChunkHit[] {
   const vistas = new Set<string>();
@@ -724,13 +735,17 @@ export class SearchEngine {
     const ids = await listJSONFiles(this.brain.paths.cortex);
     const vivos = new Set(ids);
     let conCalor: ((n: Neuron) => Neuron) | null = null;
-    for (const id of ids) {
+    // Every date first, many at a time (2.11): one stat after another was 563
+    // round trips through the I/O pool, ~20 s on a busy machine (measured while
+    // the semantic layer filled vectors), and every search waited for it.
+    const fechas = await mtimesOf(ids.map(id => this.brain.paths.neuron(id)));
+    for (const [n, id] of ids.entries()) {
       // Unchanged AND already in the index. A neuron with no chunks at all is
       // not indexed, whatever its date says: every neuron has at least its
       // header chunk. That is what an index file written by ANOTHER process
       // looks like from here — newer than the neuron, and without it — and the
       // file date alone would never bring it back.
-      const mtime = await fileMtime(this.brain.paths.neuron(id));
+      const mtime = fechas[n];
       if (this.chunksByNeuron.has(id) && !this.changed(id, mtime, desde)) continue;
       try {
         const neuron = await readJSON<Neuron>(this.brain.paths.neuron(id));
@@ -743,9 +758,10 @@ export class SearchEngine {
     }
     const diarios = await listJSONFiles(this.brain.paths.hippocampus);
     const diasVivos = new Set(diarios.map(d => `session:${d}`));
-    for (const id of diarios) {
+    const fechasDia = await mtimesOf(diarios.map(id => this.brain.paths.session(id)));
+    for (const [n, id] of diarios.entries()) {
       const key = `session:${id}`;
-      const mtime = await fileMtime(this.brain.paths.session(id));
+      const mtime = fechasDia[n];
       if (!this.changed(key, mtime, desde)) continue;
       try {
         const log = await readJSON<{ session_id: string; date?: string; summary?: string }>(this.brain.paths.session(id));
@@ -995,6 +1011,22 @@ export class SearchEngine {
     query: string,
     options?: { domain?: string; limit?: number; stats?: SearchStats } & SearchFilter
   ): Promise<SearchResult[]> {
+    // A background pass of the semantic layer waits while a search runs
+    // (2.11): its passages are tokenised on this thread, and every await of
+    // a search used to queue behind one — ~2 s a recall, measured, for the
+    // minutes a pass lasted after an upgrade.
+    const release = typeof this.semantic?.hold === 'function' ? this.semantic.hold() : undefined;
+    try {
+      return await this.searchNow(query, options);
+    } finally {
+      release?.();
+    }
+  }
+
+  private async searchNow(
+    query: string,
+    options?: { domain?: string; limit?: number; stats?: SearchStats } & SearchFilter
+  ): Promise<SearchResult[]> {
     if (!this.db) await this.init();
     if (!this.db) return [];
     await this.settled();
@@ -1120,7 +1152,12 @@ export class SearchEngine {
     // holds vectors. Off, this is a no-op and the scores above stand.
     let semantic: SearchStats['semantic'];
     if (this.semantic && this.semantic.ready() && this.semantic.count() > 0) {
-      semantic = await this.fuseSemantic(query, perChunk, options?.domain, admite);
+      // While a large pass fills vectors in the background (after an upgrade
+      // split long entries into parts, thousands of them), the keyword engine
+      // answers alone and says so: measured on a 563-neuron brain, a recall
+      // that waited for the model during the pass took 1.5–3 s instead of
+      // 60 ms, for the minutes the pass lasted (2.11).
+      semantic = this.semantic.backfilling?.() ? 'warming' : await this.fuseSemantic(query, perChunk, options?.domain, admite);
     }
     const unidad = semantic === 'used' ? FUSED_UNIT : 1 / ideal;
     if (options?.stats && semantic) options.stats.semantic = semantic;

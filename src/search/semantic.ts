@@ -80,16 +80,30 @@ async function sha256Of(file: string): Promise<string> {
 export async function verifyModelFiles(home: string = semanticHome()): Promise<string | null> {
   if (semanticModel() !== SEMANTIC_MODEL_DEFAULT || semanticDtype() !== SEMANTIC_DTYPE_DEFAULT) return null;
   const dir = path.join(home, 'models', ...SEMANTIC_MODEL_DEFAULT.split('/'));
+  // Each file is hashed once per version of it: one whose size and date are
+  // those of the last successful check is not read again. Hashing the 135 MB
+  // cost ~140 ms at every process start, before the first semantic answer.
+  const marca = path.join(dir, VERIFIED_FILE);
+  let vistos: Record<string, { size: number; mtime: number; sha256: string }> = {};
+  try { vistos = JSON.parse(await fs.readFile(marca, 'utf8')) || {}; } catch { /* first check */ }
+  let nuevos = false;
   for (const [rel, want] of Object.entries(SEMANTIC_MODEL_FILES)) {
     const file = path.join(dir, ...rel.split('/'));
     let st;
     try { st = await fs.stat(file); } catch { return `model file missing: ${rel} (run \`npx crbro-memory semantic install\`)`; }
-    if (st.size !== want.bytes || (await sha256Of(file)) !== want.sha256) {
-      return `model file ${rel} does not match the pinned hash; refusing to use it (delete ${dir} and run \`npx crbro-memory semantic install\`)`;
-    }
+    const mismatch = `model file ${rel} does not match the pinned hash; refusing to use it (delete ${dir} and run \`npx crbro-memory semantic install\`)`;
+    if (st.size !== want.bytes) return mismatch;
+    const v = vistos[rel];
+    if (v && v.size === st.size && v.mtime === st.mtimeMs && v.sha256 === want.sha256) continue;
+    if ((await sha256Of(file)) !== want.sha256) return mismatch;
+    vistos[rel] = { size: st.size, mtime: st.mtimeMs, sha256: want.sha256 };
+    nuevos = true;
   }
+  if (nuevos) { try { await fs.writeFile(marca, JSON.stringify(vistos)); } catch { /* checked again next time */ } }
   return null;
 }
+/** Where verifyModelFiles remembers the files it already hashed. */
+const VERIFIED_FILE = '.crbro-verified.json';
 export function semanticModel(): string { return process.env.CRBRO_SEMANTIC_MODEL || SEMANTIC_MODEL_DEFAULT; }
 export function semanticDtype(): string { return process.env.CRBRO_SEMANTIC_DTYPE || SEMANTIC_DTYPE_DEFAULT; }
 /**
@@ -111,6 +125,10 @@ const QUERY_PREFIX = 'query: ';
 const PASSAGE_PREFIX = 'passage: ';
 /** Longer passages are truncated by the tokenizer anyway; cap the work. */
 const MAX_CHARS = 2000;
+/** A background pass is committed in slices of this many passages (2.11). */
+const UPSERT_SLICE = 64;
+/** ...and saved this often while it runs, so a process that leaves keeps what it did. */
+const UPSERT_SAVE_MS = 30_000;
 
 /** Off when CRBRO_SEMANTIC says so, forced on when it says so, else on exactly when the runtime is installed. */
 export function semanticEnabled(): boolean {
@@ -185,6 +203,40 @@ export class SemanticIndex {
   private broken: string | null = null;
   /** Upserts run one at a time: two overlapping ones would both extend the same array. */
   private queue: Promise<unknown> = Promise.resolve();
+  /** Bumped on every change of the vectors, so a write knows whether it caught up. */
+  private version = 0;
+  /**
+   * Queries waiting for the model (2.11). A background pass (thousands of
+   * passages after an upgrade split long entries into parts) pauses between
+   * passages while any is waiting: a recall used to queue behind it, ~2 s
+   * each, for the minutes the pass lasted.
+   */
+  private foreground = 0;
+  private foregroundWaiters: Array<() => void> = [];
+  /** Passages a running pass still has to embed. */
+  private left = 0;
+
+  /** A large pass is running: more than one slice of passages still to embed. */
+  backfilling(): boolean { return this.left > UPSERT_SLICE; }
+
+  /**
+   * Something in the foreground (a search, a query) is running: background
+   * passages wait until every hold is released. Returns the release.
+   */
+  hold(): () => void {
+    this.foreground++;
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      this.foreground--;
+      if (this.foreground === 0) {
+        const w = this.foregroundWaiters;
+        this.foregroundWaiters = [];
+        for (const f of w) f();
+      }
+    };
+  }
 
   /**
    * allowDownload: only `semantic install` may fetch the model from the Hub
@@ -233,15 +285,19 @@ export class SemanticIndex {
 
   async persist(): Promise<void> {
     if (!this.dirty) return;
+    // What is written is this moment's pair; a vector added while the files
+    // are written keeps the layer dirty for the next write.
+    const version = this.version;
+    const vectors = this.vectors;
+    const meta: Meta = { model: semanticModel(), dtype: semanticDtype(), dim: this.dim, ids: [...this.ids], bytes: vectors.byteLength };
     await fs.mkdir(this.dir, { recursive: true });
-    const meta: Meta = { model: semanticModel(), dtype: semanticDtype(), dim: this.dim, ids: this.ids, bytes: this.vectors.byteLength };
     const tmpMeta = this.metaPath() + '.tmp';
     const tmpData = this.dataPath() + '.tmp';
-    await fs.writeFile(tmpData, Buffer.from(this.vectors.buffer, this.vectors.byteOffset, this.vectors.byteLength));
+    await fs.writeFile(tmpData, Buffer.from(vectors.buffer, vectors.byteOffset, vectors.byteLength));
     await fs.writeFile(tmpMeta, JSON.stringify(meta));
     await fs.rename(tmpData, this.dataPath());
     await fs.rename(tmpMeta, this.metaPath());
-    this.dirty = false;
+    if (this.version === version) this.dirty = false;
   }
 
   /** Load transformers.js from the semantic home and build the extractor. */
@@ -285,6 +341,8 @@ export class SemanticIndex {
     const out: Float32Array[] = [];
     const BATCH = batchSize();
     for (let i = 0; i < texts.length; i += BATCH) {
+      // Background work gives way to a query that is waiting (2.11).
+      while (kind === 'passage' && this.foreground > 0) await new Promise<void>(r => this.foregroundWaiters.push(r));
       const batch = texts.slice(i, i + BATCH).map(t => prefix + t.slice(0, MAX_CHARS));
       const res = await extractor(batch, { pooling: 'mean', normalize: true });
       // res.data is a flat typed array of batch × dim.
@@ -312,22 +370,54 @@ export class SemanticIndex {
   private async upsertNow(entries: Array<{ id: string; text: string }>): Promise<number> {
     const nuevos = entries.filter(e => e.text && !this.pos.has(e.id));
     if (nuevos.length === 0) return 0;
-    const vecs = await this.embed(nuevos.map(e => e.text), 'passage');
+    // In slices, each one usable at once and the whole saved every half
+    // minute (2.11): a pass of thousands used to land all at the end, so a
+    // process that left halfway — a classic session — kept nothing, and the
+    // next one started over.
+    let guardado = Date.now();
+    this.left = nuevos.length;
+    try {
+      for (let i = 0; i < nuevos.length; i += UPSERT_SLICE) {
+        const tramo = nuevos.slice(i, i + UPSERT_SLICE);
+        const vecs = await this.embed(tramo.map(e => e.text), 'passage');
+        this.append(tramo, vecs);
+        this.left = Math.max(0, nuevos.length - i - tramo.length);
+        if (this.left > 0 && Date.now() - guardado > UPSERT_SAVE_MS) {
+          await this.persist().catch(() => undefined);
+          guardado = Date.now();
+        }
+      }
+    } finally {
+      this.left = 0;
+    }
+    return nuevos.length;
+  }
+
+  private append(tramo: Array<{ id: string }>, vecs: Float32Array[]): void {
     // The base offset is captured once: ids.push inside the loop would
     // otherwise move it with every vector. Found as a RangeError, silently
     // swallowed upstream — which is why the first benchmark run showed no
     // change at all. Measure the effect, not the artefact.
     const base = this.ids.length;
-    const grown = new Float32Array((base + nuevos.length) * this.dim);
-    grown.set(this.vectors, 0);
-    for (let i = 0; i < nuevos.length; i++) {
-      grown.set(vecs[i], (base + i) * this.dim);
-      this.pos.set(nuevos[i].id, base + i);
-      this.ids.push(nuevos[i].id);
+    const need = (base + tramo.length) * this.dim;
+    // Room grows by half each time (2.11): a pass that added 64 vectors at a
+    // time reallocated and copied the whole array each slice — tens of MB
+    // every couple of seconds, and the collector paid for it in pauses.
+    let store = this.vectors.buffer.byteLength / 4 >= need && this.vectors.byteOffset === 0
+      ? new Float32Array(this.vectors.buffer)
+      : null;
+    if (!store) {
+      store = new Float32Array(Math.max(need, Math.ceil((this.vectors.length || 0) * 1.5), 256 * this.dim));
+      store.set(this.vectors, 0);
     }
-    this.vectors = grown;
+    for (let i = 0; i < tramo.length; i++) {
+      store.set(vecs[i], (base + i) * this.dim);
+      this.pos.set(tramo[i].id, base + i);
+      this.ids.push(tramo[i].id);
+    }
+    this.vectors = store.subarray(0, need);
+    this.version++;
     this.dirty = true;
-    return nuevos.length;
   }
 
   /** Every id holding a vector (to compare with the index: B14). */
@@ -350,6 +440,7 @@ export class SemanticIndex {
     this.ids = keepIds;
     this.vectors = keep;
     this.pos = new Map(keepIds.map((id, i) => [id, i]));
+    this.version++;
     this.dirty = true;
     return gone.size;
   }
@@ -357,7 +448,13 @@ export class SemanticIndex {
   /** The k nearest chunks to the question, by cosine. */
   async query(text: string, k: number): Promise<SemanticHit[]> {
     if (this.ids.length === 0) return [];
-    const [q] = await this.embed([text], 'query');
+    const release = this.hold();
+    let q: Float32Array;
+    try {
+      [q] = await this.embed([text], 'query');
+    } finally {
+      release();
+    }
     const scores = new Float32Array(this.ids.length);
     for (let i = 0; i < this.ids.length; i++) {
       let dot = 0;

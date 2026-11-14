@@ -2,6 +2,241 @@
 
 All notable changes to CRBRO.
 
+## [2.11.0] — 2026-11-14
+
+One release for the whole 13-11-2026 audit: faster and steadier startup, search
+that finds Spanish words, smaller answers, safer data and secrets, a unified
+installer and four new commands. Still 15 tools; every field the zero-crbro card
+reads keeps its name and meaning. The search index rebuilds once on first start.
+
+### Startup and daemon
+- Daemon mode: the proxy answers `initialize`, `ping` and `tools/list` itself
+  at once, whatever the daemon is doing, from a snapshot of the real server
+  written at build time (`dist/mcp-surface.json`): `initialize` in ~80–95 ms
+  instead of waiting for a daemon to be found or started (603 → 94 ms when it
+  has to start one). This is what made Codex give up on a slow start.
+- A client that waits before sending `initialize` is no longer cut every 5 s:
+  the daemon's handshake clock stops once the proxy has authenticated.
+- A proxy that had to serve in-process keeps looking for a daemon and moves
+  back once one answers and no call is running; three lost daemons in a minute
+  now mean a pause, not in-process for good. Getting a daemon is bounded by one
+  12 s budget. After any move, the proxy repeats the conversation's last
+  `crbro_boot` (answer kept to itself) so its project binding survives.
+- One daemon per release: the build id is a hash of the compiled code
+  (`dist/build-id.json`, written by `npm run build`), so two installs of the
+  same version share one daemon.
+- `daemon stop` / `off` let running calls finish (up to 10 s); a call the
+  daemon had not started is sent to the next backend, and a call cut by a crash
+  says it may or may not have taken effect.
+- `.daemon` is cleaned on every daemon start and by `daemon status|stop|off`:
+  descriptors whose daemon does not answer at its endpoint (never judged by PID,
+  which Windows reuses) and stale temporary, lock and blocked files.
+- A daemon that cannot start says why in `.daemon/daemon.log` and the waiting
+  client stops waiting at once.
+- `CRBRO_STARTUP_TRACE=1` prints the startup phases with timings to stderr and
+  `<brain>/.daemon/startup-trace.log`.
+- A single MCP message over 32 MB gets `-32600` for its id instead of being
+  split into two broken messages.
+
+### Search and recall
+- Words with á, í, ú, ñ or ü are now found with or without the accent, and
+  hyphenated or slashed compounds by any of their parts (`memory` finds
+  `crbro-memory`). The index rebuilds once (format 8).
+- `crbro_recall` says `no_answer: true` when nothing stored clearly matches and
+  returns at most three weak rows without `also_matched`, instead of five rows
+  that read like answers. `CRBRO_NO_ANSWER=0` restores the old behaviour.
+- A semantic-only match is `strong` above this brain's own noise line (measured
+  in the background, stored with the index) instead of a fixed 0.86.
+- With several `queries`, the row shown is one phrasing's own row, so its
+  `confidence` and scores agree; `also_matched` never repeats an entry.
+- One large neuron no longer wins by size; the bound project's neurons get a
+  ×1.25 boost instead of being placed above better global matches.
+- Entries over 1,200 characters are indexed in overlapping parts and recall
+  returns the part that matched (`matched_part`).
+- A search index that is only behind the files is refreshed, not rebuilt (boot
+  with a stale index on a 500-neuron brain: 1.9 s → 0.4 s). A running server
+  sees what other processes saved before every search and never overwrites a
+  newer index with an older view. Classic stdio mode writes the index when the
+  client leaves (at most 2 s).
+- Smaller index and memory: only searched fields are indexed, no sort data.
+- Semantic vectors are added and saved in slices while a large pass runs (the
+  upgrade itself splits long entries into parts that need new vectors), so a
+  process that leaves halfway keeps what it did. The pass pauses while a search
+  runs, and while it lasts recall answers keyword-only with
+  `semantic: "warming"`. Measured on a 563-neuron brain right after upgrading:
+  recall 0.05–0.4 s during the ~4-minute pass, instead of 1.5–3 s with 20 s
+  stalls.
+- A running server's once-a-minute check of the brain's files reads their
+  dates in parallel: ~0.5 s instead of ~20 s on a busy machine.
+- Semantic layer: recall waits at most 1.5 s for the model
+  (`CRBRO_SEMANTIC_WAIT_MS`), then answers keyword-only with
+  `semantic: "warming"`; only `semantic install` downloads; missing vectors are
+  re-embedded and orphans pruned at start; the runtime is pinned to
+  `@huggingface/transformers` 3.8.1 and the model files to SHA-256 hashes.
+- New Spanish retrieval benchmark gating `npm run bench`; the old gate's floor
+  rises.
+
+### Smaller, clearer answers
+- `crbro_boot` is about half the size: protocols whole, then counts, open items
+  (due first, then newest; 180 characters; `age_days`; `review: true` past 30
+  days without a due date), closed items as titles, hot topics, session
+  headlines and a shorter `memory_discipline`. New `pending` block whose
+  numbers always match `message`, and a `more` line naming what was left out.
+  `open_items_total`, `recently_closed_total`, `active_protocols` and
+  `sessions_note` are gone; `retired_tools` moved to `crbro_inspect view=status`.
+- `crbro_boot` no longer fails when `project_neurons` names a neuron that is
+  gone (listed in `unknown_project_neurons`). Over its budget it drops session
+  headlines and hot topics before open items.
+- `crbro_recall` rows leave out fields at their default (`temporal`,
+  `verification`, `freshness`, `provenance`), as the description says.
+  `relevance` is `{score}`; `relevance_score`, `matched_terms` and `query_terms`
+  left the MCP rows. Previews are capped at 160 characters. The "say it may be
+  out of date" instruction appears once, in `stale_warning`. A corrupt neuron no
+  longer fails the whole recall (`unreadable_neurons`).
+- `crbro_context` writes return what changed and the counts
+  (`return_context: true` for the old reply): 22,381 → 427 characters.
+- Not-found and bad-parameter answers carry `isError: true` in revise, forget,
+  map, space, share and learn. `crbro_forget entire` tokens cover the whole
+  neuron and are valid only in the process that issued them.
+- `crbro_learn` warns (never refuses) on facts over ~600 characters and neurons
+  over 300 entries or 300 KB.
+- Tool definitions (`tools/list`): 44,434 → under 30,000 characters.
+
+### Data integrity
+- `backup --keep` must be a whole number ≥ 1 ("siete" or a missing value used
+  to delete every copy). Each new copy is flushed and read back before any
+  rotation and is never rotated itself; a copy dated in the future no longer
+  counts as the newest.
+- Tiered backup retention: the newest N copies (`--keep`, default 7) plus one a
+  day for N days, one a week for 4 weeks and one a month for 6 months.
+- A neuron file with a byte-order mark reads normally. A file that does not
+  parse no longer breaks recall, `crbro_inspect`, `crbro_maintenance`,
+  `crbro_consolidate` or the boot's protocols: it is skipped and named with
+  where a good copy is, and writes to it are refused.
+- Similar topic names no longer merge ("Sprint B" stays out of "Sprint A");
+  only the same name with or without underscores, or a plural, resolves to an
+  existing neuron (`resolved_by: "variant"`, `ambiguous` when several match).
+  "C", "C++" and "C#" are three neurons; non-Latin names get their own neuron;
+  `project_x` no longer becomes `project_project_x`; types are inferred from
+  whole words.
+- `crbro_learn` with a `neuron_id` that does not exist is an error instead of
+  writing to whatever the topic matched. `supersedes` also applies when the new
+  fact already exists, and the retirement reaches shared spaces.
+- Entries that differ only in whitespace or case are one entry.
+- Synapse writes take the same lock as every other write; a write never brings
+  back a neuron deleted meanwhile. Decay follows elapsed time (`decayed_at`),
+  pruned synapses get a quarantine copy, and archiving never takes protocols or
+  shared neurons and keeps an archived neuron's links.
+- Quarantine retention: `CRBRO_QUARANTINE_DAYS` (default 180; 0 keeps copies
+  forever); `crbro_consolidate` and `crbro_maintenance` prune older copies and
+  report `quarantine_pruned`. Forgetting some entries keeps a copy of just those
+  entries; repair and `purge_boilerplate` also keep what they remove.
+- Opt-in encryption at rest of backups and quarantine copies
+  (`CRBRO_ENCRYPT_AT_REST=1`, AES-256-GCM, 32-byte key `CRBRO_AT_REST_KEY` in the
+  OS keychain). Without the key nothing is written in clear and nothing deleted.
+- Heat is kept in `prefrontal/heat_state.json`: consolidate re-reads only
+  changed neurons and never rewrites a neuron for heat (first consolidate on a
+  500-neuron brain: 1.5 s → 0.36 s).
+- `crbro_maintenance stale_list` pages through every stale entry and
+  `stale_review` verifies or retires many at once; the dry run adds a read-only
+  hygiene report (`split_partitions`, `merge_candidates`, `summary_missing`).
+- The shelf-life detector no longer marks Spanish thousands ("1.200.000"),
+  monthly counts or the name "Max" as volatile.
+
+### Secrets, keychain and team spaces
+- **Breaking:** `crbro_secret get` no longer returns arbitrary environment
+  variables of the server process. An environment value counts only as
+  `CRBRO_SECRET_<NAME>` or when `<NAME>` is listed in `CRBRO_SECRET_ENV`; answers
+  say `source: "env" | "keychain"`. Names must be SCREAMING_SNAKE_CASE.
+- Through MCP, overwriting a secret with a different value and removing one are
+  two-step (`confirm_token`, then `confirm`); the first call writes nothing.
+- Windows keychain: a missing `keys.dpapi` is an error with recovery steps when a
+  store existed, never an empty store (`secret set NAME --force` starts one on
+  purpose). Every write keeps rotated sealed copies (`CRBRO_KEYS_COPIES`,
+  default 5); `secret copies` lists them and `secret restore <id> --yes` puts one
+  back after validating it.
+- Keychain and git calls run asynchronously in the server and the store probe
+  is remembered: a credential read no longer freezes a shared daemon (865 ms →
+  24 ms) and a repeated read takes ~0 ms instead of ~0.43 s. macOS and Linux
+  failures are never read as "empty"; Linux lists names without pulling values.
+- Team spaces: names must be simple slugs inside `shared/`; remotes with
+  embedded credentials, a leading `-` or control characters are refused; a sync
+  never merges into, or marks as shared, a local neuron you did not share there
+  (`left_alone`); incoming notes are validated and redacted (`ops_dropped`).
+  `crbro_share` also checks rationales, keywords, revision notes, names,
+  summaries and tags for credentials.
+- Secret filter: private keys are redacted whole, and "PASS value" /
+  "contraseña value" forms without a colon are caught; two false positives seen
+  on a real brain are gone. Rationales, keywords and revision notes pass through
+  the filter and `crbro_audit` counts them. Benchmark: 24/24 caught, 0/28 false
+  positives, measured per value.
+- Locks: a dead owner's lock is reclaimed even when Windows reused its PID;
+  release retries a transient EPERM/EBUSY; a timeout names the holder.
+- Miner scheduler: the crontab is written through stdin (existing lines kept
+  byte for byte, the previous one saved); the Windows task runs the absolute
+  `npx.cmd` with correct quoting.
+
+### Install, CLI, doctor and hooks
+- New `npx crbro-memory install [--clients …] [--dry-run] [--engine-dir DIR]`:
+  copies the engine to `~/.crbro-engine/<version>` and registers it in Claude
+  Code, Claude Desktop, Codex and Cursor (no npx at client start; one build, one
+  daemon). New `uninstall` removes only what CRBRO added and never the brain.
+- Codex: `install-boot` registers the server in `config.toml` when missing and
+  adds `startup_timeout_sec = 60` / `tool_timeout_sec = 120` only when absent; a
+  packaged boot hook runs from a stable folder, never from an npx cache.
+- Every installer write keeps a timestamped backup, is refused if the file
+  changed since it was read, and keeps line endings, indentation and links.
+  `CLAUDE_CONFIG_DIR` and `CODEX_HOME` are honoured.
+- Installed hook copies refresh themselves when a newer release finds them
+  unmodified; edited copies are kept and reported once (`hooks_notice`).
+  `CRBRO_HOOK_REFRESH=0` turns it off.
+- CLI: unknown commands and options exit 2 instead of starting the server;
+  `--version`; `<command> --help` runs nothing; failures exit 1.
+- `doctor` checks hooks, daemon leftovers, quarantine, the guard index, client
+  registrations, Codex timeouts and backup age, and can now say `ok`.
+- Guard: the current project's lessons first, others only inside their folder;
+  team and miner lessons stay out unless `CRBRO_GUARD_ORIGINS=all`; at most 6
+  per session.
+- Miner: no more checklist lines, bare links or headings stored as facts;
+  `crbro_maintenance purge_boilerplate` removes the ones already stored.
+
+### New commands
+- `crbro-memory export [--out DIR] [--format md|json] [--include-retired]`:
+  the brain as an Obsidian-compatible Markdown vault (a note per neuron with
+  frontmatter, entries by kind, synapses as `[[links]]`, domain index notes,
+  day logs, open items) or one `crbro-export.json` that `import` reads back.
+  Read-only and safe while a client runs; credentials redacted; never writes
+  inside the brain or into a non-empty folder.
+- `crbro-memory import PATH [--apply] [--topic NAME] [--type …]`: learns what a
+  `CLAUDE.md` / `AGENTS.md`, a Claude Code memory folder or a CRBRO export says.
+  Dry run by default; writes go through the MCP tools, so validation, redaction
+  and de-duplication apply, and importing twice adds nothing.
+- `crbro-memory view [--port N] [--no-open]`: a local page (127.0.0.1, one-time
+  token, strict CSP) to browse neurons and entries with their date, status,
+  verification and freshness, search, resolve or discard open items, verify or
+  retire stale entries and remove one entry after confirmation.
+- `crbro-memory serve --http`: MCP over Streamable HTTP at
+  `http://127.0.0.1:8787/mcp` with a bearer token (`CRBRO_HTTP_TOKEN` or the
+  keychain; `--new-token` creates one without printing it). Loopback unless
+  `--allow-remote`; no TLS and no OAuth; `crbro_secret` is left out unless
+  `--allow-secrets`.
+
+### Fixed
+- A neuron reference with a path separator (`../x`) was used as a file name, so
+  `crbro_inspect` and `crbro_learn` could read or write JSON files outside the
+  brain. It is now always a name.
+- `crbro_inspect view=status` reports the folder the server reads as
+  `brain_path`, not the path the manifest recorded when the brain was created
+  (a copied or moved brain showed its old location).
+
+### Packaging and releases
+- Requires Node.js 20 or later. `npm publish` runs the tests first. The package
+  no longer ships sourcemaps or declaration files (205 → 61 files).
+- Releases are published from a version tag by CI (`release.yml`) with npm
+  provenance; CI runs on Linux, Windows and macOS with Node 20, 22 and 24,
+  starts the real server over stdio and builds the `.mcpb` and Docker image.
+- README rewritten in three layers; long sections moved to `docs/`.
+
 ## [2.10.0] — 2026-10-18
 
 - Prevent concurrent Windows keychain writers from overwriting externally added,

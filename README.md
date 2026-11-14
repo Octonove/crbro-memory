@@ -197,6 +197,8 @@ Set them in the `env` block of the MCP client's config to affect that client onl
 | `CRBRO_SEMANTIC_DTYPE` | `q8` | Model quantization |
 | `CRBRO_SEMANTIC_FLOOR` | built in | Cosine floor under which a vector-only candidate is dropped |
 | `CRBRO_SEMANTIC_BATCH` | built in | Lines embedded per batch |
+| `CRBRO_SEMANTIC_WAIT_MS` | `1500` | How long a recall waits for the semantic model before answering keyword-only (`semantic: "warming"`) |
+| `CRBRO_NO_ANSWER` | on | `0` turns off `no_answer`: recall then returns its usual rows even when nothing clearly matches |
 | `CRBRO_SYNONYMS` | on | `0` turns off the bilingual synonym table |
 | `CRBRO_RECENCY` | on | `0` turns off the small recency lift that breaks ties toward newer entries |
 | `CRBRO_IDF` | on | `0` turns off weighting query terms by rarity |
@@ -205,21 +207,28 @@ Set them in the `env` block of the MCP client's config to affect that client onl
 | `CRBRO_AUTOBACKUP` | on | `0` disables the daily backup made at consolidation |
 | `CRBRO_BACKUP_DIR` | `<brain parent>/<brain name>-backups/brain` (`~/.crbro-backups/brain`) | Where backups go; point it at a synced folder |
 | `CRBRO_KEYS_DIR` | `~/.crbro-keys` | Where the keychain file lives on platforms that use one |
-| `CRBRO_SECRET_<NAME>` | — | Environment fallback for `crbro_secret` on machines with no credential store |
+| `CRBRO_KEYS_COPIES` | `5` | Sealed copies of the Windows keychain file kept in `sealed-copies/` (2–100) |
+| `CRBRO_SECRET_<NAME>` | — | An environment value `crbro_secret get NAME` may return (for CI or machines with no credential store). Plain variables are never read |
+| `CRBRO_SECRET_ENV` | — | Comma-separated names whose plain environment variable `crbro_secret get` may return as well |
+| `CRBRO_ENCRYPT_AT_REST` | off | `1` seals backups and quarantine copies with AES-256-GCM, using a 32-byte key stored in the keychain as `CRBRO_AT_REST_KEY` (create it once, see [docs/credentials.md](docs/credentials.md)). Without the key nothing is written in clear and nothing is deleted |
 | `CRBRO_DAEMON` | the brain's own flag | `1` / `0` forces daemon mode on or off for one client; see [docs/daemon.md](docs/daemon.md) |
 | `CRBRO_DAEMON_IDLE_MIN` | `20` | Minutes without a conversation before a daemon exits; `0` keeps it running |
 | `CRBRO_MOD` | on | `0` keeps this client from installing or updating the Claude Code mod |
 | `CRBRO_LANG` | system locale | Language of the mod (`en` or `es`) when installed with `--lang auto` |
 | `CRBRO_SUBAGENT_INJECT` | off | `full` makes the subagent hook inject the protocol block |
 | `CRBRO_SUBAGENT_MATCHER` | — | Regex that scopes the subagent hook to some subagent types |
-| `CRBRO_STARTUP_TRACE` | off | `1` traces the server's startup steps to stderr |
-| `CRBRO_QUARANTINE_DAYS` | `180` | Days `.quarantine/` keeps what `crbro_forget` removed; `0` keeps it forever |
+| `CRBRO_STARTUP_TRACE` | off | `1` traces the startup steps, with timings, to stderr and `<brain>/.daemon/startup-trace.log` |
+| `CRBRO_QUARANTINE_DAYS` | `180` | Days `.quarantine/` keeps the copies taken before a forget, merge, compact or repair; `0` keeps them forever |
+| `CRBRO_ENGINE_DIR` | `~/.crbro-engine` | Where `install` keeps the engine the clients run |
+| `CRBRO_HOOK_REFRESH` | on | `0` stops a newer release from refreshing the hook copies it installed earlier |
+| `CRBRO_GUARD_ORIGINS` | own | `all` lets the guard also speak lessons from team spaces and the miner (labelled) |
+| `CRBRO_CODEX_HOOK` | on | `0` silences the packaged Codex boot hook |
+| `CRBRO_HTTP_TOKEN` | — | Bearer token for `serve --http` (else read from the keychain under the same name) |
 | `CLAUDE_CONFIG_DIR` | `~/.claude` | Where the hooks and the mod are installed, if you moved Claude Code's folder |
 | `CODEX_HOME` | `~/.codex` | Same, for Codex |
 | `CLAUDE_CODE_PLUGIN_DIRS` | — | Read and extended (never replaced) by the mod installer |
 | `NODE_USE_SYSTEM_CA` | — | Node's own switch: trust the system certificate store (see [Troubleshooting](#npx-fails-with-unable_to_verify_leaf_signature)) |
 
-<!-- TODO-INTEGRATOR: regenerate this table from `grep -rhoE "CRBRO_[A-Z0-9_]+" src bin hooks` after the merge: parcels A, C1, C2 and E add variables (CRBRO_STARTUP_TRACE and CRBRO_QUARANTINE_DAYS are from the plan; check their names and defaults, and add the opt-in switches for secrets-from-environment and for backup/quarantine encryption). -->
 
 ### More documentation
 
@@ -246,25 +255,25 @@ Every number about cost and quality comes from a script in [`benchmarks/`](https
 
 **What runs in CI** on every push: the lexical retrieval benchmark (keyword engine alone, no model, no network) and the credential-redaction benchmark, both as gates that fail the build if they regress (`npm run bench`), plus the unit and integration test suite on Linux, Windows and macOS. Everything else below is run by hand, with the version and date next to it. The agentic benchmark puts a real Claude Code agent to work and spends tokens, so it is never run in CI.
 
-<!-- MEASURE: version and date of the measurements below (integrator: fill in after the 2.11.0 run) -->
+Measured for **2.11.0 on 14-11-2026**, on Windows 11 with Node 24. "Real brain" means a copy of one person's brain (563 neurons, 9 MB of neurons, 146 day logs, semantic layer installed); the 2.10.0 figure next to each is the same measurement on the same copy.
 
 | What | Result | How to reproduce |
 |---|---|---|
-| **Cost: `tools/list`** (what an MCP client that loads every tool pays on each request) | <!-- MEASURE: characters and approximate tokens of the 15 tool definitions, with and without output schemas --> | `node benchmarks/cost/run.mjs` |
-| **Cost: `crbro_boot`** (paid once per session) | <!-- MEASURE: characters of the boot response on a reference brain; say which brain --> | `node benchmarks/cost/run.mjs` |
-| **Cost: `crbro_recall`** (per search, default five results) | <!-- MEASURE: characters per recall response --> | `node benchmarks/cost/run.mjs` |
-| **Cost: `crbro_context`** | <!-- MEASURE: characters of a context read --> | `node benchmarks/cost/run.mjs` |
-| **Retrieval, keyword engine alone** (blind paraphrased queries; the CI gate) | <!-- MEASURE: recall@1, recall@3, MRR, query count --> | `node benchmarks/retrieval/run.mjs` |
-| **Retrieval, semantic layer on** | <!-- MEASURE: recall@1, recall@3 as installed, and inside the large haystack --> | `CRBRO_SEMANTIC=1 node benchmarks/retrieval/run.mjs` |
-| **Retrieval, Spanish** (accents, hyphenated compounds, questions with no answer) | <!-- MEASURE: results of the Spanish benchmark gate --> | `node benchmarks/retrieval/run.mjs` (see its README) |
-| **False confidence** (questions about things that are not stored) | <!-- MEASURE: distractors that reach a real hit's score, per mode --> | `node benchmarks/retrieval/run.mjs` |
-| **Secret redaction** (adversarial credentials and near-miss innocents; the CI gate) | <!-- MEASURE: caught / false positives --> | `node benchmarks/security/run.mjs` |
-| **Startup** (client connected until the first tool answers; with and without the daemon) | <!-- MEASURE: milliseconds, cold and warm --> | `node benchmarks/daemon/measure.mjs` |
-| **Memory use** (RAM per client, with and without the daemon) | <!-- MEASURE: MB with three clients, daemon off / on --> | `node benchmarks/daemon/measure.mjs` |
-| **Disk** (semantic layer: runtime and model) | <!-- MEASURE: MB on disk and time of the first install --> | `npx crbro-memory semantic status` |
-| **First boot after upgrading** (the search index rebuilds once) | <!-- MEASURE: seconds on a reference brain; say how big --> | — |
-| **Tests** | <!-- MEASURE: files and tests passed, skipped, on which OS --> | `npx vitest run` |
-| **A fresh session does not ask again** (agentic; haiku and sonnet) | <!-- MEASURE: only if re-run for 2.11; otherwise leave the 2.7.2 result as historical --> | `node benchmarks/agentic/run.mjs` |
+| **Cost: `tools/list`** (what an MCP client that loads every tool pays on each request) | **29,802 characters** (≈7,500 tokens) for the 15 tools, 2,918 of them output schemas. 2.10.0: 44,434 | `node benchmarks/cost/context.mjs` |
+| **Cost: `crbro_boot`** (paid once per session) | **9,973 characters** on the real brain (2.10.0: 21,704); 9,529 on the 503-neuron synthetic brain of `context.mjs` | `node benchmarks/cost/context.mjs` |
+| **Cost: `crbro_recall`** (per search, default five results) | **~7,700–8,800 characters** for five results, plus the same as `structuredContent` (2.10.0: ~13,000). A question with nothing clearly stored behind it comes back flagged `no_answer` with at most three weak rows: 5,147 characters for one on the real brain, where 2.10.0 returned five rows and 13,205 characters | `node benchmarks/cost/context.mjs` |
+| **Cost: `crbro_context`** | A read: 21,318 characters (unchanged on purpose: it is the door to everything pending). A write (`add_pending` and the like) now answers in ~430 characters instead of ~22,000 | `node benchmarks/cost/context.mjs` |
+| **Retrieval, keyword engine alone** (blind paraphrased queries; the CI gate) | **recall@1 83 %, recall@3 90 %, MRR 0.865** on 48 blind paraphrased queries (2.10.0: 77 %, 83 %, 0.806). The CI gate's floor is 40/48, 42/48 and 0.85 | `node benchmarks/retrieval/run.mjs` |
+| **Retrieval, semantic layer on** | **recall@1 85 %, recall@3 88 %, MRR 0.865** (2.10.0: 75 %, 81 %, 0.781). On the real brain a search takes ~140–220 ms with the layer on, ~60 ms keyword-only | `CRBRO_SEMANTIC=1 node benchmarks/retrieval/run.mjs` |
+| **Retrieval, Spanish** (accents, hyphenated compounds, questions with no answer) | 29 answerable questions: **recall@1 25, recall@3 25** (2.10.0: 18, 21). Accents 17/17, hyphenated compounds 4/4, long entries answered with the part that matched 3/3; 5 of 8 unanswerable questions flagged `no_answer` (2.10.0: 0). On the real brain, `diseño` now finds 105 neurons (2.10.0: 14), `título` 99 (17), `categoría` 77 (16), `España` 72 (6) | `node benchmarks/retrieval/run.mjs` (see its README) |
+| **False confidence** (questions about things that are not stored) | Keyword engine: 1 of 14 distractors reaches a real hit's score (2.10.0: 2). Semantic layer on: 0 of 14 | `node benchmarks/retrieval/run.mjs` |
+| **Secret redaction** (adversarial credentials and near-miss innocents; the CI gate) | **24/24 caught, 0/28 false positives**, counted per value: a case is caught only if every secret value in it is gone | `node benchmarks/security/run.mjs` |
+| **Startup** (client connected until the first tool answers; with and without the daemon) | Real brain. Without the daemon: `initialize` ~0.28 s, `crbro_boot` ~0.9–1.4 s, first recall ~0.2 s. With the daemon warm: `initialize` 69 ms, `crbro_boot` 37 ms. With the daemon to be started: `initialize` 103 ms (2.10.0: 625 ms), first boot ~1.7 s | `node benchmarks/daemon/startup.mjs` |
+| **Memory use** (RAM per client, with and without the daemon) | Without the daemon, one full engine per client: ~1 GB with the semantic model loaded, ~530 MB keyword-only (2.10.0: ~700 MB). With the daemon: ~62 MB per client plus one daemon (~0.8–1 GB) | `node benchmarks/daemon/startup.mjs` |
+| **Disk** (semantic layer: runtime and model) | ~500 MB in `~/.crbro/.semantic` (runtime and model, downloaded once by `semantic install`) | `npx crbro-memory semantic status` |
+| **First boot after upgrading** (the search index rebuilds once) | **9.7 s** on the real brain (563 neurons): the index rebuilds once in the new format. The semantic vectors of long entries, now split into parts, then fill in the background (~5,500 of them, about 4 minutes here); meanwhile recall stays at 0.05–0.4 s and answers keyword-only (`semantic: "warming"`) | — |
+| **Tests** | **105 files, 1,324 passed, 6 skipped** on Windows 11; CI runs the suite on Linux, Windows and macOS with Node 20, 22 and 24 | `npx vitest run` |
+| **A fresh session does not ask again** (agentic; haiku and sonnet) | Not re-run for 2.11: the 2.7.2 result stands, with its caveats, in [docs/measurements-2.7.2.md](docs/measurements-2.7.2.md) | `node benchmarks/agentic/run.mjs` |
 
 The figures published for 2.7.2 (retrieval, scale, false confidence, the agentic runs and the two stale-value experiments that did **not** meet their pre-registered claim) are kept, dated and with their caveats, in [docs/measurements-2.7.2.md](docs/measurements-2.7.2.md). They have not been re-measured for 2.11.
 

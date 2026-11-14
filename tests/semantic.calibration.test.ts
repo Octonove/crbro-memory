@@ -29,6 +29,8 @@ class FakeSemantic {
   idList() { return [...this.texts.keys()]; }
   has(id: string) { return this.texts.has(id); }
   warm() { /* nothing */ }
+  hold() { return () => { /* nothing to release */ }; }
+  backfilling() { return false; }
   async load() { /* nothing */ }
   async persist() { /* nothing */ }
   async upsert(entries: Array<{ id: string; text: string }>) { for (const e of entries) this.texts.set(e.id, e.text); return entries.length; }
