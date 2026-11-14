@@ -247,6 +247,7 @@ Set them in the `env` block of the MCP client's config to affect that client onl
 | [docs/doctor.md](docs/doctor.md) | What `doctor` reports and what it never does |
 | [docs/upgrading-from-1x.md](docs/upgrading-from-1x.md) | The 23 → 15 tools change |
 | [docs/releasing.md](docs/releasing.md) | How releases are made (for maintainers) |
+| [llms-install.md](llms-install.md) | For an AI agent asked to set CRBRO up (Cline's marketplace reads it): the one config entry, and what not to run |
 | [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md), [CHANGELOG.md](CHANGELOG.md) | |
 
 ---
