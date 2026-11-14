@@ -105,7 +105,16 @@ const PART_OVERLAP = 120;
 /** Exponent on term coverage. >1 punishes chunks that only match one term. */
 const COVERAGE_EXPONENT = 1.5;
 /** Debounce before writing the index to disk after a learn. */
-const PERSIST_DEBOUNCE_MS = 5000;
+/**
+ * When the index goes to disk (2.12): after this much quiet, and at the
+ * latest this long after it first changed. Writing it serialises ~60 MB on a
+ * real brain (~0.4 s with the event loop held), and it used to happen 5 s
+ * after every change. The file is derived data: a process that starts from an
+ * older one catches up from the neuron files (2.11), so writing less often
+ * loses nothing. flush() (consolidate, exit) still writes at once.
+ */
+const PERSIST_QUIET_MS = 30_000;
+const PERSIST_MAX_DELAY_MS = 5 * 60_000;
 /** How often a long-lived process compares every file even when the folders did not move (2.11). */
 const FULL_CHECK_MS = 60_000;
 /** How long an exiting process may spend writing its index before it leaves anyway (2.11). */
@@ -491,31 +500,49 @@ export function splitParts(text: string): Array<{ offset: number; text: string }
   return out;
 }
 
-/** The full text of an entry by its id, as it is indexed (a decision with its rationale). Null when gone or retired. */
-function entryTextById(neuron: Neuron, kind: string, eid: string): string | null {
+/**
+ * id → full text of every live entry of one kind, built once per neuron
+ * object (2.12). Looking an entry up used to hash every entry of the neuron
+ * on each call, and a search calls it for each part of each long entry: on a
+ * real 563-neuron brain that was most of a recall's CPU time.
+ */
+const textosPorId = new WeakMap<Neuron, Map<string, Map<string, string>>>();
+function entryTextIndex(neuron: Neuron, kind: string): Map<string, string> {
+  let porTipo = textosPorId.get(neuron);
+  if (!porTipo) { porTipo = new Map(); textosPorId.set(neuron, porTipo); }
+  let m = porTipo.get(kind);
+  if (m) return m;
+  m = new Map<string, string>();
+  const add = (id: string, text: string) => { if (!m!.has(id)) m!.set(id, text); };   // the first one wins, as find() did
   switch (kind) {
-    case 'fact': {
-      const f = (neuron.facts || []).find(x => !!x && !isRetired(x) && (x.id || factId(x.text)) === eid);
-      return f ? f.text : null;
-    }
-    case 'decision': {
-      const d = (neuron.decisions || []).find(x => !!x && (x.id || entryId(x.text)) === eid);
-      return d ? (d.rationale ? `${d.text} — ${d.rationale}` : d.text) : null;
-    }
-    case 'map':
-      return neuron.map?.text || null;
-    case 'pattern': return (neuron.patterns || []).find(t => entryId(t) === eid) ?? null;
-    case 'preference': return (neuron.preferences || []).find(t => entryId(t) === eid) ?? null;
-    case 'error': return (neuron.errors || []).find(t => entryId(t) === eid) ?? null;
-    case 'debt': return (neuron.debts || []).find(t => entryId(t) === eid) ?? null;
-    default: return null;
+    case 'fact':
+      for (const x of neuron.facts || []) if (x && !isRetired(x)) add(x.id || factId(x.text), x.text);
+      break;
+    case 'decision':
+      for (const x of neuron.decisions || []) if (x) add(x.id || entryId(x.text), x.rationale ? `${x.text} — ${x.rationale}` : x.text);
+      break;
+    case 'pattern': for (const t of neuron.patterns || []) add(entryId(t), t); break;
+    case 'preference': for (const t of neuron.preferences || []) add(entryId(t), t); break;
+    case 'error': for (const t of neuron.errors || []) add(entryId(t), t); break;
+    case 'debt': for (const t of neuron.debts || []) add(entryId(t), t); break;
   }
+  porTipo.set(kind, m);
+  return m;
+}
+
+/** The full text of an entry by its id, as it is indexed (a decision with its rationale). Null when gone or retired. */
+export function entryTextById(neuron: Neuron, kind: string, eid: string): string | null {
+  if (kind === 'map') return neuron.map?.text || null;
+  if (!['fact', 'decision', 'pattern', 'preference', 'error', 'debt'].includes(kind)) return null;
+  return entryTextIndex(neuron, kind).get(eid) ?? null;
 }
 
 export class SearchEngine {
   private db: AnyOrama | null = null;
   private docCount = 0;
   private dirty = false;
+  /** When the in-memory index first differed from the file (0 = it does not). */
+  private dirtySince = 0;
   private persistTimer: NodeJS.Timeout | null = null;
 
   /**
@@ -960,6 +987,7 @@ export class SearchEngine {
     // ~25% of both size and write time for something no human reads.
     await writeJSON(this.brain.paths.chunksIndex(), this.storedPayload(), { pretty: false });
     this.dirty = false;
+    this.dirtySince = 0;
     if (this.semantic) {
       try { await this.semantic.persist(); } catch { /* vectors are derived data; recall survives */ }
     }
@@ -977,6 +1005,7 @@ export class SearchEngine {
       writeFileSync(tmp, JSON.stringify(this.storedPayload()), 'utf-8');
       renameSync(tmp, file);
       this.dirty = false;
+      this.dirtySince = 0;
     } catch { /* best effort: the next boot refreshes from the files */ }
   }
 
@@ -2145,11 +2174,14 @@ export class SearchEngine {
 
   private markDirty(): void {
     this.dirty = true;
+    const ahora = Date.now();
+    if (!this.dirtySince) this.dirtySince = ahora;
     if (this.persistTimer) clearTimeout(this.persistTimer);
+    const espera = Math.max(0, Math.min(PERSIST_QUIET_MS, this.dirtySince + PERSIST_MAX_DELAY_MS - ahora));
     this.persistTimer = setTimeout(() => {
       this.persistTimer = null;
       void this.persist().catch(() => { /* disk error — keep serving */ });
-    }, PERSIST_DEBOUNCE_MS);
+    }, espera);
     // Never hold the process open just to flush the index.
     if (typeof this.persistTimer.unref === 'function') this.persistTimer.unref();
   }
