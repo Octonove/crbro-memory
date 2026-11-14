@@ -291,7 +291,7 @@ describe('the index under one roof', () => {
     const during = await a.engine.search('zzzfinal');     // asked while the index is being emptied and refilled
     await rebuilding;
     expect(during[0]?.matching_content).toContain('zzzfinal');
-  });
+  }, 30_000);   // 151 learns and a rebuild: over the 5 s default when the suite runs under load
 
   it('re-indexing a neuron keeps the vector of every line that is still there', async () => {
     dir = await fs.mkdtemp(path.join(holder, 'vectors-'));

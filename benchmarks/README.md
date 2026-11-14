@@ -397,6 +397,22 @@ Se reproduce con `CRBRO_BENCH_QUERIES=benchmarks/retrieval/test2.json` (o
 `dev.json`) y `CRBRO_BENCH_HAYSTACK=benchmarks/retrieval/haystack-1.json,benchmarks/retrieval/haystack-2.json,benchmarks/retrieval/haystack-3.json`
 (rutas relativas: con rutas de Git Bash del tipo `/c/…` Node no las abre).
 
+## Performance — el servidor real sobre un cerebro de tamaño real (2.12)
+
+`npm run perf` (o `node benchmarks/perf/nightly.mjs`) construye el cerebro sintético de
+`benchmarks/retrieval/synthetic-brain.mjs` (~500 neuronas, ~7.000 entradas, la mayoría con tildes),
+arranca el servidor por stdio como lo hace un cliente y mide: tamaños (`tools/list`, `crbro_boot`,
+`crbro_recall`), primer y segundo arranque, latencia de recall con palabras clave y, si la capa
+semántica está instalada (`CRBRO_SEMANTIC_HOME`), el caso de una actualización: latencia de recall
+MIENTRAS se rellenan los vectores y después. Sale con código 1 si se pasa un presupuesto (alrededor
+del triple de lo que mide una estación de trabajo, porque los runners de CI son más lentos). Corre
+cada noche en `.github/workflows/perf.yml` y deja `perf.json` como artefacto.
+
+Medido en 14-11-2026 en una estación de trabajo (Windows 11, Node 24): recall con palabras clave
+p50 19 ms · p90 52 ms; durante el relleno semántico (213 s) p90 278 ms y máximo 546 ms; con los
+vectores completos p50 43 ms · p90 79 ms. La 2.11.0 tal como se publicó tardaba 1,5–3 s por recall
+durante ese relleno, con picos de 20 s: es la regresión que esta prueba habría visto.
+
 ## Security — el filtro de redacción
 
 Un **piso, no una prueba** de seguridad (como dice Ponytail de su check

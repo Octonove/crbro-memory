@@ -34,7 +34,8 @@ export const VIEW_HELP = `
   Open a local page to see and tidy the memory: neurons with filters, every
   entry with its date, status, verification and freshness, a search box
   (crbro_recall), open items to resolve or discard, possibly-stale entries to
-  verify or retire, and removing one entry (asks first).
+  verify or retire, editing the text of an entry, merging one neuron into
+  another (previews first) and removing one entry (asks first).
 
     --port <n>    Port on 127.0.0.1 (default: a free one picked by the system).
     --no-open     Print the link instead of opening the browser.
@@ -196,6 +197,62 @@ export async function handleApi(caller: ToolCaller, method: string, pathname: st
       const d = await tool(caller, 'crbro_revise', args);
       if (Array.isArray(d.unmatched) && d.unmatched.length) throw new HttpError(409, 'nothing matched: the entry may have changed or be retired already');
       return { ok: true };
+    }
+    case '/api/edit': {
+      // Change the text of one entry. A fact is replaced with `supersedes`, which retires the
+      // old one in the same call; the other kinds are written new and the old text retired
+      // after, so a failure between the two leaves both and never neither.
+      if (!post) break;
+      const b = await body();
+      const neuron = str(b?.neuron, 'neuron');
+      const id = str(b?.id, 'entry id');
+      const text = str(b?.text, 'text', /^[\s\S]{1,4000}$/).trim();
+      if (!text) throw new HttpError(400, 'invalid text');
+      const d = await tool(caller, 'crbro_inspect', { view: 'neuron', neuron, entries: [id] });
+      const n = d.neuron ?? d;
+      const entry = n.entries?.[0];
+      if (!entry?.text) throw new HttpError(404, 'entry not found');
+      // A full read says `active` for a live fact; anything else (superseded, retracted) is retired.
+      if (entry.status && entry.status !== 'active') throw new HttpError(409, 'this entry is retired: bring it back before editing it');
+      if (entry.kind === 'map') throw new HttpError(400, 'the map is rewritten as a whole with crbro_map');
+      if (!ENTRY_KINDS.has(entry.kind)) throw new HttpError(400, 'invalid kind');
+      if (text === entry.text) throw new HttpError(400, 'nothing changed');
+      const neuronId = String(n.id ?? neuron);
+      const args: Record<string, unknown> = { neuron_id: neuronId, type: entry.kind, content: text };
+      if (entry.kind === 'fact') {
+        args.supersedes = [id];
+        if (Array.isArray(entry.keys) && entry.keys.length) args.keywords = entry.keys;
+      }
+      if (entry.kind === 'decision' && entry.rationale) args.rationale = entry.rationale;
+      const added = await tool(caller, 'crbro_learn', args);
+      if (entry.kind === 'fact') {
+        if (Array.isArray(added.supersedes_unmatched) && added.supersedes_unmatched.length) {
+          throw new HttpError(409, 'the new text was saved but the old entry could not be retired (it may have changed): retire it by hand');
+        }
+      } else {
+        const r = await tool(caller, 'crbro_revise', { neuron: neuronId, entries: [entry.text], status: 'superseded', note: 'Replaced by an edit in crbro-memory view.' });
+        if (Array.isArray(r.unmatched) && r.unmatched.length) throw new HttpError(409, 'the new text was saved but the old one could not be retired: retire it by hand');
+      }
+      return { ok: true };
+    }
+    case '/api/merge': {
+      // Union one neuron into another and delete the source (crbro_forget merge_into). Two steps:
+      // without confirm it only says what would move; the source's copy stays in quarantine.
+      if (!post) break;
+      const b = await body();
+      const source = str(b?.source, 'source neuron');
+      const target = str(b?.target, 'target neuron');
+      const read = async (ref: string) => {
+        const d = await tool(caller, 'crbro_inspect', { view: 'neuron', neuron: ref, limit: 1 });
+        const n = d.neuron ?? d;
+        return { id: String(n.id ?? ref), name: String(n.name ?? ref), counts: n.counts ?? {} };
+      };
+      const from = await read(source);
+      const into = await read(target);
+      if (from.id === into.id) throw new HttpError(400, 'pick a different neuron to merge into');
+      if (b?.confirm !== true) return { preview: { from, into } };
+      const r = await tool(caller, 'crbro_forget', { neuron: from.id, merge_into: into.id });
+      return { ok: true, message: r.message, backup: r.backup ?? undefined, undo: `crbro_forget restore:true neuron="${from.id}"` };
     }
     case '/api/remove': {
       if (!post) break;

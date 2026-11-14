@@ -53,6 +53,8 @@ h3{font-size:14px;text-transform:uppercase;letter-spacing:.04em;color:var(--mute
 #toast{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:8px 14px;border-radius:8px;font-size:14px;display:none;max-width:90vw}
 dialog{border:1px solid var(--line);border-radius:12px;background:var(--panel);color:var(--ink);max-width:520px;width:calc(100% - 32px)}
 dialog::backdrop{background:rgba(0,0,0,.45)}
+dialog textarea,dialog select,dialog input[type=text]{width:100%;box-sizing:border-box;font:inherit;color:var(--ink);background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:8px;margin:6px 0}
+dialog textarea{min-height:180px;resize:vertical}
 .hidden{display:none!important}
 .wide{grid-column:1/-1}
 `;
@@ -105,6 +107,63 @@ function confirmDialog(title, text, okLabel) {
     $('confirmOk').onclick = () => done(true);
     $('confirmCancel').onclick = () => done(false);
     d.oncancel = () => resolve(false);
+    d.showModal();
+  });
+}
+
+function editDialog(current) {
+  return new Promise((resolve) => {
+    const d = $('editDlg');
+    const area = $('editText');
+    area.value = current;
+    const done = (v) => { d.close(); resolve(v); };
+    $('editSave').onclick = () => { const v = area.value.trim(); done(v && v !== current.trim() ? v : null); };
+    $('editCancel').onclick = () => done(null);
+    d.oncancel = () => resolve(null);
+    d.showModal();
+    area.focus();
+  });
+}
+
+async function mergeDialog(neuron) {
+  const d = $('mergeDlg');
+  const sel = $('mergeTarget');
+  const find = $('mergeFilter');
+  const info = $('mergeInfo');
+  const go = $('mergeGo');
+  $('mergeTitle').textContent = 'Merge "' + neuron.name + '" into…';
+  info.textContent = '';
+  go.textContent = 'Preview';
+  let previewed = null;
+  const fill = () => {
+    const q = find.value.trim().toLowerCase();
+    sel.replaceChildren(...state.neurons.filter(n => n.id !== neuron.id && (!q || (n.name + ' ' + n.id).toLowerCase().includes(q))).slice(0, 200)
+      .map(n => h('option', { value: n.id }, n.name + ' (' + n.id + ')')));
+    previewed = null; go.textContent = 'Preview'; info.textContent = '';
+  };
+  find.value = '';
+  find.oninput = fill;
+  sel.onchange = () => { previewed = null; go.textContent = 'Preview'; info.textContent = ''; };
+  fill();
+  return new Promise((resolve) => {
+    const done = (v) => { d.close(); resolve(v); };
+    $('mergeCancel').onclick = () => done(false);
+    d.oncancel = () => resolve(false);
+    go.onclick = async () => {
+      if (!sel.value) { info.textContent = 'Pick a neuron.'; return; }
+      try {
+        if (previewed !== sel.value) {
+          const r = await api('/api/merge', { source: neuron.id, target: sel.value });
+          const c = (o) => Object.entries(o.counts || {}).map(([k, v]) => v + ' ' + k).join(', ') || 'no entries';
+          info.textContent = '"' + r.preview.from.name + '" (' + c(r.preview.from) + ') will be added to "' + r.preview.into.name + '" (' + c(r.preview.into) + ') and then deleted. A copy stays in quarantine; undo with crbro_forget restore.';
+          previewed = sel.value; go.textContent = 'Merge now';
+          return;
+        }
+        const r = await api('/api/merge', { source: neuron.id, target: sel.value, confirm: true });
+        toast(r.message || 'Merged.');
+        done(sel.value);
+      } catch (err) { info.textContent = err.message; }
+    };
     d.showModal();
   });
 }
@@ -169,15 +228,26 @@ function freshnessChips(e) {
   return out;
 }
 
+// A live entry has no status, or says active (a full read of a fact does).
+const isLive = (e) => !e.status || e.status === 'active';
 function entryActions(neuronId, e, after) {
   const acts = [];
   if (e.kind === 'map') return acts;
-  if (!e.status && ['fact', 'decision', 'pattern'].includes(e.kind)) {
+  if (isLive(e)) {
+    acts.push(h('button', { onclick: async () => {
+      let full = e.text ?? e.preview ?? '';
+      try { const r = await api('/api/entry?neuron=' + encodeURIComponent(neuronId) + '&id=' + encodeURIComponent(e.id)); if (r.entry && r.entry.text) full = r.entry.text; } catch (err) { toast(err.message); return; }
+      const text = await editDialog(full);
+      if (text === null) return;
+      try { await api('/api/edit', { neuron: neuronId, id: e.id, text }); toast('Saved. The old text was retired (reversible).'); after(); } catch (err) { toast(err.message); }
+    } }, 'Edit'));
+  }
+  if (isLive(e) && ['fact', 'decision', 'pattern'].includes(e.kind)) {
     acts.push(h('button', { onclick: async () => {
       try { await api('/api/verify', { neuron: neuronId, id: e.id, kind: e.kind }); toast('Marked as checked and still true.'); after(); } catch (err) { toast(err.message); }
     } }, 'Verify'));
   }
-  if (!e.status) {
+  if (isLive(e)) {
     acts.push(h('button', { onclick: async () => {
       if (!(await confirmDialog('Retire this entry?', 'It stays in the file but leaves recall (reversible with crbro_revise status=active).', 'Retire'))) return;
       try { await api('/api/retire', { neuron: neuronId, id: e.id, kind: e.kind }); toast('Retired.'); after(); } catch (err) { toast(err.message); }
@@ -230,6 +300,7 @@ async function openNeuron(id, keepOffset) {
         ...groups[k].map(e => renderEntry(n.id, e, reload)),
       ]),
       (n.entries || []).length ? null : h('div', { class: 'empty' }, 'No live entries.'),
+      h('div', { class: 'actions' }, h('button', { onclick: async () => { const to = await mergeDialog(n); if (to) { await loadNeurons(); openNeuron(to); } } }, 'Merge into another neuron…')),
       h('div', { class: 'actions' },
         state.offset > 0 ? h('button', { onclick: () => { state.offset = Math.max(0, state.offset - 50); openNeuron(id, true); } }, 'Previous') : null,
         pag.has_more ? h('button', { onclick: () => { state.offset += (n.entries || []).length; openNeuron(id, true); } }, 'Next (' + (pag.total - state.offset - (n.entries || []).length) + ' more)') : null),
@@ -344,6 +415,8 @@ const BODY = `
 <main data-view="pending" class="hidden"><section id="pendingBox" class="panel wide"></section></main>
 <main data-view="review" class="hidden"><section id="reviewBox" class="panel wide"></section></main>
 <dialog id="confirm"><h2 id="confirmTitle"></h2><p id="confirmText"></p><div class="actions"><button id="confirmCancel" type="button">Cancel</button><button id="confirmOk" class="primary" type="button">Confirm</button></div></dialog>
+<dialog id="editDlg"><h2>Edit this entry</h2><p class="sub">The old text is retired, not deleted: it stays in the file and leaves recall.</p><textarea id="editText" aria-label="Entry text"></textarea><div class="actions"><button id="editCancel" type="button">Cancel</button><button id="editSave" class="primary" type="button">Save</button></div></dialog>
+<dialog id="mergeDlg"><h2 id="mergeTitle"></h2><input id="mergeFilter" type="text" placeholder="Filter neurons" aria-label="Filter neurons"><select id="mergeTarget" size="8" aria-label="Target neuron"></select><p id="mergeInfo" class="sub"></p><div class="actions"><button id="mergeCancel" type="button">Cancel</button><button id="mergeGo" class="primary" type="button">Preview</button></div></dialog>
 <div id="toast" role="status"></div>
 `;
 

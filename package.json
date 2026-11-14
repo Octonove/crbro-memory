@@ -19,6 +19,7 @@
     "mcpb:verify": "node scripts/verify-mcpb.mjs",
     "typecheck": "tsc -p tsconfig.check.json",
     "smoke": "node scripts/smoke-stdio.mjs",
+    "perf": "node benchmarks/perf/nightly.mjs",
     "bench": "node benchmarks/retrieval/run.mjs --check && node benchmarks/security/run.mjs --check"
   },
   "keywords": [

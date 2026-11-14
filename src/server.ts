@@ -630,7 +630,10 @@ export function createServer(shared?: Engines, options: CreateServerOptions = {}
             brain_path: brain.paths.root,
             last_boot: manifest.last_boot,
             last_consolidation: manifest.last_consolidation,
-            semantic: semanticStatus(),
+            // `coverage` says how much of the index already has a vector: right after an
+            // upgrade the layer fills in the background and recall answers keyword-only
+            // (semantic: "warming") until vectors === chunks (2.12).
+            semantic: { ...semanticStatus(), ...(searchEngine.semanticCoverage() ? { coverage: searchEngine.semanticCoverage() } : {}) },
             hot_topics_recalculated: hot?.last_recalculated ?? null,
             // Shelf life: whether recall splits off possibly_stale, the windows
             // in days, and the day this brain started counting (legacy grace).

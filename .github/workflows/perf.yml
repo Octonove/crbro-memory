@@ -1,0 +1,53 @@
+name: Performance
+
+# Every night, and on demand: the real server over stdio against a brain of
+# realistic size (~500 neurons, ~7,000 entries), with the semantic layer.
+# What the unit tests cannot see: the 2.11 audit found a recall that took 2 s
+# for minutes after an upgrade, and no test noticed because they run on tiny
+# brains without the model. Budgets live in benchmarks/perf/nightly.mjs.
+
+on:
+  schedule:
+    - cron: "23 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: perf
+  cancel-in-progress: false
+
+jobs:
+  perf:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      CRBRO_SEMANTIC_HOME: ${{ github.workspace }}/.semantic-cache
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+
+      # The model is ~500 MB: downloaded once, then restored. The key follows
+      # the file that pins its hashes, so a new pin fetches it again.
+      - uses: actions/cache@v5
+        with:
+          path: ${{ env.CRBRO_SEMANTIC_HOME }}
+          key: semantic-${{ hashFiles('src/search/semantic.ts') }}
+      - name: Install the semantic layer (a no-op when restored from cache)
+        run: node bin/crbro.mjs semantic install
+
+      - name: Measure
+        run: node benchmarks/perf/nightly.mjs --out perf.json --semantic-wait 1500
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: perf-result
+          if-no-files-found: ignore
+          path: perf.json
