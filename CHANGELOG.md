@@ -236,6 +236,10 @@ reads keeps its name and meaning. The search index rebuilds once on first start.
   provenance; CI runs on Linux, Windows and macOS with Node 20, 22 and 24,
   starts the real server over stdio and builds the `.mcpb` and Docker image.
 - README rewritten in three layers; long sections moved to `docs/`.
+- Dependencies moved to patched versions: `zod` 4.6.7 (the minimum is now
+  ^4.6.7), and through the MCP SDK `body-parser` 2.4.0, `hono` 4.13.18,
+  `@hono/node-server` 2.1.8, `fast-uri` 3.1.9 and `qs` 6.17.1. `npm audit`
+  reports no advisories at release time (not a guarantee about later ones).
 
 ## [2.10.0] — 2026-10-18
 
