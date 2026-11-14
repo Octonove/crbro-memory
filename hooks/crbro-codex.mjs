@@ -227,7 +227,9 @@ export async function respond(event, { argv = process.argv.slice(2), env = proce
   const eventName = event?.hook_event_name;
   if (['0', 'off', 'false', 'no'].includes(String(env.CRBRO_CODEX_HOOK || '').toLowerCase())) return null;
   const cwd = typeof event?.cwd === 'string' && event.cwd ? event.cwd : process.cwd();
-  const project = basename(cwd).replace(/["\r\n\t]/g, '').slice(0, 120);
+  // The last folder of the path, whichever separator it uses (a Windows path
+  // seen from a POSIX system, or the other way round, still names its folder).
+  const project = (String(cwd).split(/[\\/]+/).filter(Boolean).pop() || basename(cwd)).replace(/["\r\n\t]/g, '').slice(0, 120);
   if (eventName === 'SessionStart') {
     const fresh = event.source === 'clear' || event.source === 'compact';
     if (!fresh && await alreadyBooted(event.transcript_path)) return null;
