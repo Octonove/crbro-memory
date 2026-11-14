@@ -111,7 +111,7 @@ const manifest = {
   support: `${REPO}/issues`,
   icon: 'icon.png',
   license: pkg.license,
-  privacy_policies: [`${REPO}#privacy`],
+  privacy_policies: [`${REPO}/blob/master/docs/privacy.md`],
   keywords: ['memory', 'knowledge', 'notes', 'local-first', 'productivity'],
   server: {
     type: 'node',

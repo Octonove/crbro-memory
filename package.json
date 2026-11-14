@@ -2,7 +2,7 @@
   "name": "crbro-memory",
   "version": "2.12.0",
   "mcpName": "io.github.Octonove/crbro-memory",
-  "description": "CRBRO — Persistent neural memory for AI. A biological file-based MCP server that gives your AI long-term memory across sessions.",
+  "description": "Local, persistent memory for AI agents (MCP server): plain JSON on your disk, search with an optional local semantic layer, corrections that replace old facts, stale-value warnings, a browser view to edit it. Claude Code, Claude Desktop, Codex, Cursor.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
@@ -24,14 +24,23 @@
   },
   "keywords": [
     "mcp",
-    "memory",
-    "ai",
-    "persistent-memory",
+    "mcp-server",
     "model-context-protocol",
+    "memory",
+    "persistent-memory",
+    "long-term-memory",
+    "agent-memory",
+    "ai",
+    "ai-agents",
     "llm",
-    "synthetica",
+    "claude",
+    "claude-code",
+    "codex",
+    "cursor",
+    "local-first",
     "semantic-search",
-    "embeddings"
+    "embeddings",
+    "knowledge-base"
   ],
   "author": {
     "name": "Octonove",

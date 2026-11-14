@@ -2,14 +2,14 @@
 
 [![npm](https://img.shields.io/npm/v/crbro-memory)](https://www.npmjs.com/package/crbro-memory)
 [![license](https://img.shields.io/github/license/Octonove/crbro-memory)](https://github.com/Octonove/crbro-memory/blob/master/LICENSE)
-[![MCP](https://img.shields.io/badge/MCP-Claude%20Code%20%C2%B7%20Claude%20Desktop%20%C2%B7%20Cursor-1E3A5F)](https://modelcontextprotocol.io)
+[![MCP](https://img.shields.io/badge/MCP-Claude%20Code%20%C2%B7%20Claude%20Desktop%20%C2%B7%20Codex%20%C2%B7%20Cursor-1E3A5F)](https://modelcontextprotocol.io)
 [![GitHub](https://img.shields.io/github/stars/Octonove/crbro-memory?logo=github&label=source)](https://github.com/Octonove/crbro-memory)
 [![Glama score](https://glama.ai/mcp/servers/Octonove/crbro-memory/badges/score.svg)](https://glama.ai/mcp/servers/Octonove/crbro-memory)
 [![Listed on mcpservers.org](https://mcpservers.org/badge.svg)](https://mcpservers.org/servers/octonove/crbro-memory)
 
-**CRBRO** is a local MCP (Model Context Protocol) server that gives your AI assistant **persistent long-term memory** across sessions. It uses a biological neural architecture — cortex, synapses, hippocampus — to store, connect, and retrieve knowledge automatically. Everything lives in plain JSON files on your machine.
+**CRBRO** is a local MCP (Model Context Protocol) server that gives your AI assistant **persistent long-term memory** across sessions: what you decided, how things are deployed, what is still pending. Everything is plain JSON on your own disk, organized like a brain — cortex, synapses, hippocampus. A correction replaces the old fact instead of sitting next to it, an old value comes back with a warning to check it, a question with nothing stored behind it is answered as such, and credentials are kept out. You can read and edit all of it in your browser, and one command installs it in Claude Code, Claude Desktop, Codex and Cursor.
 
-![CRBRO tour: memory across sessions, corrections that replace old facts, secrets kept out, the guard before a shell command, the compaction checkpoint and the open-items band](https://raw.githubusercontent.com/Octonove/crbro-memory/master/docs/crbro-tour.gif)
+![CRBRO tour: memory across sessions, corrections that replace old facts, a warning on values that may be out of date, an honest answer when nothing is stored, secrets kept out, open items above the prompt, the memory edited in the browser, and the one-command install](https://raw.githubusercontent.com/Octonove/crbro-memory/master/docs/crbro-tour.gif)
 
 Free and open source (MIT). All 15 tools included — no license, no account, no tiers.
 
@@ -99,6 +99,8 @@ npx crbro-memory install-boot
 ### Using it
 
 Your AI now has 15 memory tools and boots the brain on its own. `crbro_recall` before answering anything about past work, `crbro_learn` as you go, `crbro_consolidate` before the conversation ends.
+
+To see what it knows, `npx crbro-memory view` opens a local page (127.0.0.1, one-time token) where you search the memory, edit or retire an entry, merge two neurons and close open items. `npx crbro-memory export` writes it all out as Markdown or JSON, and `npx crbro-memory import` brings in a `CLAUDE.md` / `AGENTS.md`, a Claude Code memory folder or an export (a dry run unless you pass `--apply`).
 
 More that you can switch on, each in [docs/hooks.md](docs/hooks.md) and [docs/daemon.md](docs/daemon.md): the guard hook (stored lessons speak before a shell command runs), the compaction checkpoint, the subagent hook, the open-items band in Claude Code, and the daemon for several clients on one brain.
 
@@ -255,7 +257,7 @@ Every number about cost and quality comes from a script in [`benchmarks/`](https
 
 **What runs in CI** on every push: the lexical retrieval benchmark (keyword engine alone, no model, no network) and the credential-redaction benchmark, both as gates that fail the build if they regress (`npm run bench`), plus the unit and integration test suite on Linux, Windows and macOS. Everything else below is run by hand, with the version and date next to it. The agentic benchmark puts a real Claude Code agent to work and spends tokens, so it is never run in CI.
 
-Measured for **2.11.0 on 14-11-2026**, on Windows 11 with Node 24. "Real brain" means a copy of one person's brain (563 neurons, 9 MB of neurons, 146 day logs, semantic layer installed); the 2.10.0 figure next to each is the same measurement on the same copy.
+Measured for **2.11.0 on 14-11-2026**, on Windows 11 with Node 24; the rows marked **2.12.0** were measured for that release the same day. "Real brain" means a copy of one person's brain (563 neurons, 9 MB of neurons, 146 day logs, semantic layer installed); the 2.10.0 figure next to each is the same measurement on the same copy.
 
 | What | Result | How to reproduce |
 |---|---|---|
@@ -272,7 +274,8 @@ Measured for **2.11.0 on 14-11-2026**, on Windows 11 with Node 24. "Real brain" 
 | **Memory use** (RAM per client, with and without the daemon) | Without the daemon, one full engine per client: ~1 GB with the semantic model loaded, ~530 MB keyword-only (2.10.0: ~700 MB). With the daemon: ~62 MB per client plus one daemon (~0.8–1 GB) | `node benchmarks/daemon/startup.mjs` |
 | **Disk** (semantic layer: runtime and model) | ~500 MB in `~/.crbro/.semantic` (runtime and model, downloaded once by `semantic install`) | `npx crbro-memory semantic status` |
 | **First boot after upgrading** (the search index rebuilds once) | **9.7 s** on the real brain (563 neurons): the index rebuilds once in the new format. The semantic vectors of long entries, now split into parts, then fill in the background (~5,500 of them, about 4 minutes here); meanwhile recall stays at 0.05–0.4 s and answers keyword-only (`semantic: "warming"`) | — |
-| **Tests** | **105 files, 1,324 passed, 6 skipped** on Windows 11; CI runs the suite on Linux, Windows and macOS with Node 20, 22 and 24 | `npx vitest run` |
+| **Performance gate** (2.12.0; the real server over stdio on the synthetic ~500-neuron brain; runs every night in CI) | Keyword recall **p50 19 ms, p90 52 ms**. While the semantic vectors fill in after an upgrade (213 s here): p90 278 ms, worst 546 ms; then p50 43 ms, p90 79 ms. First boot 2.3 s, second 0.6 s. The run fails at roughly three times these figures | `npm run perf` |
+| **Tests** | **107 files, 1,337 passed, 6 skipped** on Windows 11 (2.12.0); CI runs the suite on Linux, Windows and macOS with Node 20, 22 and 24 | `npx vitest run` |
 | **A fresh session does not ask again** (agentic; haiku and sonnet) | Not re-run for 2.11: the 2.7.2 result stands, with its caveats, in [docs/measurements-2.7.2.md](docs/measurements-2.7.2.md) | `node benchmarks/agentic/run.mjs` |
 
 The figures published for 2.7.2 (retrieval, scale, false confidence, the agentic runs and the two stale-value experiments that did **not** meet their pre-registered claim) are kept, dated and with their caveats, in [docs/measurements-2.7.2.md](docs/measurements-2.7.2.md). They have not been re-measured for 2.11.

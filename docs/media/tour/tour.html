@@ -1,0 +1,294 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>CRBRO tour 2.12</title>
+<style>
+  :root {
+    --bg: #0a0f1c; --panel: #10172a; --line: #26304a; --text: #e6e9ef; --muted: #98a2b3;
+    --cyan: #38bdf8; --purple: #a78bfa; --coral: #e07a5f; --green: #22c55e; --amber: #f5a524; --red: #f87171;
+    --mono: "Cascadia Mono", "Cascadia Code", Consolas, monospace; --sans: "Segoe UI", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 960px; height: 600px; overflow: hidden; background: var(--bg); color: var(--text); font-family: var(--sans); }
+  #stage { position: relative; width: 960px; height: 600px; }
+  #brand { position: absolute; left: 26px; top: 22px; font-weight: 700; letter-spacing: .06em; font-size: 15px; display: flex; align-items: center; gap: 8px; }
+  .dia { width: 11px; height: 11px; background: var(--coral); transform: rotate(45deg); display: inline-block; border-radius: 2px; }
+  svg#brain { position: absolute; left: 0; top: 0; }
+  #tag { position: absolute; left: 40px; top: 470px; font-family: var(--mono); font-size: 13px; color: #c4b5fd; border: 1px solid #6d5bd0; background: #1a1636; border-radius: 999px; padding: 4px 12px; white-space: nowrap; }
+  #right { position: absolute; left: 330px; top: 72px; width: 600px; }
+  #label { font-size: 12.5px; font-weight: 700; letter-spacing: .12em; color: var(--purple); }
+  #title { font-size: 27px; font-weight: 700; margin: 6px 0 16px; letter-spacing: -.01em; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; font-size: 14px; line-height: 1.55; }
+  .mono { font-family: var(--mono); font-size: 13.2px; }
+  .muted { color: var(--muted); }
+  .row { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+  .pill { font-family: var(--sans); font-size: 11.5px; border-radius: 999px; padding: 1px 9px; border: 1px solid; white-space: nowrap; }
+  .p-green { color: #86efac; border-color: #1f7a43; background: #0e2a1a; }
+  .p-grey { color: #cbd5e1; border-color: #475569; background: #1b2333; }
+  .p-amber { color: #fcd34d; border-color: #8a6115; background: #2a1f08; }
+  .p-purple { color: #c4b5fd; border-color: #6d5bd0; background: #1a1636; }
+  .entry { border: 1px solid var(--line); border-radius: 8px; padding: 9px 12px; margin-top: 8px; background: #141c31; }
+  .strike { text-decoration: line-through; color: #c07a7a; }
+  .k { color: var(--purple); } .s { color: var(--green); } .w { color: var(--amber); } .c { color: var(--cyan); } .r { color: var(--red); }
+  .ln { opacity: 0; transition: none; }
+  .cursor { display: inline-block; width: 8px; height: 15px; background: var(--text); vertical-align: -2px; margin-left: 1px; }
+  /* intro / outro */
+  #hero { position: absolute; left: 330px; top: 170px; width: 600px; }
+  #hero .big { font-size: 46px; font-weight: 800; display: flex; align-items: center; gap: 16px; letter-spacing: .02em; }
+  #hero .big .dia { width: 26px; height: 26px; border-radius: 4px; }
+  #hero h2 { font-size: 25px; margin-top: 12px; }
+  #hero .sub { color: var(--muted); font-size: 16px; margin-top: 4px; }
+  #hero .cmd { display: inline-block; margin-top: 18px; font-family: var(--mono); font-size: 16px; font-weight: 700; border: 1.5px solid var(--coral); border-radius: 8px; padding: 9px 16px; background: #1a1210; }
+  #hero .foot { color: var(--muted); font-size: 14px; margin-top: 16px; }
+  /* browser mock */
+  .win { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: #0f1527; }
+  .bar { display: flex; gap: 6px; align-items: center; padding: 7px 10px; background: #182039; border-bottom: 1px solid var(--line); }
+  .bar i { width: 9px; height: 9px; border-radius: 50%; display: inline-block; background: #3b4664; }
+  .url { margin-left: 8px; font-family: var(--mono); font-size: 12px; color: var(--muted); background: #0f1527; border-radius: 6px; padding: 2px 10px; flex: 1; }
+  .cols { display: grid; grid-template-columns: 150px 1fr; min-height: 236px; }
+  .side { border-right: 1px solid var(--line); padding: 10px; font-size: 13px; }
+  .side div { padding: 4px 8px; border-radius: 6px; color: var(--muted); }
+  .side .on { background: #1f2a47; color: var(--text); }
+  .main { padding: 10px 12px; position: relative; font-size: 13.5px; }
+  .btn { font-size: 11.5px; border: 1px solid #3b4664; border-radius: 6px; padding: 1px 8px; color: #cbd5e1; background: #1b2333; }
+  .btn.hot { border-color: var(--purple); color: #ddd6fe; background: #2a2160; }
+  .dlg { position: absolute; left: 22px; right: 22px; top: 54px; background: #161e36; border: 1px solid #5b4fc9; border-radius: 10px; padding: 12px; box-shadow: 0 12px 30px rgba(0,0,0,.45); }
+  .ta { font-family: var(--mono); font-size: 13px; border: 1px solid #3b4664; border-radius: 6px; padding: 7px 9px; background: #0f1527; margin: 6px 0 10px; }
+  #prog { position: absolute; left: 26px; right: 26px; bottom: 12px; display: flex; gap: 6px; }
+  #prog div { flex: 1; height: 3px; background: #1f2840; border-radius: 2px; overflow: hidden; }
+  #prog div b { display: block; height: 100%; width: 0; }
+  .fade { transition: none; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div id="brand"><span class="dia"></span>CRBRO</div>
+  <svg id="brain" width="960" height="600"></svg>
+  <div id="tag"></div>
+  <div id="right"><div id="label"></div><div id="title"></div><div id="card"></div></div>
+  <div id="hero">
+    <div class="big"><span class="dia"></span>CRBRO</div>
+    <h2>Persistent memory for AI agents</h2>
+    <div class="sub">Across sessions. On your machine. Yours to read and edit.</div>
+    <div class="cmd" id="herocmd">npx crbro-memory install</div>
+    <div class="foot" id="herofoot">MIT · 15 tools · Claude Code · Claude Desktop · Codex · Cursor</div>
+  </div>
+  <div id="prog"></div>
+</div>
+<script>
+// ── Deterministic tour: render(t) draws the frame at t seconds, nothing else moves. ──
+const FPS = 15, INTRO = 2.6, SCENE = 3.7, OUTRO = 3.2;
+const COLORS = ['#38bdf8', '#a78bfa', '#f5a524', '#22c55e', '#e07a5f', '#38bdf8', '#a78bfa', '#22c55e'];
+
+// Seeded brain: nodes inside a brain silhouette, edges to nearest neighbours.
+let seed = 20261114;
+const rnd = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
+const nodes = [];
+function inBrain(x, y) {
+  const e1 = ((x - 165) / 135) ** 2 + ((y - 270) / 108) ** 2 <= 1;      // cerebrum
+  const e2 = ((x - 230) / 62) ** 2 + ((y - 362) / 40) ** 2 <= 1;        // cerebellum
+  const e3 = ((x - 120) / 60) ** 2 + ((y - 345) / 40) ** 2 <= 1;        // temporal lobe
+  return e1 || e2 || e3;
+}
+while (nodes.length < 52) {
+  const x = 30 + rnd() * 270, y = 160 + rnd() * 250;
+  if (!inBrain(x, y)) continue;
+  if (nodes.some(n => Math.hypot(n.x - x, n.y - y) < 27)) continue;
+  nodes.push({ x, y, r: 3 + rnd() * 2.6, ph: rnd() * 6.28 });
+}
+const edges = [];
+nodes.forEach((a, i) => {
+  const near = nodes.map((b, j) => [j, Math.hypot(a.x - b.x, a.y - b.y)]).filter(([j]) => j !== i).sort((p, q) => p[1] - q[1]).slice(0, 3);
+  for (const [j, d] of near) if (d < 70 && !edges.some(([p, q]) => (p === j && q === i))) edges.push([i, j]);
+});
+// Each scene lights up a different region of the brain.
+const centres = [[110, 230], [210, 205], [270, 280], [75, 300], [160, 300], [230, 360], [140, 360], [190, 255]];
+function cluster(k) {
+  const [cx, cy] = centres[k];
+  return nodes.map((n, i) => [i, Math.hypot(n.x - cx, n.y - cy)]).sort((a, b) => a[1] - b[1]).slice(0, 7).map(([i]) => i);
+}
+
+const ease = x => (x < 0 ? 0 : x > 1 ? 1 : x * x * (3 - 2 * x));
+const appear = (lt, at, dur = 0.28) => ease((lt - at) / dur);
+function typed(text, lt, at, cps = 34) {
+  const n = Math.max(0, Math.min(text.length, Math.floor((lt - at) * cps)));
+  return text.slice(0, n);
+}
+const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+
+// ── Scenes: label, title, tag, and a card(lt) that returns HTML for local time lt. ──
+const scenes = [
+  { label: '01  REMEMBERS', title: "Yesterday's work, today", tag: 'crbro_recall',
+    card: lt => `
+      <div class="card mono">
+        <div class="muted">new session · acme-api</div>
+        <div style="margin-top:6px">&gt; ${esc(typed('how do we deploy acme?', lt, 0.25))}${lt < 1.0 ? '<span class="cursor"></span>' : ''}</div>
+        <div class="ln" style="opacity:${appear(lt, 1.05)}; margin-top:8px"><span class="k">crbro_recall</span> "deploy acme"</div>
+        <div class="entry ln" style="opacity:${appear(lt, 1.45)}">
+          <div class="row"><span>Deploy with <b>make release</b></span><span class="pill p-green">strong</span></div>
+          <div class="muted" style="font-size:12px">project_acme · fact · 2026-11-02</div>
+        </div>
+        <div class="ln muted" style="opacity:${appear(lt, 2.1)}; margin-top:8px; font-family:var(--sans); font-size:13px">Plain JSON in ~/.crbro, on your own disk. Nothing leaves the machine.</div>
+      </div>` },
+  { label: '02  CORRECTABLE', title: 'New facts replace old ones', tag: 'crbro_learn supersedes',
+    card: lt => {
+      const done = lt > 1.5;
+      return `
+      <div class="card">
+        <div class="mono k" style="font-size:12.5px">project_acme · fact</div>
+        <div class="entry row"><span class="mono ${done ? 'strike' : ''}">Deploy with npm run deploy:legacy</span><span class="pill ${done ? 'p-grey' : 'p-green'}">${done ? 'superseded' : 'active'}</span></div>
+        <div class="entry row ln" style="opacity:${appear(lt, 0.9)}; border-color:${done ? '#2f6b47' : 'var(--line)'}"><span>Deploy with <b class="mono">make release</b></span><span class="pill p-green">active</span></div>
+        <div class="ln muted" style="opacity:${appear(lt, 2.0)}; margin-top:10px; font-size:13px">The old line stays on disk as history; recall answers with the new one.</div>
+      </div>`; } },
+  { label: '03  HONEST ABOUT AGE', title: 'Old values come with a warning', tag: 'possibly_stale',
+    card: lt => `
+      <div class="card mono">
+        <div><span class="k">crbro_recall</span> "staging php version"</div>
+        <div class="ln w" style="opacity:${appear(lt, 0.6)}; margin-top:8px; font-family:var(--sans); font-size:13.5px">⚠ stale_warning: this may be out of date. Check the source before answering.</div>
+        <div class="entry ln" style="opacity:${appear(lt, 1.1)}">
+          <div class="row"><span>last_known: Staging runs PHP 8.1</span><span class="pill p-amber">possibly_stale</span></div>
+          <div class="muted" style="font-size:12px">last_verified 2026-03-02 · shelf life: volatile (90 days)</div>
+          <div class="ln" style="opacity:${appear(lt, 1.7)}; font-size:12.5px; margin-top:4px">next_step: <span class="c">open the server config</span>, then <span class="k">crbro_revise status=verified</span></div>
+        </div>
+      </div>` },
+  { label: '04  HONEST ABOUT GAPS', title: "Nothing stored? It says so", tag: 'no_answer',
+    card: lt => `
+      <div class="card mono">
+        <div><span class="k">crbro_recall</span> "acme vat number"</div>
+        <div class="ln" style="opacity:${appear(lt, 0.7)}; margin-top:10px; font-size:16px"><b>no_answer: <span class="w">true</span></b></div>
+        <div class="ln muted" style="opacity:${appear(lt, 1.1)}; font-family:var(--sans); font-size:13.5px; margin-top:4px">Nothing stored clearly matches. The two rows below are the nearest things, not an answer.</div>
+        <div class="entry row ln" style="opacity:${appear(lt, 1.6)}"><span>Acme invoices go out on the 1st</span><span class="pill p-grey">weak</span></div>
+        <div class="entry row ln" style="opacity:${appear(lt, 1.8)}"><span>Billing contact: finance@acme.test</span><span class="pill p-grey">weak</span></div>
+      </div>` },
+  { label: '05  PRIVATE', title: 'Secrets stay out of memory', tag: 'crbro_secret · OS keychain',
+    card: lt => `
+      <div class="card mono">
+        <div><span class="k">crbro_learn</span> "the npm token is npm_8fK2…"</div>
+        <div class="entry ln" style="opacity:${appear(lt, 0.7)}"><span class="muted">stored:</span> the npm token is <span class="s">[REDACTED: npm token]</span></div>
+        <div class="ln" style="opacity:${appear(lt, 1.4)}; margin-top:10px"><span class="k">crbro_secret</span> set NPM_TOKEN <span class="muted">→</span> <span class="c">OS keychain</span></div>
+        <div class="ln muted" style="opacity:${appear(lt, 2.0)}; font-family:var(--sans); font-size:13.5px; margin-top:8px">The brain keeps the name. The value never touches the JSON files.</div>
+      </div>` },
+  { label: '06  IN SIGHT', title: 'Open items above the prompt', tag: 'Claude Code · /pending',
+    card: lt => `
+      <div class="card mono" style="padding:12px 14px">
+        <div class="entry" style="margin-top:0; border-color:#4b3fa8; background:#17143a">
+          <div class="row"><span><span class="k">open 1/3</span> · Write the retry test for webhooks</span><span class="w">2d</span></div>
+        </div>
+        <div style="margin-top:8px">&gt; <span class="cursor"></span></div>
+        <div class="ln" style="opacity:${appear(lt, 0.9)}; margin-top:12px"><span class="k">/pending</span> <span class="muted">→ every open item as a card</span></div>
+        <div class="ln" style="opacity:${appear(lt, 1.3)}; display:flex; gap:8px; margin-top:6px">
+          <span class="btn hot">Work on this</span><span class="btn">Done</span><span class="btn">Discard</span>
+        </div>
+        <div class="ln muted" style="opacity:${appear(lt, 1.9)}; font-family:var(--sans); font-size:13.5px; margin-top:10px">Read whole, filtered, sent to the prompt, closed with a confirmation.</div>
+      </div>` },
+  { label: '07  YOURS', title: 'Read it and fix it in your browser', tag: 'npx crbro-memory view',
+    card: lt => {
+      const dialog = lt > 0.8 && lt < 2.3;
+      const edited = lt >= 2.3;
+      const port = typed('8443', lt, 1.05, 10);
+      const newText = 'Acme deploys to port ' + (lt < 1.45 ? port : '9443'.slice(0, Math.max(0, Math.min(4, Math.floor((lt - 1.45) * 10)))));
+      return `
+      <div class="win">
+        <div class="bar"><i></i><i></i><i></i><span class="url">127.0.0.1 · crbro-memory view</span></div>
+        <div class="cols">
+          <div class="side"><div class="on">acme · 24</div><div>billing · 9</div><div>infra · 15</div><div>open items · 3</div></div>
+          <div class="main">
+            <div class="row" style="font-weight:600"><span>acme</span><span class="btn">Merge into another neuron…</span></div>
+            <div class="entry row" style="margin-top:10px"><span class="${edited ? 'strike' : ''}">Acme deploys to port 8443.</span><span style="display:flex;gap:6px">${edited ? '<span class="pill p-grey">superseded</span>' : `<span class="btn ${lt > 0.45 && lt < 0.85 ? 'hot' : ''}">Edit</span><span class="btn">Retire</span>`}</span></div>
+            ${edited ? `<div class="entry row" style="border-color:#2f6b47"><span>Acme deploys to port 9443.</span><span class="pill p-green">active</span></div>` : ''}
+            <div class="entry row"><span>Use Postgres for acme — joins.</span><span class="pill p-purple">decision</span></div>
+            ${dialog ? `<div class="dlg"><div style="font-size:12.5px" class="muted">Edit entry</div><div class="ta">${esc(newText)}<span class="cursor"></span></div><div style="display:flex;gap:8px;justify-content:flex-end"><span class="btn">Cancel</span><span class="btn ${lt > 1.9 ? 'hot' : ''}">Save</span></div></div>` : ''}
+          </div>
+        </div>
+      </div>
+      <div class="ln muted" style="opacity:${appear(lt, 2.5)}; font-size:13.5px; margin-top:10px">Edit, retire, merge neurons, close open items. Local only, behind a one-time token.</div>`; } },
+  { label: '08  EVERYWHERE', title: 'One command, every client', tag: 'npx crbro-memory install',
+    card: lt => {
+      const lines = [
+        ['s', '✅', 'Engine: CRBRO 2.12.0 → ~/.crbro-engine/2.12.0'],
+        ['s', '✅', 'Claude Code: registered · boots on its own'],
+        ['s', '✅', 'Claude Desktop: registered'],
+        ['s', '✅', 'Codex: registered · startup timeouts set'],
+        ['s', '✅', 'Cursor: registered'],
+      ];
+      return `
+      <div class="card mono">
+        <div>$ ${esc(typed('npx crbro-memory install', lt, 0.15, 30))}${lt < 1.0 ? '<span class="cursor"></span>' : ''}</div>
+        ${lines.map((l, i) => `<div class="ln" style="opacity:${appear(lt, 1.0 + i * 0.28, 0.2)}; margin-top:${i ? 2 : 10}px">${l[1]} ${esc(l[2])}</div>`).join('')}
+        <div class="ln muted" style="opacity:${appear(lt, 2.6)}; margin-top:10px">Restart each client. Undo: npx crbro-memory uninstall</div>
+      </div>`; } },
+];
+const TOTAL = INTRO + scenes.length * SCENE + OUTRO;
+window.TOTAL = TOTAL; window.FPS = FPS;
+
+const svg = document.getElementById('brain');
+const prog = document.getElementById('prog');
+prog.innerHTML = scenes.map(() => '<div><b></b></div>').join('');
+
+function drawBrain(t, k, amt) {
+  const hot = new Set(k >= 0 ? cluster(k) : []);
+  const col = k >= 0 ? COLORS[k] : '#a78bfa';
+  let s = '';
+  for (const [i, j] of edges) {
+    const a = nodes[i], b = nodes[j];
+    const on = hot.has(i) && hot.has(j);
+    const op = on ? 0.35 + 0.55 * amt : 0.28;
+    s += `<line x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}" stroke="${on ? col : '#3b82c4'}" stroke-opacity="${op.toFixed(3)}" stroke-width="${on ? 1.6 : 1}"/>`;
+  }
+  nodes.forEach((n, i) => {
+    const on = hot.has(i);
+    const tw = 0.8; // steady: twinkling every node made each GIF frame differ everywhere
+    const r = on ? n.r + 1.6 * amt : n.r;
+    s += `<circle cx="${n.x}" cy="${n.y}" r="${(r * 2.2).toFixed(2)}" fill="${on ? col : '#38bdf8'}" fill-opacity="${(on ? 0.16 * amt : 0.07 * tw).toFixed(3)}"/>`;
+    s += `<circle cx="${n.x}" cy="${n.y}" r="${r.toFixed(2)}" fill="${on ? col : '#38bdf8'}" fill-opacity="${(on ? 0.6 + 0.4 * amt : 0.55 + 0.35 * tw).toFixed(3)}"/>`;
+  });
+  if (k >= 0 && amt > 0) {
+    const c = nodes[cluster(k)[0]];
+    const pr = 18 + 26 * ((t * 0.9) % 1);
+    s += `<circle cx="${c.x}" cy="${c.y}" r="${pr.toFixed(1)}" fill="none" stroke="${col}" stroke-opacity="${(amt * (1 - ((t * 0.9) % 1)) * 0.7).toFixed(3)}" stroke-width="1.5"/>`;
+  }
+  svg.innerHTML = s;
+}
+
+function render(t) {
+  const right = document.getElementById('right'), hero = document.getElementById('hero');
+  const tag = document.getElementById('tag'), brand = document.getElementById('brand');
+  let k = -1, lt = 0;
+  if (t >= INTRO && t < INTRO + scenes.length * SCENE) { k = Math.floor((t - INTRO) / SCENE); lt = t - INTRO - k * SCENE; }
+  // intro and outro card
+  const heroIn = t < INTRO ? 1 - ease((t - (INTRO - 0.35)) / 0.35) : (t >= TOTAL - OUTRO ? ease((t - (TOTAL - OUTRO)) / 0.45) : 0);
+  hero.style.opacity = heroIn.toFixed(3);
+  document.getElementById('herofoot').textContent = t >= TOTAL - OUTRO
+    ? 'v2.12 · MIT · github.com/Octonove/crbro-memory'
+    : 'MIT · 15 tools · Claude Code · Claude Desktop · Codex · Cursor';
+  brand.style.opacity = (1 - heroIn).toFixed(3);
+  // scene panel
+  if (k >= 0) {
+    const sc = scenes[k];
+    const fade = Math.min(ease(lt / 0.32), 1 - ease((lt - (SCENE - 0.3)) / 0.3));
+    right.style.opacity = fade.toFixed(3);
+    tag.style.opacity = fade.toFixed(3);
+    document.getElementById('label').textContent = sc.label;
+    document.getElementById('title').textContent = sc.title;
+    document.getElementById('card').innerHTML = sc.card(lt);
+    tag.textContent = sc.tag;
+    tag.style.borderColor = COLORS[k];
+  } else {
+    right.style.opacity = 0; tag.style.opacity = 0;
+  }
+  drawBrain(t, k, k >= 0 ? Math.min(ease(lt / 0.5), 1 - ease((lt - (SCENE - 0.4)) / 0.4)) : 0);
+  // progress
+  [...prog.children].forEach((d, i) => {
+    const b = d.firstChild;
+    const p = k > i || t >= TOTAL - OUTRO ? 1 : (k === i ? lt / SCENE : 0);
+    b.style.width = (p * 100).toFixed(1) + '%';
+    b.style.background = COLORS[i];
+  });
+  prog.style.opacity = (1 - heroIn * 0.6).toFixed(3);
+}
+window.render = render;
+render(0);
+</script>
+</body>
+</html>

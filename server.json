@@ -1,7 +1,7 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.Octonove/crbro-memory",
-  "description": "Persistent file-based memory for AI agents: inspectable, versionable, fully local.",
+  "description": "Local memory for AI agents: plain JSON on your disk, corrections, stale warnings, a browser view.",
   "version": "2.12.0",
   "repository": {
     "url": "https://github.com/Octonove/crbro-memory",
